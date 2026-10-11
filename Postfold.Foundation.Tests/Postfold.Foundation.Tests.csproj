@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <IsTestProject>true</IsTestProject>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="../Postfold.Desktop/Postfold.Desktop.csproj" />
+        <PackageReference Include="Avalonia.Headless.NUnit" />
+        <PackageReference Include="NUnit" />
+        <PackageReference Include="NSubstitute" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" />
+        <PackageReference Include="NUnit3TestAdapter" PrivateAssets="all" />
+        <PackageReference Include="NUnit.Analyzers" PrivateAssets="all" />
+    </ItemGroup>
+</Project>

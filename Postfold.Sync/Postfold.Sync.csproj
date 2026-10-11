@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <ItemGroup>
+        <ProjectReference Include="../Postfold.Core/Postfold.Core.csproj" />
+    </ItemGroup>
+</Project>

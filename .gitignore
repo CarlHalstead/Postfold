@@ -1,0 +1,13 @@
+# .NET build and test outputs
+**/bin/
+**/obj/
+**/TestResults/
+**/.avalonia-build-tasks/
+/artifacts/
+
+# Visual Studio local indexes and per-user workspace state
+.[Vv][Ss]/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates

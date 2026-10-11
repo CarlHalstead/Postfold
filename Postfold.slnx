@@ -1,0 +1,9 @@
+<Solution>
+    <Project Path="Postfold.Core/Postfold.Core.csproj" />
+    <Project Path="Postfold.Protocols/Postfold.Protocols.csproj" />
+    <Project Path="Postfold.Storage/Postfold.Storage.csproj" />
+    <Project Path="Postfold.Sync/Postfold.Sync.csproj" />
+    <Project Path="Postfold.UI/Postfold.UI.csproj" />
+    <Project Path="Postfold.Desktop/Postfold.Desktop.csproj" />
+    <Project Path="Postfold.Foundation.Tests/Postfold.Foundation.Tests.csproj" />
+</Solution>
