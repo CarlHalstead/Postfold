@@ -40,5 +40,5 @@ jobs:
         run: dotnet build Postfold.slnx --configuration Release --no-restore
       - name: Verify formatting
         run: dotnet format Postfold.slnx --verify-no-changes --no-restore
-      - name: Test foundation
-        run: dotnet test Postfold.slnx --configuration Release --no-build --no-restore
+      - name: Test foundation, engine, local TLS protocols and native platform capabilities
+        run: dotnet test Postfold.slnx --configuration Release --no-build --no-restore --blame-hang-timeout 3m
