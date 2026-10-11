@@ -42,10 +42,8 @@ public sealed class ProjectBoundaryTests
     }
 
     [TestCase("Postfold.Core")]
-    [TestCase("Postfold.Protocols")]
-    [TestCase("Postfold.Storage")]
     [TestCase("Postfold.Sync")]
-    public void PackageReferences_WhenNoImplementationExists_ContainNoExternalDependencies(string projectName)
+    public void PackageReferences_WhenFrameworkOnlyLayerIsBuilt_ContainNoExternalDependencies(string projectName)
     {
         // Arrange
         string root = FindRepositoryRoot();

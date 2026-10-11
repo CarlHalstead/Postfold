@@ -5,6 +5,7 @@
         <RootNamespace>Postfold.Desktop</RootNamespace>
     </PropertyGroup>
     <ItemGroup>
+        <PackageReference Include="System.Security.Cryptography.ProtectedData" />
         <ProjectReference Include="../Postfold.Core/Postfold.Core.csproj" />
         <ProjectReference Include="../Postfold.Protocols/Postfold.Protocols.csproj" />
         <ProjectReference Include="../Postfold.Storage/Postfold.Storage.csproj" />
