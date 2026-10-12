@@ -16,7 +16,8 @@ using Postfold.Core;
 namespace Postfold.Storage;
 
 public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOperationStore,
-    IDraftStore, IOutboxStore, ICacheStore, IAsyncDisposable
+    IDraftStore, IOutboxStore, ICacheStore, IClientCatalog, IAppearanceStore, IAccountCapabilityStore,
+    IDesktopPreferenceStore, IAccountIdentityStore, IAsyncDisposable
 {
     private readonly string _path;
     private readonly BlobStore _blobs;
@@ -33,6 +34,309 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     }
 
     public IBlobStore Blobs => _blobs;
+
+    public Task<long> CachedMessageCountAsync(CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection => Convert.ToInt64(Scalar(connection, null, "SELECT COUNT(*) FROM Messages;"),
+            CultureInfo.InvariantCulture), cancellationToken);
+    }
+
+    public Task<FolderRoles?> ReadRolesAsync(AccountId account, CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(connection, null,
+                "SELECT Value FROM Preferences WHERE Scope=$scope AND Key='roles' AND PayloadVersion=1;",
+                ("$scope", "account:" + account.Value.ToString(CultureInfo.InvariantCulture)));
+            if (command.ExecuteScalar() is not string json)
+            {
+                return null;
+            }
+
+            FolderRoles? roles = JsonSerializer.Deserialize<FolderRoles>(json);
+            return roles is not null && roles.IsValid ? roles : null;
+        }, cancellationToken);
+    }
+
+    public Task SaveMailboxesAsync(AccountId account, ImmutableArray<MailboxSnapshot> mailboxes, FolderRoles? roles,
+        CancellationToken cancellationToken)
+    {
+        if (mailboxes.Any(item => item.Account != account) || roles is not null && !roles.IsValid)
+        {
+            throw new ArgumentException("Invalid mailbox catalog or roles.");
+        }
+
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            foreach (MailboxSnapshot original in mailboxes)
+            {
+                MailboxSnapshot mailbox = roles is null ? original : roles.Apply(original);
+                Execute(connection, transaction,
+                    "INSERT INTO Collections(AccountId,RemoteKey,Name,Role,Selectable,Writable,UidValidity) " +
+                    "VALUES($a,$key,$name,$role,$selectable,$writable,$validity) " +
+                    "ON CONFLICT(AccountId,RemoteKey) DO UPDATE SET Name=excluded.Name,Role=excluded.Role," +
+                    "Selectable=excluded.Selectable,Writable=excluded.Writable;",
+                    ("$a", account.Value), ("$key", mailbox.RemoteKey), ("$name", mailbox.Name),
+                    ("$role", (int)mailbox.Role), ("$selectable", mailbox.Selectable),
+                    ("$writable", mailbox.Writable), ("$validity", mailbox.UidValidity));
+            }
+
+            if (roles is not null)
+            {
+                Execute(connection, transaction,
+                    "INSERT INTO Preferences(Scope,Key,Value,PayloadVersion) VALUES($scope,'roles',$value,1) " +
+                    "ON CONFLICT(Scope,Key) DO UPDATE SET Value=excluded.Value,PayloadVersion=1;",
+                    ("$scope", "account:" + account.Value.ToString(CultureInfo.InvariantCulture)),
+                    ("$value", JsonSerializer.Serialize(roles)));
+            }
+
+            transaction.Commit();
+            return true;
+        }, cancellationToken);
+    }
+
+    public Task<AppearanceSettings> ReadAsync(CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(connection, null,
+                "SELECT Value FROM Preferences WHERE Scope='client' AND Key='appearance' AND PayloadVersion=1;");
+            if (command.ExecuteScalar() is not string json)
+            {
+                return AppearanceSettings.Default;
+            }
+
+            try
+            {
+                AppearanceSettings? settings = JsonSerializer.Deserialize<AppearanceSettings>(json);
+                return settings is not null && settings.IsValid ? settings : AppearanceSettings.Default;
+            }
+            catch (JsonException)
+            {
+                return AppearanceSettings.Default;
+            }
+        }, cancellationToken);
+    }
+
+    public async Task<Failure> SaveAsync(AppearanceSettings settings, CancellationToken cancellationToken)
+    {
+        if (!settings.IsValid)
+        {
+            return Failure.Validation;
+        }
+
+        await WriteAsync(connection =>
+        {
+            Execute(connection, null,
+                "INSERT INTO Preferences(Scope,Key,Value,PayloadVersion) VALUES('client','appearance',$value,1) " +
+                "ON CONFLICT(Scope,Key) DO UPDATE SET Value=excluded.Value,PayloadVersion=1;",
+                ("$value", JsonSerializer.Serialize(settings)));
+            return true;
+        }, cancellationToken).ConfigureAwait(false);
+        return Failure.None;
+    }
+
+    public Task<DesktopPreferences> ReadDesktopPreferencesAsync(CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(connection, null,
+                "SELECT Value FROM Preferences WHERE Scope='client' AND Key='desktop' AND PayloadVersion=1;");
+            if (command.ExecuteScalar() is not string json)
+            {
+                return DesktopPreferences.Default;
+            }
+
+            try
+            {
+                return JsonSerializer.Deserialize<DesktopPreferences>(json) ?? DesktopPreferences.Default;
+            }
+            catch (JsonException)
+            {
+                return DesktopPreferences.Default;
+            }
+        }, cancellationToken);
+    }
+
+    public Task SaveDesktopPreferencesAsync(DesktopPreferences preferences, CancellationToken cancellationToken)
+    {
+        return WriteAsync(connection =>
+        {
+            Execute(connection, null,
+                "INSERT INTO Preferences(Scope,Key,Value,PayloadVersion) VALUES('client','desktop',$value,1) " +
+                "ON CONFLICT(Scope,Key) DO UPDATE SET Value=excluded.Value,PayloadVersion=1;",
+                ("$value", JsonSerializer.Serialize(preferences)));
+            return true;
+        }, cancellationToken);
+    }
+
+    public Task<ImmutableArray<AccountConfiguration>> AccountsAsync(CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(connection, null,
+                "SELECT a.AccountId,a.DisplayName,a.Configuration,a.Capabilities,p.Value FROM Accounts a " +
+                "LEFT JOIN Preferences p ON p.Scope='identity:'||a.AccountId AND p.Key='primary' AND p.PayloadVersion=1 " +
+                "WHERE a.Active=1 ORDER BY a.AccountId;");
+            using SqliteDataReader reader = command.ExecuteReader();
+            ImmutableArray<AccountConfiguration>.Builder accounts = ImmutableArray.CreateBuilder<AccountConfiguration>();
+            while (reader.Read())
+            {
+                if (!reader.GetString(2).StartsWith("[", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                MailEndpoint[] endpoints = JsonSerializer.Deserialize<MailEndpoint[]>(reader.GetString(2))!;
+                if (endpoints.Length == 2)
+                {
+                    accounts.Add(new AccountConfiguration(new AccountId(reader.GetInt64(0)), reader.GetString(1),
+                        endpoints[0], endpoints[1], ReadCapabilities(reader.GetString(3)),
+                        reader.IsDBNull(4) ? null : ReadIdentity(reader.GetString(4))));
+                }
+            }
+
+            return accounts.ToImmutable();
+        }, cancellationToken);
+    }
+
+    public Task<ImmutableArray<MailboxSnapshot>> MailboxesAsync(CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(connection, null,
+                "SELECT AccountId,FolderId,RemoteKey,Name,Role,Selectable,Writable,UidValidity FROM Collections " +
+                "ORDER BY AccountId,Name;");
+            using SqliteDataReader reader = command.ExecuteReader();
+            ImmutableArray<MailboxSnapshot>.Builder mailboxes = ImmutableArray.CreateBuilder<MailboxSnapshot>();
+            while (reader.Read())
+            {
+                mailboxes.Add(new MailboxSnapshot(new AccountId(reader.GetInt64(0)), new FolderId(reader.GetInt64(1)),
+                    reader.GetString(2), reader.GetString(3), (MailboxRole)reader.GetInt32(4), reader.GetBoolean(5),
+                    reader.GetBoolean(6), checked((uint)reader.GetInt64(7))));
+            }
+
+            return mailboxes.ToImmutable();
+        }, cancellationToken);
+    }
+
+    public Task SaveCapabilitiesAsync(AccountId account, Capabilities capabilities, CancellationToken cancellationToken)
+    {
+        return WriteAsync(connection =>
+        {
+            Execute(connection, null, "UPDATE Accounts SET Capabilities=$c WHERE AccountId=$a;",
+                ("$c", JsonSerializer.Serialize(capabilities)), ("$a", account.Value));
+            return true;
+        }, cancellationToken);
+    }
+
+    public Task<Failure> SaveIdentityAsync(AccountId account, ComposeIdentity identity, CancellationToken cancellationToken)
+    {
+        return WriteAsync(connection =>
+        {
+            if (Convert.ToInt64(Scalar(connection, null, "SELECT count(*) FROM Accounts WHERE AccountId=$a AND Active=1;",
+                ("$a", account.Value)), CultureInfo.InvariantCulture) != 1)
+            {
+                return Failure.NotFound;
+            }
+
+            Execute(connection, null,
+                "INSERT INTO Preferences(Scope,Key,Value,PayloadVersion) VALUES($s,'primary',$v,1) " +
+                "ON CONFLICT(Scope,Key) DO UPDATE SET Value=excluded.Value,PayloadVersion=1;",
+                ("$s", "identity:" + account.Value.ToString(CultureInfo.InvariantCulture)),
+                ("$v", JsonSerializer.Serialize(identity)));
+            return Failure.None;
+        }, cancellationToken);
+    }
+
+    private static ComposeIdentity? ReadIdentity(string json)
+    {
+        try
+        {
+            ComposeIdentity? identity = JsonSerializer.Deserialize<ComposeIdentity>(json);
+            return identity is not null && identity.IsValid ? identity : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static Capabilities? ReadCapabilities(string json)
+    {
+        if (json == "{}")
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<Capabilities>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    public Task<ImmutableArray<DraftSnapshot>> DraftsAsync(AccountId account, CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(connection, null,
+                "SELECT DraftId FROM Drafts WHERE AccountId=$a ORDER BY rowid DESC LIMIT 200;", ("$a", account.Value));
+            using SqliteDataReader reader = command.ExecuteReader();
+            ImmutableArray<Guid>.Builder ids = ImmutableArray.CreateBuilder<Guid>();
+            while (reader.Read())
+            {
+                ids.Add(Guid.ParseExact(reader.GetString(0), "N"));
+            }
+
+            reader.Close();
+            return ids.Select(id => ReadDraft(connection, null, id, account)!).ToImmutableArray();
+        }, cancellationToken);
+    }
+
+    public Task<ImmutableArray<DraftVersionSnapshot>> DraftVersionsAsync(AccountId account, Guid draft,
+        CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(connection, null,
+                "SELECT v.VersionKey,v.Origin,b.BlobId,b.Length,b.Hash,b.Protected FROM DraftVersions v " +
+                "JOIN Blobs b USING(AccountId,BlobId) WHERE v.AccountId=$a AND v.DraftId=$d " +
+                "ORDER BY v.Created DESC,v.VersionKey DESC LIMIT 200;", ("$a", account.Value), ("$d", draft.ToString("N")));
+            using SqliteDataReader reader = command.ExecuteReader();
+            ImmutableArray<DraftVersionSnapshot>.Builder versions = ImmutableArray.CreateBuilder<DraftVersionSnapshot>();
+            while (reader.Read())
+            {
+                versions.Add(new DraftVersionSnapshot(draft, account, reader.GetString(0), reader.GetString(1),
+                    new BlobReference(Guid.ParseExact(reader.GetString(2), "N"), account, reader.GetInt64(3),
+                        reader.GetString(4), reader.GetBoolean(5))));
+            }
+
+            return versions.ToImmutable();
+        }, cancellationToken);
+    }
+
+    public Task<ImmutableArray<OutboxEntry>> OutboxAsync(AccountId account, CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(connection, null,
+                "SELECT Frozen,State,Revision,Evidence,SubmissionId,AccountId,BlobId FROM OutboxSubmissions " +
+                "WHERE AccountId=$a ORDER BY Created DESC LIMIT 200;", ("$a", account.Value));
+            using SqliteDataReader reader = command.ExecuteReader();
+            ImmutableArray<OutboxEntry>.Builder entries = ImmutableArray.CreateBuilder<OutboxEntry>();
+            while (reader.Read())
+            {
+                entries.Add(ReadOutbox(reader));
+            }
+
+            return entries.ToImmutable();
+        }, cancellationToken);
+    }
 
     public static async Task<Outcome<SqliteProfile>> OpenAsync(string path, TimeProvider time,
         CancellationToken cancellationToken)
@@ -380,6 +684,51 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
+    public Task<ImmutableArray<AttachmentSnapshot>> ReadAttachmentsAsync(AccountId account, MessageId message,
+        CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(connection, null,
+                "SELECT PartKey,FileName,MediaType,Size FROM Attachments WHERE AccountId=$a AND MessageId=$m " +
+                "AND substr(PartKey,1,5)='imap:' ORDER BY AttachmentId LIMIT 200;", ("$a", account.Value), ("$m", message.Value));
+            using SqliteDataReader reader = command.ExecuteReader();
+            ImmutableArray<AttachmentSnapshot>.Builder attachments = ImmutableArray.CreateBuilder<AttachmentSnapshot>();
+            while (reader.Read())
+            {
+                attachments.Add(new AttachmentSnapshot(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                    reader.GetInt64(3), ContentAvailability.Missing));
+            }
+
+            return attachments.ToImmutable();
+        }, cancellationToken);
+    }
+
+    public Task<Failure> StoreAttachmentsAsync(MessageSnapshot message, ImmutableArray<AttachmentSnapshot> attachments,
+        CancellationToken cancellationToken)
+    {
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            if (!TargetMatches(connection, transaction, message.Account, message.Id, message.Provider))
+            {
+                return Failure.NeedsReview;
+            }
+
+            foreach (AttachmentSnapshot attachment in attachments)
+            {
+                Execute(connection, transaction,
+                    "INSERT INTO Attachments(AccountId,MessageId,PartKey,FileName,MediaType,Size) VALUES($a,$m,$p,$n,$t,$s) " +
+                    "ON CONFLICT(AccountId,MessageId,PartKey) DO UPDATE SET FileName=excluded.FileName," +
+                    "MediaType=excluded.MediaType,Size=excluded.Size;", ("$a", message.Account.Value), ("$m", message.Id.Value),
+                    ("$p", attachment.Part), ("$n", attachment.Name), ("$t", attachment.MediaType), ("$s", attachment.Length));
+            }
+
+            transaction.Commit();
+            return Failure.None;
+        }, cancellationToken);
+    }
+
     public Task<long> EvictAsync(AccountId account, long budgetBytes, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(budgetBytes);
@@ -509,7 +858,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 WHERE ($a IS NULL OR m.AccountId=$a) AND ($u=0 OR m.IsRead=0)
                 AND (i.UidValidity IS NULL OR i.UidValidity=c.UidValidity)
                 AND EXISTS(SELECT 1 FROM Memberships x WHERE x.AccountId=m.AccountId AND x.MessageId=m.MessageId
-                    AND ($f IS NULL OR x.FolderId=$f))
+                    AND ($f IS NULL OR x.FolderId=$f)
+                    AND ($inbox=0 OR EXISTS(SELECT 1 FROM Collections inbox WHERE inbox.AccountId=x.AccountId
+                        AND inbox.FolderId=x.FolderId AND inbox.Role=$role)))
                 AND (m.Date<$d OR (m.Date=$d AND m.MessageId<$i))
                 """;
             if (literal.Length > 0)
@@ -520,7 +871,8 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             sql += " ORDER BY m.Date DESC,m.MessageId DESC LIMIT $n;";
             using SqliteCommand command = Command(connection, null, sql, ("$a", request.Account?.Value),
                 ("$u", request.UnreadOnly), ("$f", request.Folder?.Value), ("$d", date), ("$i", id),
-                ("$q", literal), ("$n", request.Limit + 1));
+                ("$q", literal), ("$n", request.Limit + 1), ("$inbox", request.InboxOnly),
+                ("$role", (int)MailboxRole.Inbox));
             using SqliteDataReader reader = command.ExecuteReader();
             ImmutableArray<MessageSnapshot>.Builder messages = ImmutableArray.CreateBuilder<MessageSnapshot>();
             while (reader.Read())
@@ -802,6 +1154,25 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
+    public Task<bool> CancelQueuedAsync(Guid id, AccountId account, long revision, CancellationToken cancellationToken)
+    {
+        return WriteAsync(connection => Execute(connection, null,
+            "UPDATE OutboxSubmissions SET State=$cancelled,Revision=Revision+1 " +
+            "WHERE SubmissionId=$id AND AccountId=$account AND Revision=$revision AND State=$queued;",
+            ("$cancelled", (int)SubmissionState.Cancelled), ("$id", id.ToString("N")),
+            ("$account", account.Value), ("$revision", revision), ("$queued", (int)SubmissionState.Queued)) == 1,
+            cancellationToken);
+    }
+
+    public Task<bool> PrepareSentCopyRetryAsync(Guid id, AccountId account, long revision, CancellationToken cancellationToken)
+    {
+        return WriteAsync(connection => Execute(connection, null,
+            "UPDATE OutboxSubmissions SET State=$accepted,Revision=Revision+1 " +
+            "WHERE SubmissionId=$id AND AccountId=$account AND Revision=$revision AND State=$pending;",
+            ("$accepted", (int)SubmissionState.Accepted), ("$id", id.ToString("N")), ("$account", account.Value),
+            ("$revision", revision), ("$pending", (int)SubmissionState.SentCopyPending)) == 1, cancellationToken);
+    }
+
     public Task<OutboxEntry?> ClaimAsync(AccountId account, CancellationToken cancellationToken)
     {
         return WriteAsync<OutboxEntry?>(connection =>
@@ -964,6 +1335,37 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
 
     public Task<bool> ResolveAsync(OperationId id, AccountId account, bool retry, CancellationToken cancellationToken)
     {
+        return ResolveOperationAsync(id, account, null, retry, cancellationToken);
+    }
+
+    public Task<bool> ResolveAsync(OperationId id, AccountId account, long revision, bool retry,
+        CancellationToken cancellationToken)
+    {
+        return ResolveOperationAsync(id, account, revision, retry, cancellationToken);
+    }
+
+    public Task<ImmutableArray<CommandSnapshot>> CommandsAsync(AccountId account, CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(connection, null,
+                "SELECT o.Payload,o.State,o.Revision,o.Attempts,o.Due,o.Evidence,o.OperationId,o.AccountId,o.MessageId," +
+                "o.PayloadVersion,m.Subject FROM PendingOperations o LEFT JOIN Messages m ON m.AccountId=o.AccountId " +
+                "AND m.MessageId=o.MessageId WHERE o.AccountId=$a ORDER BY o.rowid DESC LIMIT 200;", ("$a", account.Value));
+            using SqliteDataReader reader = command.ExecuteReader();
+            ImmutableArray<CommandSnapshot>.Builder entries = ImmutableArray.CreateBuilder<CommandSnapshot>();
+            while (reader.Read())
+            {
+                entries.Add(new CommandSnapshot(ReadOperation(reader), reader.IsDBNull(10) ? "" : reader.GetString(10)));
+            }
+
+            return entries.ToImmutable();
+        }, cancellationToken);
+    }
+
+    private Task<bool> ResolveOperationAsync(OperationId id, AccountId account, long? revision, bool retry,
+        CancellationToken cancellationToken)
+    {
         return WriteAsync(connection =>
         {
             using SqliteTransaction transaction = connection.BeginTransaction();
@@ -977,7 +1379,8 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 entry = reader.Read() ? ReadOperation(reader) : null;
             }
 
-            if (entry is null || entry.State is not (PendingState.NeedsAuthentication or PendingState.NeedsReview) ||
+            if (entry is null || (revision.HasValue && entry.Revision != revision.Value) ||
+                entry.State is not (PendingState.NeedsAuthentication or PendingState.NeedsReview) ||
                 (retry && !TargetMatches(connection, transaction, entry.Intent)))
             {
                 return false;
@@ -1175,13 +1578,19 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
 
     private static bool TargetMatches(SqliteConnection connection, SqliteTransaction transaction, MutationIntent intent)
     {
+        return TargetMatches(connection, transaction, intent.Account, intent.Target, intent.Provider);
+    }
+
+    private static bool TargetMatches(SqliteConnection connection, SqliteTransaction transaction, AccountId account,
+        MessageId target, ProviderIdentity provider)
+    {
         long count = Convert.ToInt64(Scalar(connection, transaction,
             """
             SELECT count(*) FROM Messages m WHERE m.AccountId=$a AND m.MessageId=$m AND m.ProviderKey=$k
             AND EXISTS(SELECT 1 FROM Memberships x WHERE x.AccountId=m.AccountId AND x.MessageId=m.MessageId)
-            """, ("$a", intent.Account.Value), ("$m", intent.Target.Value), ("$k", intent.Provider.Key)),
+            """, ("$a", account.Value), ("$m", target.Value), ("$k", provider.Key)),
             CultureInfo.InvariantCulture);
-        ImapIdentity? imap = intent.Provider.Imap;
+        ImapIdentity? imap = provider.Imap;
         if (count != 1 || imap is null)
         {
             return count == 1;
@@ -1192,7 +1601,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             SELECT count(*) FROM ImapInstances i JOIN Collections c USING(AccountId,FolderId)
             WHERE i.AccountId=$a AND i.MessageId=$m AND c.RemoteKey=$k
             AND i.UidValidity=$v AND c.UidValidity=$v AND i.Uid=$u;
-            """, ("$a", intent.Account.Value), ("$m", intent.Target.Value), ("$k", imap.Mailbox),
+            """, ("$a", account.Value), ("$m", target.Value), ("$k", imap.Mailbox),
             ("$v", imap.UidValidity), ("$u", imap.Uid)), CultureInfo.InvariantCulture) == 1;
     }
 

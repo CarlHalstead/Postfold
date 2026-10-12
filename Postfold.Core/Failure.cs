@@ -8,5 +8,6 @@ namespace Postfold.Core;
 
 public enum Failure
 {
-    None, Validation, NotFound, NeedsAuthentication, NeedsReview, Transient, Unavailable, Corrupt, NewerSchema, CursorExpired
+    None, Validation, NotFound, NeedsAuthentication, NeedsReview, Transient, Unavailable, Corrupt, NewerSchema, CursorExpired,
+    TlsRejected, PolicyBlocked, CredentialStorageUnavailable, Unsupported
 }

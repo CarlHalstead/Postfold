@@ -6,4 +6,5 @@ using System.Threading.Tasks;
 
 namespace Postfold.Core;
 
-public sealed record AttachmentSnapshot(string Part, string Name, string MediaType, long Length);
+public sealed record AttachmentSnapshot(string Part, string Name, string MediaType, long Length,
+    ContentAvailability Availability = ContentAvailability.Available);

@@ -13,12 +13,14 @@ using MailKit.Net.Imap;
 using MailKit.Search;
 using MailKit.Security;
 using MimeKit;
+using MimeKit.IO;
+using MimeKit.IO.Filters;
 using Postfold.Core;
 
 namespace Postfold.Protocols;
 
 public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailboxMutator, ISentCopyStore,
-    IRemoteDraftTransport, IIdleTransport
+    IRemoteDraftTransport, IIdleTransport, IMessageAttachmentReader
 {
     private readonly MailEndpoint _endpoint;
     private readonly ICredentialStore _credentials;
@@ -26,6 +28,7 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
     private readonly SemaphoreSlim _session = new SemaphoreSlim(1, 1);
     private readonly long _maximumContentBytes;
     private ImmutableArray<MailboxSnapshot> _mailboxes = [];
+    private FolderRoles? _roles;
     private readonly object _idleGate = new object();
     private readonly TimeProvider _time;
     private CancellationTokenSource? _idleDone;
@@ -64,6 +67,38 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
         get;
     }
     public Capabilities Capabilities { get; private set; } = new Capabilities(false, false, false, false, false, false);
+
+    public void RestoreMailboxes(ImmutableArray<MailboxSnapshot> mailboxes)
+    {
+        if (mailboxes.Any(item => item.Account != Account))
+        {
+            throw new ArgumentException("Mailbox catalog belongs to another account.", nameof(mailboxes));
+        }
+
+        _mailboxes = mailboxes;
+    }
+
+    public void RestoreCapabilities(Capabilities? capabilities)
+    {
+        if (capabilities is not null)
+        {
+            Capabilities = capabilities;
+        }
+    }
+
+    public void SetRoles(FolderRoles? roles)
+    {
+        if (roles is not null && !roles.IsValid)
+        {
+            throw new ArgumentException("Invalid folder roles.", nameof(roles));
+        }
+
+        _roles = roles;
+        if (roles is not null)
+        {
+            _mailboxes = _mailboxes.Select(roles.Apply).ToImmutableArray();
+        }
+    }
 
     public async Task<Outcome<ImmutableArray<MailboxSnapshot>>> DiscoverAsync(CancellationToken cancellationToken)
     {
@@ -434,6 +469,145 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
         }
     }
 
+    public async Task<Outcome<ImmutableArray<AttachmentSnapshot>>> ReadAttachmentsAsync(ProviderIdentity identity,
+        CancellationToken cancellationToken)
+    {
+        if (identity.Account != Account || identity.Imap is null || identity.Imap.Account != Account)
+        {
+            return Outcome<ImmutableArray<AttachmentSnapshot>>.Fail(Failure.Validation);
+        }
+
+        await AcquireSessionAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Outcome<(IMailFolder Folder, IMessageSummary Summary)> source = await AttachmentSourceAsync(identity.Imap,
+                cancellationToken).ConfigureAwait(false);
+            if (!source.IsSuccess)
+            {
+                return Outcome<ImmutableArray<AttachmentSnapshot>>.Fail(source.Failure);
+            }
+
+            ImmutableArray<AttachmentSnapshot>.Builder attachments = ImmutableArray.CreateBuilder<AttachmentSnapshot>();
+            foreach (BodyPartBasic part in source.Value.Summary.Attachments)
+            {
+                if (attachments.Count == 200 || part.PartSpecifier.Length > 128 || part.FileName?.Length > 4096)
+                {
+                    return Outcome<ImmutableArray<AttachmentSnapshot>>.Fail(Failure.Validation);
+                }
+
+                attachments.Add(new AttachmentSnapshot("imap:" + part.PartSpecifier, part.FileName ?? "attachment",
+                    part.ContentType.MimeType, part.Octets, ContentAvailability.Missing));
+            }
+
+            return Outcome<ImmutableArray<AttachmentSnapshot>>.Success(attachments.ToImmutable());
+        }
+        catch (Exception exception) when (Expected(exception))
+        {
+            return Outcome<ImmutableArray<AttachmentSnapshot>>.Fail(Classify(exception));
+        }
+        finally
+        {
+            _session.Release();
+        }
+    }
+
+    public async Task<Failure> CopyAttachmentAsync(ProviderIdentity identity, string part, Stream destination,
+        CancellationToken cancellationToken)
+    {
+        if (identity.Account != Account || identity.Imap is null || identity.Imap.Account != Account ||
+            !part.StartsWith("imap:", StringComparison.Ordinal) || part.Length is < 6 or > 133)
+        {
+            return Failure.Validation;
+        }
+
+        string section = part[5..];
+        if (!section.All(character => char.IsAsciiDigit(character) || character == '.'))
+        {
+            return Failure.Validation;
+        }
+
+        await AcquireSessionAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Outcome<(IMailFolder Folder, IMessageSummary Summary)> source = await AttachmentSourceAsync(identity.Imap,
+                cancellationToken).ConfigureAwait(false);
+            if (!source.IsSuccess)
+            {
+                return source.Failure;
+            }
+
+            BodyPartBasic? attachment = source.Value.Summary.Attachments.SingleOrDefault(item => item.PartSpecifier == section);
+            if (attachment is null)
+            {
+                return Failure.NotFound;
+            }
+
+            if (attachment.Octets > _maximumContentBytes)
+            {
+                return Failure.Validation;
+            }
+
+            ContentEncoding encoding = attachment.ContentTransferEncoding?.ToLowerInvariant() switch
+            {
+                "7bit" => ContentEncoding.SevenBit,
+                "8bit" => ContentEncoding.EightBit,
+                "binary" => ContentEncoding.Binary,
+                "base64" => ContentEncoding.Base64,
+                "quoted-printable" => ContentEncoding.QuotedPrintable,
+                _ => ContentEncoding.Default
+            };
+            if (encoding == ContentEncoding.Default)
+            {
+                return Failure.Validation;
+            }
+
+            using Stream remote = await source.Value.Folder.GetStreamAsync(new UniqueId(identity.Imap.Uid), section, 0,
+                checked((int)_maximumContentBytes + 1), cancellationToken).ConfigureAwait(false);
+            using BoundedStream encoded = new BoundedStream(remote, _maximumContentBytes);
+            using FilteredStream decoded = new FilteredStream(encoded);
+            if (encoding is ContentEncoding.Base64 or ContentEncoding.QuotedPrintable)
+            {
+                decoded.Add(DecoderFilter.Create(encoding));
+            }
+
+            using BoundedStream output = new BoundedStream(destination, _maximumContentBytes);
+            await decoded.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+            return encoded.Length == attachment.Octets ? Failure.None : Failure.Unavailable;
+        }
+        catch (Exception exception) when (Expected(exception))
+        {
+            return Classify(exception);
+        }
+        finally
+        {
+            _session.Release();
+        }
+    }
+
+    private async Task<Outcome<(IMailFolder Folder, IMessageSummary Summary)>> AttachmentSourceAsync(ImapIdentity identity,
+        CancellationToken cancellationToken)
+    {
+        Failure failure = await ConnectAsync(cancellationToken).ConfigureAwait(false);
+        if (failure != Failure.None)
+        {
+            return Outcome<(IMailFolder, IMessageSummary)>.Fail(failure);
+        }
+
+        IMailFolder folder = await _client.GetFolderAsync(identity.Mailbox, cancellationToken).ConfigureAwait(false);
+        await folder.OpenAsync(FolderAccess.ReadOnly, cancellationToken).ConfigureAwait(false);
+        if (folder.UidValidity != identity.UidValidity)
+        {
+            return Outcome<(IMailFolder, IMessageSummary)>.Fail(Failure.NeedsReview);
+        }
+
+        UniqueId uid = new UniqueId(identity.Uid);
+        IList<IMessageSummary> metadata = await folder.FetchAsync([uid], new FetchRequest(
+            MessageSummaryItems.UniqueId | MessageSummaryItems.BodyStructure), cancellationToken).ConfigureAwait(false);
+        IMessageSummary? summary = metadata.SingleOrDefault(item => item.UniqueId == uid);
+        return summary is null ? Outcome<(IMailFolder, IMessageSummary)>.Fail(Failure.NotFound) :
+            Outcome<(IMailFolder, IMessageSummary)>.Success((folder, summary));
+    }
+
     public async Task<Failure> SaveAsync(FrozenSubmission submission, Stream content, CancellationToken cancellationToken)
     {
         if (submission.Account != Account)
@@ -455,11 +629,8 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
                 return Failure.NeedsReview;
             }
 
-            IMailFolder? sent = _client.GetFolder(SpecialFolder.Sent);
-            if (sent is null)
-            {
-                return Failure.NeedsReview;
-            }
+            MailboxSnapshot destination = _mailboxes.Single(item => item.Role == MailboxRole.Sent && item.Selectable);
+            IMailFolder sent = await _client.GetFolderAsync(destination.RemoteKey, cancellationToken).ConfigureAwait(false);
 
             using MimeMessage message = await MimeMessage.LoadAsync(content, cancellationToken).ConfigureAwait(false);
             await sent.AppendAsync(message, MessageFlags.Seen, cancellationToken).ConfigureAwait(false);
@@ -720,8 +891,9 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
             (folder.Attributes & FolderAttributes.Drafts) != 0 ? MailboxRole.Drafts :
             (folder.Attributes & FolderAttributes.Trash) != 0 ? MailboxRole.Trash :
             (folder.Attributes & FolderAttributes.Archive) != 0 ? MailboxRole.Archive : MailboxRole.Unresolved;
-        return new MailboxSnapshot(Account, new FolderId(0), folder.FullName, folder.Name, role,
+        MailboxSnapshot snapshot = new MailboxSnapshot(Account, new FolderId(0), folder.FullName, folder.Name, role,
             (folder.Attributes & FolderAttributes.NoSelect) == 0, true, folder.UidValidity);
+        return _roles is null ? snapshot : _roles.Apply(snapshot);
     }
 
     private static ProviderIdentity Identity(ImapIdentity identity)
@@ -733,7 +905,8 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
 
     private static bool Expected(Exception exception)
     {
-        return exception is IOException or ImapCommandException or ImapProtocolException or SslHandshakeException or
+        return exception is IOException or System.Net.Sockets.SocketException or ImapCommandException or
+            ImapProtocolException or SslHandshakeException or
             NotSupportedException or MessageNotFoundException or FolderNotFoundException or
             MailKit.Security.AuthenticationException or System.Security.Authentication.AuthenticationException;
     }
@@ -741,8 +914,9 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
     private static Failure Classify(Exception exception)
     {
         return exception is MailKit.Security.AuthenticationException ? Failure.NeedsAuthentication :
-            exception is InvalidDataException or ImapCommandException or SslHandshakeException or
-                System.Security.Authentication.AuthenticationException or NotSupportedException or FormatException ?
+            exception is SslHandshakeException or System.Security.Authentication.AuthenticationException or
+                NotSupportedException ? Failure.TlsRejected :
+            exception is InvalidDataException or ImapCommandException or FormatException ?
                 Failure.Validation : exception is MessageNotFoundException or FolderNotFoundException ?
                 Failure.NeedsReview : Failure.Transient;
     }

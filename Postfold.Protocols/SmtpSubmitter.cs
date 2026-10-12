@@ -136,7 +136,8 @@ public sealed class SmtpSubmitter : IMessageSubmitter
         {
             return Result(submission, SubmissionState.Rejected, client.Phase, RecipientState.NotAccepted, Failure.Validation);
         }
-        catch (Exception exception) when (exception is IOException or SmtpProtocolException or SslHandshakeException or
+        catch (Exception exception) when (exception is IOException or System.Net.Sockets.SocketException or
+            SmtpProtocolException or SslHandshakeException or
             System.Security.Authentication.AuthenticationException or OperationCanceledException)
         {
             bool uncertain = client.Phase >= SubmissionPhase.DataStarted;
@@ -155,6 +156,49 @@ public sealed class SmtpSubmitter : IMessageSubmitter
                 client.Phase, recipients, uncertain ? Failure.NeedsReview :
                     exception is SslHandshakeException or InvalidDataException or
                         System.Security.Authentication.AuthenticationException ? Failure.Validation : Failure.Transient);
+        }
+    }
+
+    public async Task<Failure> TestAsync(CancellationToken cancellationToken)
+    {
+        Outcome<Credential> credential = await _credentials.ReadAsync(_endpoint.CredentialKey,
+            cancellationToken).ConfigureAwait(false);
+        if (!credential.IsSuccess)
+        {
+            return Failure.NeedsAuthentication;
+        }
+
+        using SmtpClient client = new SmtpClient { Timeout = 30000 };
+        try
+        {
+            await client.ConnectAsync(_endpoint.Host, _endpoint.Port,
+                _endpoint.Tls == TlsMode.Implicit ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls,
+                cancellationToken).ConfigureAwait(false);
+            await client.AuthenticateAsync(_endpoint.Username, credential.Value!.Secret,
+                cancellationToken).ConfigureAwait(false);
+            await client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
+            return Failure.None;
+        }
+        catch (AuthenticationException)
+        {
+            return Failure.NeedsAuthentication;
+        }
+        catch (SslHandshakeException)
+        {
+            return Failure.TlsRejected;
+        }
+        catch (System.Security.Authentication.AuthenticationException)
+        {
+            return Failure.TlsRejected;
+        }
+        catch (NotSupportedException)
+        {
+            return Failure.TlsRejected;
+        }
+        catch (Exception exception) when (exception is IOException or System.Net.Sockets.SocketException or
+            MailKit.ProtocolException or MailKit.CommandException)
+        {
+            return Failure.Transient;
         }
     }
 

@@ -15,4 +15,6 @@ public interface IOutboxStore
     Task<OutboxEntry?> ReadAsync(Guid id, AccountId account, CancellationToken cancellationToken);
     Task<bool> CompleteSentCopyAsync(Guid id, AccountId account, long revision, CancellationToken cancellationToken);
     Task RecoverAsync(CancellationToken cancellationToken);
+    Task<bool> CancelQueuedAsync(Guid id, AccountId account, long revision, CancellationToken cancellationToken);
+    Task<bool> PrepareSentCopyRetryAsync(Guid id, AccountId account, long revision, CancellationToken cancellationToken);
 }

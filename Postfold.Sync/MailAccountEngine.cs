@@ -74,6 +74,7 @@ public sealed class MailAccountEngine : IMailAccountEngine
     {
         get;
     }
+    public Capabilities Capabilities => _reader.Capabilities;
 
     public async Task<Failure> ReconcileAsync(string mailbox, CancellationToken cancellationToken)
     {
@@ -319,13 +320,65 @@ public sealed class MailAccountEngine : IMailAccountEngine
 
     public Task<Failure> FetchBodyAsync(MessageSnapshot message, CancellationToken cancellationToken)
     {
-        if (message.Account != Account || !_policy.AllowNetwork)
+        return FetchContentAsync(message, false, cancellationToken);
+    }
+
+    public Task<Failure> FetchFullMessageAsync(MessageSnapshot message, CancellationToken cancellationToken)
+    {
+        return FetchContentAsync(message, true, cancellationToken);
+    }
+
+    private Task<Failure> FetchContentAsync(MessageSnapshot message, bool fullMessage, CancellationToken cancellationToken)
+    {
+        if (message.Account != Account)
         {
             return Task.FromResult(Failure.Validation);
         }
 
+        if (!_policy.AllowNetwork)
+        {
+            return Task.FromResult(Failure.Unavailable);
+        }
+
         return _scheduler.EnqueueAsync(Account,
-            new BodyFetchWork(message, _content, _blobs, _mime, _syncStore, _limits.MaximumMimeBytes),
+            new BodyFetchWork(message, _content, _blobs, _mime, _syncStore, _limits.MaximumMimeBytes, fullMessage),
             WorkPriority.Interactive, cancellationToken);
+    }
+
+    public async Task<Failure> CopyAttachmentAsync(MessageSnapshot message, string part, Stream destination,
+        CancellationToken cancellationToken)
+    {
+        if (message.Account != Account || !_policy.AllowNetwork)
+        {
+            return Failure.Unavailable;
+        }
+
+        if (part.StartsWith("imap:", StringComparison.Ordinal) && _content is IMessageAttachmentReader attachments)
+        {
+            return await attachments.CopyAttachmentAsync(message.Provider, part, destination,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        Outcome<Stream> opened = await _content.OpenAsync(message.Provider, cancellationToken).ConfigureAwait(false);
+        if (!opened.IsSuccess)
+        {
+            return opened.Failure;
+        }
+
+        await using Stream source = opened.Value!;
+        Outcome<bool> copied = await _mime.CopyAttachmentAsync(source, part, destination,
+            cancellationToken).ConfigureAwait(false);
+        return copied.Failure;
+    }
+
+    public Task<Outcome<ImmutableArray<AttachmentSnapshot>>> ReadAttachmentsAsync(MessageSnapshot message,
+        CancellationToken cancellationToken)
+    {
+        if (message.Account != Account || !_policy.AllowNetwork || _content is not IMessageAttachmentReader attachments)
+        {
+            return Task.FromResult(Outcome<ImmutableArray<AttachmentSnapshot>>.Fail(Failure.Unavailable));
+        }
+
+        return attachments.ReadAttachmentsAsync(message.Provider, cancellationToken);
     }
 }

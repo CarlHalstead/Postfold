@@ -15,4 +15,6 @@ public interface IOperationStore
         CancellationToken cancellationToken);
     Task RecoverAsync(CancellationToken cancellationToken);
     Task<bool> ResolveAsync(OperationId id, AccountId account, bool retry, CancellationToken cancellationToken);
+    Task<bool> ResolveAsync(OperationId id, AccountId account, long revision, bool retry,
+        CancellationToken cancellationToken);
 }

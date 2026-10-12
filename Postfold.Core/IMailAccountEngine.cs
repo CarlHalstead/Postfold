@@ -12,6 +12,10 @@ public interface IMailAccountEngine : IAsyncDisposable
     {
         get;
     }
+    Capabilities Capabilities
+    {
+        get;
+    }
     ImmutableArray<MailboxSnapshot> Mailboxes
     {
         get;
@@ -27,4 +31,9 @@ public interface IMailAccountEngine : IAsyncDisposable
     Task<Failure> ProcessOutboxAsync(CancellationToken cancellationToken);
     Task<Failure> StoreSentCopyAsync(Guid submission, CancellationToken cancellationToken);
     Task<Failure> FetchBodyAsync(MessageSnapshot message, CancellationToken cancellationToken);
+    Task<Failure> FetchFullMessageAsync(MessageSnapshot message, CancellationToken cancellationToken);
+    Task<Outcome<ImmutableArray<AttachmentSnapshot>>> ReadAttachmentsAsync(MessageSnapshot message,
+        CancellationToken cancellationToken);
+    Task<Failure> CopyAttachmentAsync(MessageSnapshot message, string part, Stream destination,
+        CancellationToken cancellationToken);
 }

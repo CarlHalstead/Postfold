@@ -81,6 +81,11 @@ internal sealed class LocalMailServer : IAsyncDisposable
     {
         get; set;
     }
+
+    internal bool AttachmentMessage
+    {
+        get; set;
+    }
     internal bool OmitNativeMove
     {
         get; set;
@@ -315,7 +320,7 @@ internal sealed class LocalMailServer : IAsyncDisposable
                     string part = command[partStart..command.IndexOf(']', partStart)];
                     if (part.Length > 0)
                     {
-                        content = "synthetic body\r\n";
+                        content = AttachmentMessage && part == "2" ? "c3ludGhldGljIGF0dGFjaG1lbnQ=\r\n" : "synthetic body\r\n";
                     }
 
                     await ReplyAsync(stream, "* 1 FETCH (UID " + uid + " BODY[" + part + "]<0> {" +
@@ -327,7 +332,11 @@ internal sealed class LocalMailServer : IAsyncDisposable
                     {
                         await ReplyAsync(stream, "* " + uid + " FETCH (UID " + uid +
                             " FLAGS () RFC822.SIZE 100 " + (AdvancedImap ? "MODSEQ (10) " : "") +
-                            "BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 16 1) " +
+                            "BODYSTRUCTURE " + (AttachmentMessage ?
+                                "((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 16 1) " +
+                                "(\"APPLICATION\" \"OCTET-STREAM\" (\"NAME\" \"report.bin\") NIL NIL \"BASE64\" 30 " +
+                                "NIL (\"ATTACHMENT\" (\"FILENAME\" \"report.bin\")) NIL NIL) \"MIXED\" NIL NIL NIL) " :
+                                "(\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 16 1) ") +
                             "ENVELOPE (\"01 Jan 2026 00:00:00 +0000\" \"Synthetic " + uid + "\" " +
                             "((\"Sender\" NIL \"sender\" \"synthetic.invalid\")) NIL NIL " +
                             "((NIL NIL \"recipient\" \"synthetic.invalid\")) NIL NIL NIL \"<" + uid +

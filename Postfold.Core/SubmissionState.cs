@@ -8,5 +8,5 @@ namespace Postfold.Core;
 
 public enum SubmissionState
 {
-    Queued, Submitting, Accepted, SentCopyPending, Completed, Rejected, PartiallyAccepted, Uncertain
+    Queued, Submitting, Accepted, SentCopyPending, Completed, Rejected, PartiallyAccepted, Uncertain, Cancelled
 }

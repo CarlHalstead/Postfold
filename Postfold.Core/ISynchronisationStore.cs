@@ -13,4 +13,6 @@ public interface ISynchronisationStore
     Task CommitAccountAsync(CanonicalPage page, CancellationToken cancellationToken);
     Task StoreBodyAsync(AccountId account, MessageId message, BlobReference blob, MimeSnapshot content,
         CancellationToken cancellationToken);
+    Task<Failure> StoreAttachmentsAsync(MessageSnapshot message, ImmutableArray<AttachmentSnapshot> attachments,
+        CancellationToken cancellationToken);
 }

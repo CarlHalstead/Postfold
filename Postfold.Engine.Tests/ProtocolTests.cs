@@ -433,6 +433,7 @@ public sealed class ProtocolTests
         Outcome<ImmutableArray<MailboxSnapshot>> result = await reader.DiscoverAsync(CancellationToken.None);
 
         // Assert
+        Assert.That(result.Failure, Is.EqualTo(Failure.TlsRejected));
         Assert.That(result.IsSuccess, Is.False);
         Assert.That(server.Commands.Any(line => line.Contains("AUTH", StringComparison.Ordinal)), Is.False);
     }

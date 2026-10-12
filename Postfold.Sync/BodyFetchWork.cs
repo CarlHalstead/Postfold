@@ -13,9 +13,10 @@ public sealed class BodyFetchWork : IAccountWork
     private readonly IMimePipeline _mime;
     private readonly ISynchronisationStore _store;
     private readonly long _maximumBytes;
+    private readonly bool _fullMessage;
 
     public BodyFetchWork(MessageSnapshot message, IMessageContentReader reader, IBlobStore blobs,
-        IMimePipeline mime, ISynchronisationStore store, long maximumBytes)
+        IMimePipeline mime, ISynchronisationStore store, long maximumBytes, bool fullMessage = false)
     {
         _message = message;
         _reader = reader;
@@ -23,11 +24,14 @@ public sealed class BodyFetchWork : IAccountWork
         _mime = mime;
         _store = store;
         _maximumBytes = maximumBytes;
+        _fullMessage = fullMessage;
     }
 
     public async Task<Failure> RunAsync(CancellationToken cancellationToken)
     {
-        Outcome<Stream> result = await _reader.OpenBodyAsync(_message.Provider, cancellationToken).ConfigureAwait(false);
+        Outcome<Stream> result = _fullMessage ?
+            await _reader.OpenAsync(_message.Provider, cancellationToken).ConfigureAwait(false) :
+            await _reader.OpenBodyAsync(_message.Provider, cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
         {
             return result.Failure;

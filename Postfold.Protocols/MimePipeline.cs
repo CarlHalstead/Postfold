@@ -10,7 +10,7 @@ using Postfold.Core;
 
 namespace Postfold.Protocols;
 
-public sealed class MimePipeline : IMimePipeline
+public sealed class MimePipeline : IMimePipeline, IMimeDraftReader, IMimeDraftWriter
 {
     private readonly long _maximumBytes;
     private readonly int _maximumParts;
@@ -61,13 +61,166 @@ public sealed class MimePipeline : IMimePipeline
                 }
             }
 
+            InternetAddressList reply = message.ReplyTo.Count > 0 ? message.ReplyTo : message.From;
+            ImmutableArray<string> replyRecipients = reply.Mailboxes.Select(item => item.Address).Take(101).ToImmutableArray();
+            if (replyRecipients.Length > 100)
+            {
+                return Outcome<MimeSnapshot>.Fail(Failure.Validation);
+            }
+
             return Outcome<MimeSnapshot>.Success(new MimeSnapshot(message.Subject ?? "", message.From.ToString(),
-                message.MessageId, message.TextBody, message.HtmlBody, attachments.ToImmutable()));
+                message.MessageId, message.TextBody, message.HtmlBody, attachments.ToImmutable(), replyRecipients));
         }
         catch (Exception exception) when (exception is FormatException or InvalidDataException)
         {
             return Outcome<MimeSnapshot>.Fail(Failure.Validation);
         }
+    }
+
+    public async Task<Outcome<ComposeContent>> ReadComposeAsync(AccountId account, Stream source,
+        CancellationToken cancellationToken)
+    {
+        if (_blobs is null)
+        {
+            return Outcome<ComposeContent>.Fail(Failure.Unavailable);
+        }
+
+        try
+        {
+            using MimeMessage message = await LoadAsync(source, cancellationToken).ConfigureAwait(false);
+            List<MimeEntity> parts = Enumerate(message.Body ?? throw new InvalidDataException("Missing MIME body."));
+            ImmutableArray<ComposeAttachment>.Builder attachments = ImmutableArray.CreateBuilder<ComposeAttachment>();
+            long decoded = 0;
+            foreach (MimeEntity entity in parts)
+            {
+                if (entity is MessagePart nested && nested.IsAttachment)
+                {
+                    return Outcome<ComposeContent>.Fail(Failure.NeedsReview);
+                }
+
+                if (entity is not MimePart part || !part.IsAttachment || part.Content is null)
+                {
+                    continue;
+                }
+
+                using MemoryStream content = new MemoryStream();
+                using (BoundedStream bounded = new BoundedStream(content, _maximumBytes - decoded))
+                {
+                    await part.Content.DecodeToAsync(bounded, cancellationToken).ConfigureAwait(false);
+                }
+
+                decoded += content.Length;
+                content.Position = 0;
+                BlobReference blob = await _blobs.WriteAsync(account, content, _maximumBytes, true,
+                    cancellationToken).ConfigureAwait(false);
+                attachments.Add(new ComposeAttachment(part.FileName ?? "attachment", part.ContentType.MimeType, blob));
+            }
+
+            return Outcome<ComposeContent>.Success(new ComposeContent(message.From.Mailboxes.FirstOrDefault()?.Address ?? "",
+                message.To.Mailboxes.Select(item => item.Address).ToImmutableArray(), message.Subject ?? "",
+                message.TextBody ?? "", message.Date, message.MessageId ?? Guid.NewGuid().ToString("N") + "@postfold.invalid",
+                attachments.ToImmutable()));
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidDataException)
+        {
+            return Outcome<ComposeContent>.Fail(Failure.Validation);
+        }
+    }
+
+    public async Task<Outcome<MimeHtmlDocument>> ReadHtmlAsync(Stream source, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using MimeMessage message = await LoadAsync(source, cancellationToken).ConfigureAwait(false);
+            MimeEntity body = message.Body ?? throw new InvalidDataException("Missing MIME body.");
+            _ = Enumerate(body);
+            (TextPart? Html, MultipartRelated? Scope) selected = SelectHtml(body, null);
+            if (selected.Html is null || selected.Html.Content is null)
+            {
+                return Outcome<MimeHtmlDocument>.Fail(Failure.NotFound);
+            }
+
+            using MemoryStream htmlBytes = new MemoryStream();
+            using (BoundedStream bounded = new BoundedStream(htmlBytes, 262144))
+            {
+                await selected.Html.Content.DecodeToAsync(bounded, cancellationToken).ConfigureAwait(false);
+            }
+
+            string html = selected.Html.Text;
+            if (System.Text.Encoding.UTF8.GetByteCount(html) > 262144)
+            {
+                return Outcome<MimeHtmlDocument>.Fail(Failure.Validation);
+            }
+
+            ImmutableArray<InlineImage>.Builder images = ImmutableArray.CreateBuilder<InlineImage>();
+            HashSet<string> identifiers = new HashSet<string>(StringComparer.Ordinal);
+            long total = 0;
+            if (selected.Scope is MultipartRelated related)
+            {
+                foreach (MimeEntity entity in related)
+                {
+                    if (entity is not MimePart part || part.IsAttachment || part.Content is null ||
+                        !part.ContentType.MimeType.Equals("image/png", StringComparison.OrdinalIgnoreCase) ||
+                        string.IsNullOrEmpty(part.ContentId))
+                    {
+                        continue;
+                    }
+
+                    if (part.ContentId.Length > 256 || !identifiers.Add(part.ContentId) || images.Count == 32)
+                    {
+                        return Outcome<MimeHtmlDocument>.Fail(Failure.Validation);
+                    }
+
+                    using MemoryStream decoded = new MemoryStream();
+                    using (BoundedStream bounded = new BoundedStream(decoded, Math.Min(4194304, 16777216 - total)))
+                    {
+                        await part.Content.DecodeToAsync(bounded, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    total += decoded.Length;
+                    images.Add(new InlineImage(part.ContentId, decoded.ToArray()));
+                }
+            }
+
+            return Outcome<MimeHtmlDocument>.Success(new MimeHtmlDocument(html, images.ToImmutable()));
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidDataException)
+        {
+            return Outcome<MimeHtmlDocument>.Fail(Failure.Validation);
+        }
+    }
+
+    private static (TextPart? Html, MultipartRelated? Scope) SelectHtml(MimeEntity entity, MultipartRelated? scope)
+    {
+        if (entity.IsAttachment || entity is MessagePart)
+        {
+            return (null, null);
+        }
+
+        if (entity is TextPart text)
+        {
+            return text.IsHtml ? (text, scope) : (null, null);
+        }
+
+        if (entity is MultipartRelated related)
+        {
+            return related.Root is MimeEntity root ? SelectHtml(root, related) : (null, null);
+        }
+
+        if (entity is Multipart multipart)
+        {
+            for (int offset = 0; offset < multipart.Count; offset++)
+            {
+                int index = multipart is MultipartAlternative ? multipart.Count - offset - 1 : offset;
+                (TextPart? Html, MultipartRelated? Scope) selected = SelectHtml(multipart[index], scope);
+                if (selected.Html is not null)
+                {
+                    return selected;
+                }
+            }
+        }
+
+        return (null, null);
     }
 
     public async Task<Outcome<bool>> CopyAttachmentAsync(Stream source, string part, Stream destination,
@@ -104,23 +257,41 @@ public sealed class MimePipeline : IMimePipeline
         }
     }
 
-    public async Task<Outcome<bool>> FreezeAsync(ComposeContent content, Stream destination,
+    public Task<Outcome<bool>> FreezeAsync(ComposeContent content, Stream destination,
         CancellationToken cancellationToken)
     {
+        return WriteComposeAsync(content, destination, false, cancellationToken);
+    }
+
+    public Task<Outcome<bool>> WriteDraftAsync(ComposeContent content, Stream destination,
+        CancellationToken cancellationToken)
+    {
+        return WriteComposeAsync(content, destination, true, cancellationToken);
+    }
+
+    private async Task<Outcome<bool>> WriteComposeAsync(ComposeContent content, Stream destination, bool draft,
+        CancellationToken cancellationToken)
+    {
+        MailboxAddress? sender = null;
+        ImmutableArray<string> recipients = content.Recipients.IsDefault ? [] : content.Recipients;
         if (content.Sender.Contains('\r') || content.Sender.Contains('\n') ||
-            !MailboxAddress.TryParse(content.Sender, out MailboxAddress? sender) ||
-            !string.Equals(sender.Address, content.Sender, StringComparison.OrdinalIgnoreCase) ||
-            content.Recipients.IsDefaultOrEmpty || content.Recipients.Length > 1000 ||
+            ((!draft || content.Sender.Length > 0) && (!MailboxAddress.TryParse(content.Sender, out sender) ||
+                !string.Equals(sender.Address, content.Sender, StringComparison.OrdinalIgnoreCase))) ||
+            (!draft && recipients.IsEmpty) || recipients.Length > 1000 ||
             content.Subject.Contains('\r') || content.Subject.Contains('\n') ||
             content.MessageId.Contains('\r') || content.MessageId.Contains('\n') ||
-            content.Recipients.Any(address => address.Contains('\r') || address.Contains('\n')))
+            recipients.Any(address => address.Contains('\r') || address.Contains('\n')))
         {
             return Outcome<bool>.Fail(Failure.Validation);
         }
 
         using MimeMessage message = new MimeMessage();
-        message.From.Add(sender);
-        foreach (string address in content.Recipients)
+        if (sender is not null)
+        {
+            message.From.Add(sender);
+        }
+
+        foreach (string address in recipients)
         {
             if (!MailboxAddress.TryParse(address, out MailboxAddress? recipient) ||
                 !string.Equals(recipient.Address, address, StringComparison.OrdinalIgnoreCase))
@@ -134,7 +305,10 @@ public sealed class MimePipeline : IMimePipeline
         message.Subject = content.Subject;
         message.Date = content.Date;
         message.MessageId = content.MessageId;
-        message.Body = new TextPart("plain") { Text = content.PlainText };
+        message.Body = new TextPart("plain")
+        {
+            Text = content.PlainText + (string.IsNullOrEmpty(content.Signature) ? "" : "\n-- \n" + content.Signature)
+        };
         List<Stream> owned = new List<Stream>();
         try
         {

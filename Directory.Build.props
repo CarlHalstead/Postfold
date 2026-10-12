@@ -12,4 +12,8 @@
         <NuGetAuditMode>all</NuGetAuditMode>
         <Deterministic>true</Deterministic>
     </PropertyGroup>
+    <ItemGroup Condition="'$(MSBuildProjectName)' == 'Postfold.UI' Or '$(MSBuildProjectName)' == 'Postfold.Desktop' Or '$(MSBuildProjectName)' == 'Postfold.Foundation.Tests' Or '$(MSBuildProjectName)' == 'Postfold.Engine.Tests'">
+        <!-- The inherited build telemetry package contributes no client functionality. -->
+        <PackageReference Include="Avalonia.BuildServices" ExcludeAssets="all" PrivateAssets="all" />
+    </ItemGroup>
 </Project>
