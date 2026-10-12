@@ -1,7 +1,11 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Themes.Fluent;
-using Postfold.UI;
+using Postfold.Desktop.Composition;
+using Postfold.Desktop.Diagnostics;
+using Postfold.UI.Policies;
+using Postfold.UI.ViewModels;
+using Postfold.UI.Views;
 
 namespace Postfold.Desktop;
 

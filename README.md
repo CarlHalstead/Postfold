@@ -15,6 +15,7 @@ From the repository root:
 dotnet restore Postfold.slnx --locked-mode
 dotnet build Postfold.slnx --configuration Release --no-restore
 dotnet format Postfold.slnx --verify-no-changes --no-restore
+dotnet format style Postfold.slnx --verify-no-changes --no-restore --severity info --diagnostics IDE0005
 dotnet test Postfold.slnx --configuration Release --no-build --no-restore
 dotnet run --project Postfold.Desktop --configuration Release --no-build
 ```
@@ -100,11 +101,12 @@ CPU, RAM or storage specification is required. These diagnostic modes do not ins
 
 ## Contributing
 
-Use four spaces, Allman braces, explicit types, traditional object construction, file-scoped namespaces and
-explicit System-first usings. Keep UTF-8 without BOM, LF endings and a final newline. Nullable checking,
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete project structure, styling and validation standards.
+Use role folders, four spaces, Allman braces, explicit types, traditional object construction, file-scoped namespaces
+and alphabetical usings. Keep UTF-8 without BOM, LF endings and a final newline. Nullable checking,
 compiler warnings and the configured built-in style diagnostics fail the build; formatting must also pass.
 
-Review must cover member ordering, one matching top-level type per file, the 120-column guideline, descriptive
+Review must cover member ordering, one matching top-level type per file, readable wrapping, descriptive
 names and acronyms, async ownership/cancellation, interface scope and dependency direction. Built-in analyzers
 do not fully enforce these conventions. Generated exceptions are limited to generated sources in `obj`.
 Use NUnit constraint assertions, `Method_When_Then` names and visible Arrange/Act/Assert sections.

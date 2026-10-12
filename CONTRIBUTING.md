@@ -1,0 +1,118 @@
+# Contributing to Postfold
+
+## Project structure
+
+Application and test projects sit directly at the repository root. Do not introduce `src` or `tests` umbrella
+directories. Keep project files, dependency locks and essential project metadata at each project root.
+Only `Program.cs`, `App.cs` and `AssemblyInfo.cs` may be authored C# files at a project root.
+
+Organise production code by specific role: `Interfaces`, `Models`, `Enums`, `Services`, `Views`, `ViewModels`,
+`Converters`, `Controls`, `Builders`, `Policies`, `Adapters`, `Stores`, `Composition`, `Diagnostics` and `Resources`.
+Create folders only when populated. Add subject subfolders where they distinguish a coherent group, such as
+`Models/Accounts` or `Services/Work`. Avoid production `Helpers`, `Utilities` and generic `Classes` folders.
+
+Namespaces match the project and relative folder path. Each top-level type has its own matching file.
+Keep Avalonia views and their code-behind together under `Views`, using `ViewName.axaml` and `ViewName.axaml.cs`.
+Code-only views use `ViewName.cs`. View models belong under `ViewModels`. Resource files and their C# wrappers
+belong under `Resources`; preserve resource keys when reorganising them.
+Private nested helper types may remain inside their sole owning class.
+
+Test classes belong under `Tests/<Subject>`. Supporting types belong under `Fixtures`, `Fakes` or `Helpers`.
+Linked test sources retain their originating namespace and use the corresponding folder in their link path.
+Generated exceptions are limited to generated sources in `obj`, not whole projects.
+
+Core is framework-only. Protocols, Storage, Sync and UI reference Core only; Desktop composes them.
+UI uses Core application ports implemented by Sync. Sync must not reference concrete Storage or Protocols types.
+Every injected application service has an interface; keep optional capability ports narrow.
+Do not introduce speculative abstractions, an ORM, MediatR, event sourcing, a plugin framework or a custom analyzer.
+
+## C# style
+
+Use Allman braces, four spaces, UTF-8 without BOM, LF endings and a final newline. Always brace control flow.
+There is no fixed line-length limit. Wrap according to readability rather than a numeric threshold.
+When a parameter or argument list wraps, put each item on its own indented line and its closing parenthesis
+on a separate line. A multiline lambda or object argument alone does not require wrapping the surrounding list.
+
+Put every enum value on its own line without blank lines between values or a trailing comma. Preserve enum order
+and numeric values when changing formatting. Give values explicit numbers only when their contract requires it.
+Object initialisers use Allman braces with each property assignment on its own line.
+
+Use explicit types; `var` is allowed only for unnameable types. Use traditional `new Type(...)` construction;
+collection expressions are allowed when their target type is explicit. Concise positional records and simple
+primary constructors are allowed. Use records for intentional value equality and classes for identity or lifecycle.
+Use `required` and `init` for actual immutable contracts.
+
+Use file-scoped namespaces. Explicit using directives appear outside namespaces, sorted alphabetically in one
+group, without special priority for `System`. Remove unused imports. Implicit usings are disabled; global usings
+require a concrete shared need. Nullable reference checking remains enabled.
+
+Declare accessibility explicitly. Order fields, constructors, properties, events and methods by kind; within each
+kind order public, internal, protected and private. Keep relative order within an accessibility group unless another
+change is needed. Do not change field-initialisation behaviour merely to reorder declarations.
+Use one blank line between members and logical sections, while keeping simple property groups compact.
+Do not add blank lines immediately inside braces or use authored `#region` blocks.
+
+Methods and constructors use block bodies. Simple properties and accessors may use expression bodies.
+Partial types are limited to generated code or tooling requirements. Prefer guard clauses and early returns.
+Use LINQ for readable queries and loops for effects, complex control flow or measured performance needs.
+Simple switch expressions, cohesive local functions and small local tuples are allowed.
+
+Private instance fields use `_camelCase`; public members, constants and static readonly fields use `PascalCase`.
+Parameters and locals use `camelCase`. Interfaces use an `I` prefix. Async methods end in `Async`.
+Treat acronyms as words, such as `Imap` and `Id`. Use descriptive generic parameters where `T` is ambiguous.
+Prefer named arguments for ambiguous boolean inputs. Names should describe responsibilities, not implementation
+accidents. Preserve established domain terminology and persisted or external names during a styling cleanup.
+
+Document public interfaces and non-obvious contracts with useful XML comments. Other comments explain rationale,
+invariants, security or protocol behaviour; avoid restating the code or adding documentation boilerplate.
+
+## XAML style
+
+Give each element its own line. Keep short opening tags together. When attributes wrap, put each attribute on its
+own indented line. Use four spaces and retain meaningful attribute values, binding expressions and resource keys.
+Update `x:Class`, XML namespace declarations and resource lookups whenever namespaces or paths change.
+
+## Async and failures
+
+`Task` is the default; `ValueTask` requires measurement or a platform contract. Cancellable service APIs have a
+final required `CancellationToken`, passed through cancellable work. UI-independent libraries use
+`ConfigureAwait(false)` where a context is unnecessary; UI code preserves its dispatcher context.
+Background work has an owner, cancellation, completion observation and shutdown participation.
+Do not use unobserved fire-and-forget work or synchronous waits on async work.
+
+Expected provider, validation and submission failures use typed outcomes. Exceptions represent unexpected failures
+or violated preconditions. Propagate cancellation rather than logging it as an ordinary failure.
+Preserve security, error handling, accessibility and durability when refactoring.
+
+## Tests and validation
+
+Use NUnit constraint assertions, `Method_When_Then` names and visible Arrange/Act/Assert sections.
+Assert state first and interactions only when essential. Parameterise equivalent inputs; separate distinct behaviours.
+Use controlled time and configuration, without sleeps or arbitrary production-default assertions.
+Normal tests use real SQLite, local servers or synthetic HTTP fixtures, never live mail credentials.
+Native renderers, secure stores, accessibility and installers require appropriate platform checks.
+
+Run the following from the repository root:
+
+```sh
+dotnet restore Postfold.slnx --locked-mode
+dotnet build Postfold.slnx --configuration Release --no-restore
+dotnet format Postfold.slnx --verify-no-changes --no-restore
+dotnet format style Postfold.slnx --verify-no-changes --no-restore --severity info --diagnostics IDE0005
+dotnet test Postfold.slnx --configuration Release --no-build --no-restore
+pwsh -File eng/Verify-Source.ps1 -IncludeUntracked
+```
+
+Compiler warnings and configured built-in style diagnostics fail validation. EditorConfig and `dotnet format`
+enforce the supported syntax rules. The separate unused-import check includes IDE0005 at suggestion severity;
+build enforcement of that diagnostic would require generated XML documentation. Source verification enforces
+project-root placement, privacy and text encoding.
+Review covers rules the existing tools do not fully enforce: role selection, matching namespaces and filenames,
+member ordering, enum layout, wrapped lists, object initialisers, spacing, XAML layout, naming and documentation.
+No analyzer package or custom analyzer is needed for these rules.
+
+Private plans, agent instructions, skills and local configuration must remain outside source control and artifacts.
+Use short descriptive branch names and scope-free commit titles of the form `type: imperative description`,
+approximately 72 characters with no trailing full stop. Allowed types are `feat`, `fix`, `docs`, `refactor`, `perf`,
+`test`, `ci`, `build`, `chore`, `style` and `revert`. Use breaking markers only for actual compatibility changes.
+Reviewed pull requests use squash merges. Passing validation does not itself authorise a commit, push or release.

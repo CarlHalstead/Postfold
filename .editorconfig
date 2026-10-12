@@ -28,7 +28,7 @@ csharp_style_expression_bodied_properties = when_on_single_line:suggestion
 csharp_style_expression_bodied_accessors = when_on_single_line:suggestion
 csharp_using_directive_placement = outside_namespace:error
 csharp_style_implicit_object_creation_when_type_is_apparent = false:error
-dotnet_sort_system_directives_first = true
+dotnet_sort_system_directives_first = false
 dotnet_separate_import_directive_groups = false
 dotnet_style_require_accessibility_modifiers = for_non_interface_members:error
 dotnet_diagnostic.IDE0008.severity = error
@@ -41,6 +41,8 @@ dotnet_diagnostic.IDE0090.severity = error
 dotnet_diagnostic.IDE0040.severity = error
 dotnet_diagnostic.IDE1006.severity = error
 dotnet_diagnostic.IDE0055.severity = error
+# IDE0005 build enforcement requires generated XML docs; verify it with dotnet format style instead.
+dotnet_diagnostic.IDE0005.severity = suggestion
 
 dotnet_naming_rule.interfaces.severity = error
 dotnet_naming_rule.interfaces.symbols = interfaces

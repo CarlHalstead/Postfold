@@ -28,13 +28,30 @@ foreach ($relativePath in $trackedFiles)
         throw "Build output is tracked: $relativePath"
     }
 
+    $filePath = Join-Path $repositoryRoot $relativePath
+    if (-not (Test-Path -LiteralPath $filePath -PathType Leaf))
+    {
+        # Working-tree moves retain their old index paths until staging.
+        continue
+    }
+
+    if ([System.IO.Path]::GetExtension($filePath) -eq '.cs')
+    {
+        $parentPath = Split-Path -Parent $filePath
+        $fileName = Split-Path -Leaf $filePath
+        $projectFiles = @(Get-ChildItem -LiteralPath $parentPath -Filter '*.csproj' -File)
+        if ($projectFiles.Count -gt 0 -and $fileName -cnotin @('Program.cs', 'App.cs', 'AssemblyInfo.cs'))
+        {
+            throw "Authored C# file is forbidden at a project root: $relativePath"
+        }
+    }
+
     if ($relativePath -notmatch '\.(cs|csproj|props|targets|slnx|axaml|resx|json|ya?ml|ps1|md)$' -and
         $relativePath -notin @('LICENSE', '.editorconfig', '.gitattributes', 'NuGet.Config'))
     {
         continue
     }
 
-    $filePath = Join-Path $repositoryRoot $relativePath
     $bytes = [System.IO.File]::ReadAllBytes($filePath)
     if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
     {
@@ -48,4 +65,4 @@ foreach ($relativePath in $trackedFiles)
     }
 }
 
-Write-Output 'Tracked source privacy, UTF-8, LF and final newline checks passed.'
+Write-Output 'Source privacy, project-root layout, UTF-8, LF and final newline checks passed.'
