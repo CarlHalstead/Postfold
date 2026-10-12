@@ -502,6 +502,74 @@ public sealed partial class MainWindow : Window
         return true;
     }
 
+    public async Task SaveAttachmentAsync(IStorageProvider storage)
+    {
+        MainWindowViewModel? model = DataContext as MainWindowViewModel;
+        if (_application is null || model?.Selected is not MessageSnapshot message ||
+            this.FindControl<ListBox>("AttachmentList")!.SelectedItem is not AttachmentSnapshot attachment)
+        {
+            return;
+        }
+
+        string name = Path.GetFileName(attachment.Name.Replace('\\', '/'));
+        name = string.Concat(name.Where(character => !char.IsControl(character) &&
+            !Path.GetInvalidFileNameChars().Contains(character) && !"<>:\"|?*".Contains(character))).TrimEnd('.', ' ');
+        string stem = name.Split('.')[0];
+        if (new[] { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" }.Contains(stem, StringComparer.OrdinalIgnoreCase))
+        {
+            name = "attachment-" + name;
+        }
+
+        using IStorageFile? file = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = Strings.Destination,
+            SuggestedFileName = string.IsNullOrWhiteSpace(name) ? "attachment" : name
+        });
+        if (file is null || _lifetime.IsCancellationRequested || model.Selected?.Account != message.Account ||
+            model.Selected.Id != message.Id || model.Selected.Provider != message.Provider)
+        {
+            return;
+        }
+
+        using CancellationTokenSource saving = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        StackPanel panel = new StackPanel { Margin = new Thickness(16), Spacing = 12 };
+        TextBlock status = new TextBlock { Text = Strings.Get("AttachmentSaving"), TextWrapping = TextWrapping.Wrap };
+        panel.Children.Add(status);
+        Button cancel = new Button { Content = Strings.Cancel };
+        cancel.Click += (_, _) => saving.Cancel();
+        panel.Children.Add(cancel);
+        Window progress = new Window { Title = Strings.Destination, Width = 480, Height = 220, Content = panel };
+        EventHandler<WindowClosingEventArgs> closing = (_, _) => saving.Cancel();
+        progress.Closing += closing;
+        progress.Show(this);
+        try
+        {
+            await using Stream destination = await file.OpenWriteAsync();
+            saving.Token.ThrowIfCancellationRequested();
+            destination.SetLength(0);
+            Failure result = await _application.SaveAttachmentAsync(message, attachment.Part, destination, saving.Token);
+            status.Text = result == Failure.None ? Strings.Get("AttachmentSaved") : Strings.Describe(result);
+        }
+        catch (OperationCanceledException)
+        {
+            status.Text = Strings.Get("AttachmentCancelled");
+        }
+        catch (IOException)
+        {
+            status.Text = Strings.Describe(Failure.Unavailable);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            status.Text = Strings.Get("DestinationDenied");
+        }
+        finally
+        {
+            cancel.IsEnabled = false;
+            progress.Closing -= closing;
+        }
+    }
+
     private void Wire(string name, Func<Task> action)
     {
         this.FindControl<Button>(name)!.Click += (_, _) => Track(action);
@@ -535,52 +603,7 @@ public sealed partial class MainWindow : Window
 
     private async Task SaveAttachmentAsync()
     {
-        MainWindowViewModel? model = DataContext as MainWindowViewModel;
-        if (_application is null || model?.Selected is not MessageSnapshot message ||
-            this.FindControl<ListBox>("AttachmentList")!.SelectedItem is not AttachmentSnapshot attachment)
-        {
-            return;
-        }
-
-        string name = Path.GetFileName(attachment.Name.Replace('\\', '/'));
-        name = string.Concat(name.Where(character => !Path.GetInvalidFileNameChars().Contains(character)));
-        IStorageFile? file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title = Strings.Destination,
-            SuggestedFileName = string.IsNullOrWhiteSpace(name) ? "attachment" : name
-        });
-        if (file is null)
-        {
-            return;
-        }
-
-        using CancellationTokenSource saving = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-        StackPanel panel = new StackPanel { Margin = new Thickness(16), Spacing = 12 };
-        TextBlock status = new TextBlock { Text = Strings.Get("AttachmentSaving"), TextWrapping = TextWrapping.Wrap };
-        panel.Children.Add(status);
-        Button cancel = new Button { Content = Strings.Cancel };
-        cancel.Click += (_, _) => saving.Cancel();
-        panel.Children.Add(cancel);
-        Window progress = new Window { Title = Strings.Destination, Width = 480, Height = 220, Content = panel };
-        EventHandler<WindowClosingEventArgs> closing = (_, _) => saving.Cancel();
-        progress.Closing += closing;
-        progress.Show(this);
-        try
-        {
-            await using Stream destination = await file.OpenWriteAsync();
-            destination.SetLength(0);
-            Failure result = await _application.SaveAttachmentAsync(message, attachment.Part, destination, saving.Token);
-            status.Text = result == Failure.None ? Strings.Get("AttachmentSaved") : Strings.Describe(result);
-        }
-        catch (OperationCanceledException)
-        {
-            status.Text = Strings.Get("AttachmentCancelled");
-        }
-        finally
-        {
-            cancel.IsEnabled = false;
-            progress.Closing -= closing;
-        }
+        await SaveAttachmentAsync(StorageProvider);
     }
 
     private void Move()

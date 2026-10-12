@@ -61,11 +61,7 @@ public sealed class SmtpSubmitter : IMessageSubmitter
         }
 
         using EvidenceSmtpClient client = new EvidenceSmtpClient();
-        if (FixtureAuthority is not null)
-        {
-            client.ServerCertificateValidationCallback = (_, certificate, _, errors) =>
-                FixtureCertificateTrust.Validate(FixtureAuthority, certificate, errors);
-        }
+        ConfigureFixtureTrust(client);
 
         client.Timeout = 30000;
         try
@@ -169,6 +165,7 @@ public sealed class SmtpSubmitter : IMessageSubmitter
         }
 
         using SmtpClient client = new SmtpClient { Timeout = 30000 };
+        ConfigureFixtureTrust(client);
         try
         {
             await client.ConnectAsync(_endpoint.Host, _endpoint.Port,
@@ -207,5 +204,14 @@ public sealed class SmtpSubmitter : IMessageSubmitter
     {
         return new SubmissionOutcome(state, phase, submission.Recipients.Select(address =>
             new RecipientEvidence(address, recipientState, null)).ToImmutableArray(), failure);
+    }
+
+    private void ConfigureFixtureTrust(SmtpClient client)
+    {
+        if (FixtureAuthority is not null)
+        {
+            client.ServerCertificateValidationCallback = (_, certificate, _, errors) =>
+                FixtureCertificateTrust.Validate(FixtureAuthority, certificate, errors);
+        }
     }
 }

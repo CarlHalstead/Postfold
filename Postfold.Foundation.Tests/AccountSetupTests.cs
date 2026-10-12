@@ -9,11 +9,101 @@ using Postfold.Core;
 using Postfold.Desktop;
 using Postfold.Engine.Tests;
 using Postfold.Protocols;
+using Postfold.Storage;
 
 namespace Postfold.Foundation.Tests;
 
 public sealed class AccountSetupTests
 {
+    [Test]
+    [TestCase(true, true)]
+    [TestCase(true, false)]
+    [TestCase(false, true)]
+    [TestCase(false, false)]
+    public async Task AddAsync_WhenLocalTlsEndpointsHaveIndependentTrust_ReturnsIndependentResultsAndPersistsOnlyValidIncoming(
+        bool incomingTrusted, bool outgoingTrusted)
+    {
+        // Arrange
+        await using LocalMailServer incomingServer = new LocalMailServer(true);
+        await using LocalMailServer outgoingServer = new LocalMailServer(false);
+        await using SqliteProfile profile = await EngineFixture.OpenAsync(EngineFixture.DirectoryPath());
+        IAccountProvisioner provisioner = Substitute.For<IAccountProvisioner>();
+        provisioner.NetworkAllowed.Returns(true);
+        provisioner.Catalog.Returns(profile);
+        provisioner.TestOutgoingConnectionAsync(Arg.Any<AccountId>(), Arg.Any<MailEndpoint>(),
+            Arg.Any<ICredentialStore>(), Arg.Any<CancellationToken>()).Returns(call =>
+            {
+                SmtpSubmitter submitter = new SmtpSubmitter(call.Arg<AccountId>(), call.Arg<MailEndpoint>(),
+                    call.Arg<ICredentialStore>());
+                if (outgoingTrusted)
+                {
+                    submitter.FixtureAuthority = outgoingServer.Authority;
+                }
+
+                return submitter.TestAsync(call.Arg<CancellationToken>());
+            });
+        provisioner.ConnectAccountAsync(Arg.Any<AccountId>(), Arg.Any<string>(), Arg.Any<MailEndpoint>(),
+            Arg.Any<MailEndpoint>(), Arg.Any<ICredentialStore>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                AccountId account = call.Arg<AccountId>();
+                MailEndpoint incoming = call.ArgAt<MailEndpoint>(2);
+                MailEndpoint outgoing = call.ArgAt<MailEndpoint>(3);
+                CancellationToken cancellationToken = call.Arg<CancellationToken>();
+                await using ImapAdapter adapter = new ImapAdapter(account, incoming, call.Arg<ICredentialStore>(), 1048576);
+                if (incomingTrusted)
+                {
+                    adapter.FixtureAuthority = incomingServer.Authority;
+                }
+
+                Outcome<ImmutableArray<MailboxSnapshot>> discovered = await adapter.DiscoverAsync(cancellationToken);
+                if (!discovered.IsSuccess)
+                {
+                    return Outcome<IMailAccountEngine>.Fail(discovered.Failure);
+                }
+
+                await profile.AddAccountAsync(account, call.ArgAt<string>(1), cancellationToken);
+                await profile.ConfigureAccountAsync(account, incoming, outgoing, cancellationToken);
+                IMailAccountEngine engine = Substitute.For<IMailAccountEngine>();
+                engine.Mailboxes.Returns(discovered.Value);
+                return Outcome<IMailAccountEngine>.Success(engine);
+            });
+        ICredentialStore secure = Substitute.For<ICredentialStore>();
+        SessionCredentialStore session = new SessionCredentialStore();
+        AccountSetup setup = new AccountSetup(provisioner, secure, session);
+        AccountSetupRequest request = new AccountSetupRequest("Authored setup",
+            new MailEndpoint("localhost", incomingServer.Port, TlsMode.Implicit, "incoming-synthetic", ""),
+            new MailEndpoint("localhost", outgoingServer.Port, TlsMode.Implicit, "outgoing-synthetic", ""),
+            "incoming-secret", "outgoing-secret", true, null);
+
+        // Act
+        AccountSetupResult result = await setup.AddAsync(request, CancellationToken.None);
+        ImmutableArray<AccountConfiguration> accounts = await profile.AccountsAsync(CancellationToken.None);
+
+        // Assert
+        Assert.That(result.Credentials, Is.EqualTo(Failure.None));
+        Assert.That(result.Incoming, Is.EqualTo(incomingTrusted ? Failure.None : Failure.TlsRejected));
+        Assert.That(result.Outgoing, Is.EqualTo(outgoingTrusted ? Failure.None : Failure.TlsRejected));
+        Assert.That(accounts.Length, Is.EqualTo(incomingTrusted ? 1 : 0));
+        if (incomingTrusted)
+        {
+            Assert.That(result.Mailboxes, Is.Not.Empty);
+            Assert.That(accounts[0].Incoming.Port, Is.EqualTo(incomingServer.Port));
+            Assert.That(accounts[0].Outgoing.Port, Is.EqualTo(outgoingServer.Port));
+            Assert.That((await session.ReadAsync(accounts[0].Incoming.CredentialKey, CancellationToken.None)).Value!.Secret,
+                Is.EqualTo("incoming-secret"));
+            Assert.That((await session.ReadAsync(accounts[0].Outgoing.CredentialKey, CancellationToken.None)).Value!.Secret,
+                Is.EqualTo("outgoing-secret"));
+        }
+
+        Assert.That(incomingServer.Commands.Any(command => command.Contains("LOGIN", StringComparison.OrdinalIgnoreCase) ||
+            command.Contains("AUTHENTICATE", StringComparison.OrdinalIgnoreCase)), Is.EqualTo(incomingTrusted));
+        Assert.That(outgoingServer.Commands.Any(command => command.Contains("AUTH", StringComparison.OrdinalIgnoreCase)),
+            Is.EqualTo(outgoingTrusted));
+        Assert.That(outgoingServer.SubmissionCount, Is.Zero);
+        await secure.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
+    }
+
     [Test]
     [TestCase(true, false)]
     [TestCase(false, true)]
@@ -103,6 +193,10 @@ public sealed class AccountSetupTests
         IClientCatalog catalog = Substitute.For<IClientCatalog>();
         catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray<AccountConfiguration>.Empty);
         provisioner.Catalog.Returns(catalog);
+        provisioner.TestOutgoingConnectionAsync(Arg.Any<AccountId>(), Arg.Any<MailEndpoint>(),
+            Arg.Any<ICredentialStore>(), Arg.Any<CancellationToken>()).Returns(call =>
+                new SmtpSubmitter(call.Arg<AccountId>(), call.Arg<MailEndpoint>(), call.Arg<ICredentialStore>())
+                    .TestAsync(call.Arg<CancellationToken>()));
         provisioner.ConnectAccountAsync(Arg.Any<AccountId>(), Arg.Any<string>(), Arg.Any<MailEndpoint>(),
             Arg.Any<MailEndpoint>(), Arg.Any<ICredentialStore>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Outcome<IMailAccountEngine>.Fail(Failure.NeedsAuthentication));

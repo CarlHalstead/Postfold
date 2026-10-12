@@ -13,6 +13,8 @@ public interface IAccountProvisioner
     {
         get;
     }
+    Task<Failure> TestOutgoingConnectionAsync(AccountId account, MailEndpoint outgoing, ICredentialStore credentials,
+        CancellationToken cancellationToken);
     Task<Outcome<IMailAccountEngine>> ConnectAccountAsync(AccountId account, string displayName,
         MailEndpoint incoming, MailEndpoint outgoing, ICredentialStore credentials, string? selectedDraftMailbox,
         CancellationToken cancellationToken);

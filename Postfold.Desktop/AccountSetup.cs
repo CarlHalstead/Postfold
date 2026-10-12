@@ -61,7 +61,7 @@ public sealed class AccountSetup : IAccountSetup
         }
 
         AccountId id = new AccountId(next);
-        Failure outgoingResult = await new SmtpSubmitter(id, outgoing, store).TestAsync(
+        Failure outgoingResult = await _host.TestOutgoingConnectionAsync(id, outgoing, store,
             cancellationToken).ConfigureAwait(false);
         Outcome<IMailAccountEngine> engine = await _host.ConnectAccountAsync(id, request.Name, incoming, outgoing,
             store, request.DraftMailbox, cancellationToken).ConfigureAwait(false);

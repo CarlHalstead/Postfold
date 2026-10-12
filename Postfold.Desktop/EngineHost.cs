@@ -55,6 +55,13 @@ public sealed class EngineHost : IAccountEngines, IAccountProvisioner, IAsyncDis
         return _accounts.TryGetValue(account, out (ImapAdapter Adapter, MailAccountEngine Engine) entry) ? entry.Engine : null;
     }
 
+    public Task<Failure> TestOutgoingConnectionAsync(AccountId account, MailEndpoint outgoing, ICredentialStore credentials,
+        CancellationToken cancellationToken)
+    {
+        return _policy.AllowNetwork ? new SmtpSubmitter(account, outgoing, credentials).TestAsync(cancellationToken) :
+            Task.FromResult(Failure.PolicyBlocked);
+    }
+
     public async Task RestoreAccountsAsync(ICredentialStore credentials, CancellationToken cancellationToken)
     {
         ImmutableArray<MailboxSnapshot> mailboxes = await _profile.MailboxesAsync(cancellationToken).ConfigureAwait(false);

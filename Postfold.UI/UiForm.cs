@@ -30,7 +30,7 @@ internal static class UiForm
     internal static TextBox Field(StackPanel panel, string key, string value = "", bool password = false)
     {
         string label = Strings.Get(key);
-        TextBox field = new TextBox { Text = value, PasswordChar = password ? '●' : '\0' };
+        TextBox field = new TextBox { Name = key, Text = value, PasswordChar = password ? '●' : '\0' };
         AutomationProperties.SetName(field, label);
         panel.Children.Add(new TextBlock { Text = label });
         panel.Children.Add(field);
@@ -39,7 +39,7 @@ internal static class UiForm
 
     internal static Button Action(StackPanel panel, string key, Func<Task> action, TextBlock status)
     {
-        Button button = new Button { Content = Strings.Get(key) };
+        Button button = new Button { Name = key, Content = Strings.Get(key) };
         button.Click += async (_, _) =>
         {
             button.IsEnabled = false;

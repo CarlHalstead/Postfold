@@ -4,9 +4,11 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using Postfold.Core;
 
 namespace Postfold.UI;
@@ -35,13 +37,15 @@ public sealed class AccountSetupWindow : Window
         TextBox outgoingUser = UiForm.Field(form, "OutgoingUsername");
         TextBox outgoingPassword = UiForm.Field(form, "OutgoingPassword", password: true);
         TextBox draft = UiForm.Field(form, "DraftMailbox");
-        CheckBox session = new CheckBox { Content = Strings.SessionOnly, IsChecked = false };
+        CheckBox session = new CheckBox { Name = "SessionOnly", Content = Strings.SessionOnly, IsChecked = false };
         form.Children.Add(session);
         form.Children.Add(new TextBlock { Text = Strings.Privacy, TextWrapping = TextWrapping.Wrap });
-        TextBlock status = new TextBlock { TextWrapping = TextWrapping.Wrap };
-        StackPanel roles = new StackPanel { Spacing = 8 };
+        TextBlock status = new TextBlock { Name = "SetupStatus", TextWrapping = TextWrapping.Wrap };
+        AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
+        StackPanel roles = new StackPanel { Name = "FolderRoles", Spacing = 8 };
         UiForm.Action(form, "TestEndpoints", async () =>
         {
+            roles.Children.Clear();
             if (!int.TryParse(incomingPort.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int first) ||
                 !int.TryParse(outgoingPort.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int second))
             {
@@ -69,7 +73,6 @@ public sealed class AccountSetupWindow : Window
                 string.Join("\n", result.Mailboxes.Select(item => item.Name));
             if (result.Incoming == Failure.None && !result.Mailboxes.IsDefaultOrEmpty)
             {
-                roles.Children.Clear();
                 ImmutableArray<MailboxSnapshot> available = result.Mailboxes.Where(item => item.Selectable && item.Writable &&
                     item.Role != MailboxRole.Inbox)
                     .ToImmutableArray();
@@ -87,7 +90,7 @@ public sealed class AccountSetupWindow : Window
                 ComboBox Choice(string key, MailboxRole role)
                 {
                     roles.Children.Add(new TextBlock { Text = Strings.Get(key) });
-                    ComboBox choice = new ComboBox { ItemsSource = labels, SelectedIndex = 0 };
+                    ComboBox choice = new ComboBox { Name = key, ItemsSource = labels, SelectedIndex = 0 };
                     Avalonia.Automation.AutomationProperties.SetName(choice, Strings.Get(key));
                     MailboxSnapshot[] defaults = available.Where(item => item.Role == role).ToArray();
                     if (defaults.Length == 1)
@@ -115,6 +118,7 @@ public sealed class AccountSetupWindow : Window
             form.Children.Add(new TextBlock { Text = Strings.Get(key) });
             ComboBox choice = new ComboBox
             {
+                Name = key,
                 ItemsSource = Enum.GetValues<TlsMode>(),
                 SelectedIndex = 0,
                 ItemTemplate = new FuncDataTemplate<TlsMode>((value, _) => new TextBlock
@@ -130,5 +134,9 @@ public sealed class AccountSetupWindow : Window
     public void CancelSetup()
     {
         _lifetime.Cancel();
+        foreach (TextBox password in this.GetVisualDescendants().OfType<TextBox>().Where(field => field.PasswordChar != '\0'))
+        {
+            password.Text = "";
+        }
     }
 }

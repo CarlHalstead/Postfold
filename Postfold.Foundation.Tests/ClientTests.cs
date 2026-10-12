@@ -6,6 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
+using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 using NSubstitute;
 using NUnit.Framework;
 using Postfold.Core;
@@ -16,6 +18,49 @@ namespace Postfold.Foundation.Tests;
 
 public sealed class ClientTests
 {
+    [AvaloniaTest]
+    public async Task FlushComposeAsync_WhenOutboxSubmissionIsActive_CancelsAndObservesWorkBeforeShutdown()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        application.Catalog.OutboxAsync(Arg.Any<AccountId>(), Arg.Any<CancellationToken>())
+            .Returns(ImmutableArray<OutboxEntry>.Empty);
+        TaskCompletionSource<Failure> pending = new TaskCompletionSource<Failure>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken submission = default;
+        application.ProcessOutboxAsync(Arg.Any<AccountId>(), Arg.Any<CancellationToken>()).Returns(call =>
+        {
+            submission = call.Arg<CancellationToken>();
+            return pending.Task;
+        });
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        MainWindow main = new MainWindow { DataContext = model };
+        main.Configure(application, null);
+        main.Show();
+        try
+        {
+            main.FindControl<Button>("OutboxButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Window outbox = main.OwnedWindows.Single();
+            Button transmit = outbox.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "Transmit");
+            transmit.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            // Act
+            Task<bool> shutdown = main.FlushComposeAsync();
+
+            // Assert
+            Assert.That(submission.IsCancellationRequested, Is.True);
+            Assert.That(shutdown.IsCompleted, Is.False);
+            pending.SetResult(Failure.NeedsReview);
+            Assert.That(await shutdown, Is.True);
+        }
+        finally
+        {
+            pending.TrySetResult(Failure.NeedsReview);
+            main.Close();
+        }
+    }
+
     [AvaloniaTest]
     [TestCase("Reply", true)]
     [TestCase("Forward", true)]
