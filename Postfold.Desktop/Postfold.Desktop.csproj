@@ -12,6 +12,7 @@
         <ProjectReference Include="../Postfold.Sync/Postfold.Sync.csproj" />
         <ProjectReference Include="../Postfold.UI/Postfold.UI.csproj" />
         <PackageReference Include="Avalonia.Desktop" />
+        <PackageReference Include="SkiaSharp" />
         <PackageReference Include="Avalonia.Themes.Fluent" />
     </ItemGroup>
 </Project>
