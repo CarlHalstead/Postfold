@@ -28,7 +28,7 @@ foreach ($relativePath in $trackedFiles)
         throw "Build output is tracked: $relativePath"
     }
 
-    if ($relativePath -notmatch '\.(cs|csproj|props|targets|slnx|axaml|json|ya?ml|ps1|md)$' -and
+    if ($relativePath -notmatch '\.(cs|csproj|props|targets|slnx|axaml|resx|json|ya?ml|ps1|md)$' -and
         $relativePath -notin @('LICENSE', '.editorconfig', '.gitattributes', 'NuGet.Config'))
     {
         continue

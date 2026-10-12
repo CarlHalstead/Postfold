@@ -1,12 +1,106 @@
-<Window xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:viewModels="using:Postfold.UI"
-        x:Class="Postfold.UI.MainWindow"
-        x:DataType="viewModels:MainWindowViewModel"
-        Title="{Binding Title}"
-        Width="800"
-        Height="500">
-    <TextBlock Text="{Binding Title}"
-               HorizontalAlignment="Center"
-               VerticalAlignment="Center" />
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:Postfold.UI" xmlns:core="using:Postfold.Core"
+        x:Class="Postfold.UI.MainWindow" x:DataType="ui:MainWindowViewModel"
+        Title="{Binding Title}" Width="1200" Height="760" MinWidth="760" MinHeight="480">
+    <Window.Resources>
+        <Thickness x:Key="MessagePadding">4,8</Thickness>
+        <ui:StateTextConverter x:Key="StateText" />
+        <ui:MessageStatusConverter x:Key="MessageStatus" />
+        <ui:AccountNameConverter x:Key="AccountName" />
+    </Window.Resources>
+    <DockPanel Margin="12">
+        <StackPanel DockPanel.Dock="Top" Spacing="8">
+            <WrapPanel>
+                <Button Name="ComposeButton" Content="{x:Static ui:Strings.Compose}" />
+                <Button Name="SetupButton" Content="{x:Static ui:Strings.Setup}" />
+                <Button Name="CredentialsButton" Content="{x:Static ui:Strings.Credentials}" />
+                <Button Content="{x:Static ui:Strings.Refresh}" Command="{Binding RefreshCommand}" />
+                <Button Name="DraftsButton" Content="{x:Static ui:Strings.Drafts}" />
+                <Button Name="OutboxButton" Content="{x:Static ui:Strings.Outbox}" />
+                <Button Name="CommandsButton" Content="{x:Static ui:Strings.Commands}" />
+                <Button Name="AppearanceButton" Content="{x:Static ui:Strings.Settings}" />
+                <Button Name="DesktopButton" Content="{x:Static ui:Strings.DesktopSettings}" />
+                <Button Name="IdentityButton" Content="{x:Static ui:Strings.IdentitySettings}" IsEnabled="False" />
+            </WrapPanel>
+            <Grid ColumnDefinitions="*,Auto,Auto">
+                <TextBox Name="SearchBox" Text="{Binding Terms}" PlaceholderText="{x:Static ui:Strings.Search}"
+                         AutomationProperties.Name="{x:Static ui:Strings.Search}" MaxLength="1024" />
+                <Button Grid.Column="1" Content="{x:Static ui:Strings.Search}" Command="{Binding RefreshCommand}" />
+                <Button Grid.Column="2" Content="{x:Static ui:Strings.More}" Command="{Binding MoreCommand}" />
+            </Grid>
+            <TextBlock Text="{x:Static ui:Strings.SearchHint}" TextWrapping="Wrap" />
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+            <TextBlock Text="{Binding Status}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+            <TextBlock Text="{Binding NotificationStatus}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+        </StackPanel>
+        <Grid Name="Panes" ColumnDefinitions="220,5,*,5,1.3*" Margin="0,12,0,0">
+            <DockPanel Name="NavigationPane">
+                <Button DockPanel.Dock="Bottom" Content="{x:Static ui:Strings.Synchronise}" Command="{Binding SynchroniseCommand}" />
+                <ListBox Name="ScopeList" ItemsSource="{Binding Scopes}" SelectedItem="{Binding Scope}" Focusable="True"
+                         AutomationProperties.Name="{x:Static ui:Strings.Scope}" />
+            </DockPanel>
+            <GridSplitter Name="NavigationSplitter" Grid.Column="1" ResizeDirection="Columns"
+                          AutomationProperties.Name="{x:Static ui:Strings.NavigationResize}" />
+            <ListBox Grid.Column="2" Name="MessageList" ItemsSource="{Binding Messages}" SelectedItem="{Binding Selected}" Focusable="True"
+                     AutomationProperties.Name="{x:Static ui:Strings.Messages}">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="core:MessageSnapshot">
+                        <StackPanel Margin="{DynamicResource MessagePadding}" Spacing="4">
+                            <TextBlock Text="{Binding Subject}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Participants}" TextTrimming="CharacterEllipsis" />
+                            <WrapPanel><TextBlock><TextBlock.Text>
+                                <MultiBinding Converter="{StaticResource AccountName}">
+                                    <Binding Path="Account" />
+                                    <ReflectionBinding Path="DataContext.Accounts" RelativeSource="{RelativeSource AncestorType=Window}" />
+                                </MultiBinding>
+                            </TextBlock.Text></TextBlock><TextBlock Text="{Binding Availability, Converter={StaticResource StateText}}" Margin="8,0" />
+                                <TextBlock Text="{Binding Read, Converter={StaticResource MessageStatus}, ConverterParameter=Read}" Margin="0,0,8,0" />
+                                <TextBlock Text="{Binding Flagged, Converter={StaticResource MessageStatus}}" Margin="0,0,8,0" />
+                                <TextBlock Text="{Binding Pending, Converter={StaticResource StateText}}" /></WrapPanel>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <GridSplitter Name="PreviewSplitter" Grid.Column="3" ResizeDirection="Columns"
+                          AutomationProperties.Name="{x:Static ui:Strings.PreviewResize}" />
+            <DockPanel Grid.Column="4" Name="PreviewPane" Margin="12,0,0,0">
+                <StackPanel DockPanel.Dock="Top" Spacing="8">
+                    <WrapPanel>
+                        <Button Content="{x:Static ui:Strings.Retrieve}" Command="{Binding RetrieveCommand}" />
+                        <Button Content="{x:Static ui:Strings.Read}" Command="{Binding ReadCommand}" />
+                        <Button Content="{x:Static ui:Strings.Flag}" Command="{Binding FlagCommand}" />
+                        <Button Content="{x:Static ui:Strings.Archive}" Command="{Binding ArchiveCommand}" />
+                        <Button Content="{x:Static ui:Strings.Trash}" Command="{Binding TrashCommand}" />
+                        <Button Name="MoveButton" Content="{x:Static ui:Strings.Move}" IsEnabled="{Binding CanMove}" />
+                        <Button Name="ReplyButton" Content="{x:Static ui:Strings.Reply}" />
+                        <Button Name="ForwardButton" Content="{x:Static ui:Strings.Forward}" />
+                        <Button Name="HtmlButton" Content="{x:Static ui:Strings.HtmlRead}" IsEnabled="False" />
+                        <Button Name="ImagesButton" Content="{x:Static ui:Strings.LoadImages}" IsEnabled="False" />
+                    </WrapPanel>
+                    <TextBlock Text="{x:Static ui:Strings.HtmlUnavailable}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding MoveSupport}" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Bottom">
+                <Button Name="SaveAttachmentButton" Content="{x:Static ui:Strings.Destination}" />
+                <Button Name="CheckAttachmentsButton" Content="{x:Static ui:Strings.CheckAttachments}" />
+                <ListBox Name="AttachmentList" ItemsSource="{Binding Attachments}" MaxHeight="160"
+                         AutomationProperties.Name="{x:Static ui:Strings.Attach}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="core:AttachmentSnapshot">
+                            <StackPanel Orientation="Horizontal" Spacing="8"><TextBlock Text="{Binding Name}" />
+                                <TextBlock Text="{Binding MediaType}" /><TextBlock Text="{Binding Length}" />
+                                <TextBlock Text="{Binding Availability, Converter={StaticResource StateText}}" /></StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                </StackPanel>
+                <Grid>
+                    <TextBox Name="PlainPreview" Text="{Binding Body}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                             AutomationProperties.Name="{x:Static ui:Strings.Preview}" />
+                    <ContentControl Name="HtmlSurface" IsVisible="False" />
+                </Grid>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
 </Window>
