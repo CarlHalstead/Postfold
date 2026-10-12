@@ -45,8 +45,8 @@ public sealed partial class MainWindow : Window
 
     public void ReleaseHtmlSurface()
     {
-        SetHtmlSurface(null);
         this.FindControl<ContentControl>("HtmlSurface")!.Content = null;
+        SetHtmlSurface(null);
     }
 
     public void ConfigureIdentity(IClientIdentity identity)

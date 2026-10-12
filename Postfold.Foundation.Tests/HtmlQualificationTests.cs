@@ -34,7 +34,7 @@ public sealed class HtmlQualificationTests
 
         // Assert
         Assert.That(rendered, Is.EqualTo(Failure.Unavailable));
-        Assert.That(images, Is.EqualTo(Failure.NeedsReview));
+        Assert.That(images, Is.EqualTo(Failure.Unavailable));
         Assert.That(window.FindControl<Button>("HtmlButton")!.IsEnabled, Is.False);
         Assert.That(window.FindControl<Button>("ImagesButton")!.IsEnabled, Is.False);
         Assert.That(window.FindControl<TextBox>("PlainPreview")!.IsVisible, Is.True);

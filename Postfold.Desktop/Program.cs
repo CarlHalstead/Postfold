@@ -23,7 +23,8 @@ public static class Program
     {
         StartClient = true;
         Started = Stopwatch.GetTimestamp();
-        string? probeOutput = args is ["--renderer-probe" or "--renderer-security-probe", string output] ? output : null;
+        string? probeOutput = args is ["--renderer-probe" or "--renderer-security-probe" or "--qualify-renderer" or
+            "--qualify-reader", string output] ? output : null;
         if (probeOutput is not null)
         {
             File.WriteAllText(probeOutput, $"Probe entered Main\nRuntime: {RuntimeInformation.FrameworkDescription}\n" +

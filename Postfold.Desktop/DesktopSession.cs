@@ -24,6 +24,7 @@ internal sealed class DesktopSession
     private DesktopIntegration? _integration;
     private WindowsNewMailNotification? _notifications;
     private WindowsHtmlReadingService? _html;
+    private QualificationImageTransport? _qualificationImages;
     private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
 
     internal DesktopSession(IClassicDesktopStyleApplicationLifetime desktop, MainWindow window)
@@ -86,6 +87,7 @@ internal sealed class DesktopSession
 
             _integration?.Dispose();
             _notifications?.Dispose();
+            _qualificationImages?.Dispose();
 
             _finished = true;
             _desktop.Shutdown();
@@ -96,11 +98,12 @@ internal sealed class DesktopSession
     {
         string[] arguments = _desktop.Args ?? [];
         long started = Program.Started;
-        string? measurement = arguments is ["--measure-client", string output] ? output : null;
+        string? measurement = arguments is ["--measure-client" or "--measure-client-auto", string output] ? output : null;
+        string? qualification = arguments is ["--qualify-client", string evidenceOutput] ? evidenceOutput : null;
         bool scale = arguments.Contains("--demo-scale") || measurement is not null;
-        bool demo = arguments.Contains("--demo") || scale;
+        bool demo = arguments.Contains("--demo") || scale || qualification is not null;
         string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Postfold", scale ? "synthetic-scale-v1" :
+            "Postfold", qualification is not null ? "synthetic-qualification-v1" : scale ? "synthetic-scale-v1" :
                 demo ? "synthetic-demo-v1" : "profiles/default");
         try
         {
@@ -120,6 +123,10 @@ internal sealed class DesktopSession
             {
                 bool populated = (await _host.Catalog.AccountsAsync(_lifetime.Token)).IsEmpty;
                 await _host.SeedSyntheticAsync(scale ? 100000 : 360, _lifetime.Token);
+                if (qualification is not null)
+                {
+                    await _host.SeedReadingFixtureAsync(_lifetime.Token);
+                }
                 if (measurement is not null && populated)
                 {
                     _window.Tag = "InitialPopulation";
@@ -127,7 +134,9 @@ internal sealed class DesktopSession
             }
 
             await _host.RestoreAccountsAsync(new CombinedCredentialStore(secure, session), CancellationToken.None);
-            MainWindowViewModel model = new MainWindowViewModel(_host.Application)
+            IMailApplication application = qualification is null ? _host.Application :
+                new QualificationMailApplication(_host.Application);
+            MainWindowViewModel model = new MainWindowViewModel(application)
             {
                 Title = demo ? Strings.Synthetic : "Postfold"
             };
@@ -149,14 +158,26 @@ internal sealed class DesktopSession
                 }, _lifetime.Token);
             }
 
-            _window.Configure(_host.Application, demo ? null : new AccountSetup(_host, secure, session), _integration);
-            // Native H01-H04 evidence is still failing; no environment or user-preference bypass is provided.
-            _html = new WindowsHtmlReadingService(_window, _host.Application, new RemoteImageFetcher(),
-                Path.Combine(directory, "html-renderer"), qualified: false);
+            QualificationAccountSetup? fixtureSetup = qualification is null ? null :
+                new QualificationAccountSetup(_host.Catalog, new AccountSetup(_host, secure, session));
+            _window.Configure(application, fixtureSetup is not null ? fixtureSetup :
+                demo ? null : new AccountSetup(_host, secure, session), _integration);
+            // Windows native isolation, reader lifetime and accessibility gates are qualified for this stage.
+            // Only the authored qualification profile substitutes in-process image responses.
+            _qualificationImages = qualification is null ? null : new QualificationImageTransport();
+            IRemoteImageFetcher images = _qualificationImages is null ? new RemoteImageFetcher() :
+                new RemoteImageFetcher(_qualificationImages);
+            _html = new WindowsHtmlReadingService(_window, application, images,
+                Path.Combine(directory, "html-renderer"), qualified: true);
             _window.ConfigureHtml(_html);
             _window.ConfigureIdentity(_host.Identity);
             await _window.LoadAppearanceAsync(_host.Appearance);
             await model.InitialiseAsync();
+            if (qualification is not null)
+            {
+                ClientQualification.Open(_window, _host, (QualificationMailApplication)application, fixtureSetup!,
+                    _integration, qualification);
+            }
             long observedMessages = model.CachedMessageCount;
             model.PropertyChanged += (_, change) =>
             {
@@ -179,6 +200,12 @@ internal sealed class DesktopSession
             {
                 await ClientPerformanceProbe.RunAsync(_window, model, measurement, started,
                     _window.Tag as string == "InitialPopulation", _lifetime.Token);
+                if (arguments.Contains("--measure-client-auto"))
+                {
+                    _exitRequested = true;
+                    _window.Close();
+                    return;
+                }
             }
             string? activation = arguments.FirstOrDefault(item => item.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase));
             if (activation is not null)

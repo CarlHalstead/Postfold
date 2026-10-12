@@ -4,18 +4,22 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Media;
 using Avalonia.Platform;
+using Avalonia.Styling;
 using Microsoft.Web.WebView2.Core;
 using Postfold.Core;
 using Postfold.UI;
 
 namespace Postfold.Desktop;
 
-/// <summary>Lazy Windows reading surface. Production composition keeps it disabled until native qualification passes.</summary>
+/// <summary>Lazy isolated Windows reading surface, enabled only by a qualified composition root.</summary>
 public sealed class WindowsHtmlReadingService : IHtmlReadingService
 {
     private readonly MainWindow _window;
@@ -47,6 +51,7 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
         _directory = directory;
         _qualified = qualified;
         _model.PropertyChanged += SelectedChanged;
+        _window.PropertyChanged += AppearanceChanged;
     }
 
     public bool IsQualified => _qualified && OperatingSystem.IsWindows();
@@ -69,6 +74,7 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
     {
         _disposed = true;
         _model.PropertyChanged -= SelectedChanged;
+        _window.PropertyChanged -= AppearanceChanged;
         await _lifetime.CancelAsync();
         try
         {
@@ -92,7 +98,7 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
 
     private async Task<Failure> ReadCoreAsync(MessageSnapshot message, bool retrieve, CancellationToken cancellationToken)
     {
-        if (_disposed || !IsQualified || !OperatingSystem.IsWindows())
+        if (_disposed || !IsQualified || !OperatingSystem.IsWindows() || _isolation?.HasFailed == true)
         {
             return Failure.Unavailable;
         }
@@ -148,7 +154,12 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
             return Failure.Unavailable;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-            WebView2RuntimeNotFoundException or DllNotFoundException)
+            WebView2RuntimeNotFoundException or DllNotFoundException or System.Net.Sockets.SocketException)
+        {
+            return Failure.Unavailable;
+        }
+        catch (Exception exception) when (_isolation?.HasFailed == true &&
+            exception is COMException or InvalidOperationException)
         {
             return Failure.Unavailable;
         }
@@ -163,6 +174,11 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
 
     private async Task<Failure> LoadImagesCoreAsync(MessageSnapshot message, CancellationToken cancellationToken)
     {
+        if (_disposed || !IsQualified || !OperatingSystem.IsWindows() || _isolation?.HasFailed == true)
+        {
+            return Failure.Unavailable;
+        }
+
         if (_disposed || !IsQualified || !OperatingSystem.IsWindows() || _selection is null || _document is null ||
             !Current(message, _context))
         {
@@ -236,6 +252,10 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
     [SupportedOSPlatform("windows")]
     private async Task EnsureNativeAsync(CancellationToken cancellationToken)
     {
+        if (_isolation?.HasFailed == true)
+        {
+            throw new IOException("Native reader requires restart after process failure.");
+        }
         if (_view is not null && _isolation is not null)
         {
             return;
@@ -245,6 +265,9 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
         {
             _ = CoreWebView2Environment.GetAvailableBrowserVersionString();
             NativeWebView view = new NativeWebView();
+            WindowsHtmlNetworkIsolation network = new WindowsHtmlNetworkIsolation();
+            view.AdapterDestroyed += (_, _) => network.Dispose();
+            Avalonia.Automation.AutomationProperties.SetName(view, Strings.Get("MessageHtml"));
             TaskCompletionSource<IWindowsWebView2PlatformHandle> ready =
                 new TaskCompletionSource<IWindowsWebView2PlatformHandle>(TaskCreationOptions.RunContinuationsAsynchronously);
             string directory = Path.Combine(_directory, Guid.NewGuid().ToString("N"));
@@ -257,6 +280,7 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
                     windows.UserDataFolder = directory;
                     windows.IsInPrivateModeEnabled = true;
                     windows.AllowSingleSignOnUsingOSPrimaryAccount = false;
+                    windows.AdditionalBrowserArguments = network.Arguments;
                 }
             };
             view.AdapterCreated += (_, _) =>
@@ -278,6 +302,7 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
         IWindowsWebView2PlatformHandle handle = await _ready!.Task.WaitAsync(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         _isolation = new WindowsHtmlIsolation(handle);
+        _isolation.NativeFailed += NativeFailed;
     }
 
     [SupportedOSPlatform("windows")]
@@ -289,16 +314,27 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
         }
 
         _isolation.BeginDocument(context, _document.Resources);
-        _view.IsVisible = true;
-        _window.SetHtmlSurface(_view);
+        _view.IsVisible = false;
+        _window.SetHtmlSurface(null);
         bool completed = await _isolation.NavigateDocumentAsync(_document.Plan.Html, cancellationToken);
+        if (completed && _context == context)
+        {
+            await ApplyAppearanceAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_context == context && !_isolation.HasFailed)
+            {
+                _view.IsVisible = true;
+                _window.SetHtmlSurface(_view);
+                return Failure.None;
+            }
+        }
         if (!completed && _context == context)
         {
             _view.IsVisible = false;
             _window.SetHtmlSurface(null);
         }
 
-        return completed && _context == context ? Failure.None : Failure.Unavailable;
+        return Failure.Unavailable;
     }
 
     private static Outcome<HtmlResourceDocument> Prepare(MimeHtmlDocument content, Guid context)
@@ -374,7 +410,10 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
         _document = null;
         if (OperatingSystem.IsWindows())
         {
-            _isolation?.BeginDocument(_context, new Dictionary<string, byte[]>());
+            if (_isolation is not null && !_isolation.HasFailed)
+            {
+                _isolation.BeginDocument(_context, new Dictionary<string, byte[]>());
+            }
         }
 
         if (_view is not null)
@@ -390,4 +429,58 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
         _work.RemoveAll(previous => previous.IsCompleted);
         _work.Add(task);
     }
+
+    private void NativeFailed()
+    {
+        _selection?.Cancel();
+        _message = null;
+        _context = Guid.NewGuid();
+        _document = null;
+        // A browser-process failure closes its controller. Detach before changing visibility:
+        // a layout update on the retained adapter would call SetBounds on that closed controller.
+        _window.ReleaseHtmlSurface();
+        _model.ReportReadingResult(Failure.Unavailable);
+    }
+
+    private void AppearanceChanged(object? sender, AvaloniaPropertyChangedEventArgs args)
+    {
+        if (!_disposed && args.Property.Name is "FontSize" or "FontFamily" or "ActualThemeVariant" or "Foreground" or "Background")
+        {
+            Track(UpdateAppearanceAsync());
+        }
+    }
+
+    private async Task UpdateAppearanceAsync()
+    {
+        if (!OperatingSystem.IsWindows() || _isolation is null || _isolation.HasFailed || _view?.IsVisible != true)
+        {
+            return;
+        }
+
+        try
+        {
+            await ApplyAppearanceAsync(_lifetime.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception) when (_isolation.HasFailed && exception is COMException or InvalidOperationException)
+        {
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private Task ApplyAppearanceAsync(CancellationToken cancellationToken)
+    {
+        bool dark = _window.ActualThemeVariant == ThemeVariant.Dark;
+        Color foreground = _window.Foreground is ISolidColorBrush text && text.Color.A == 255 ?
+            text.Color : dark ? Colors.White : Colors.Black;
+        Color background = _window.Background is ISolidColorBrush surface && surface.Color.A == 255 ?
+            surface.Color : dark ? Colors.Black : Colors.White;
+        string family = _window.FontFamily == FontFamily.Default ? "system-ui" : _window.FontFamily.Name;
+        return _isolation!.ApplyAppearanceAsync(family, _window.FontSize,
+            $"#{foreground.R:X2}{foreground.G:X2}{foreground.B:X2}",
+            $"#{background.R:X2}{background.G:X2}{background.B:X2}", cancellationToken);
+    }
+
 }

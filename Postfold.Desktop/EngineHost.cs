@@ -141,6 +141,48 @@ public sealed class EngineHost : IAccountEngines, IAccountProvisioner, IAsyncDis
         await EnsureSyntheticFoldersAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    internal async Task SeedReadingFixtureAsync(CancellationToken cancellationToken)
+    {
+        if (_policy.AllowNetwork)
+        {
+            throw new InvalidOperationException("Qualification fixtures require network-disabled composition.");
+        }
+
+        AccountId account = new AccountId(1);
+        ImmutableArray<MessageSnapshot> messages = (await _profile.SearchAsync(
+            new SearchRequest(account, false, "", null, false, 20), cancellationToken).ConfigureAwait(false)).Value!.Messages;
+        string mime = "From: fixture@example.invalid\r\nTo: sender@example.invalid\r\n" +
+            "Subject: Authored reading qualification\r\nMIME-Version: 1.0\r\n" +
+            "Content-Type: multipart/mixed; boundary=outer\r\n\r\n--outer\r\n" +
+            "Content-Type: multipart/related; boundary=related\r\n\r\n--related\r\n" +
+            "Content-Type: multipart/alternative; boundary=alternative\r\n\r\n--alternative\r\n" +
+            "Content-Type: text/plain; charset=utf-8\r\n\r\nAuthored synthetic received attachment and HTML fixture.\r\n" +
+            "--alternative\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" +
+            "<p>Authored synthetic HTML fixture</p><img src='cid:pixel' alt='Selected-message pixel'>" +
+            "<img src='https://images.synthetic.invalid/pixel' alt='Blocked remote image'>" +
+            "<script>globalThis.attack=true</script>\r\n--alternative--\r\n" +
+            "--related\r\nContent-Type: image/png\r\nContent-ID: <pixel>\r\n" +
+            "Content-Transfer-Encoding: base64\r\n\r\n" +
+            Convert.ToBase64String(QualificationImage.CreatePixel()) + "\r\n" +
+            "--related--\r\n--outer\r\nContent-Type: application/octet-stream\r\n" +
+            "Content-Disposition: attachment; filename=\"../../report.txt\"\r\n\r\n" +
+            "Authored synthetic attachment.\r\n--outer--\r\n";
+        using MemoryStream source = new MemoryStream(Encoding.UTF8.GetBytes(mime));
+        BlobReference blob = await _profile.Blobs.WriteAsync(account, source, _limits.MaximumMimeBytes, false,
+            cancellationToken).ConfigureAwait(false);
+        source.Position = 0;
+        Outcome<MimeSnapshot> parsed = await _mime.ParseAsync(source, cancellationToken).ConfigureAwait(false);
+        if (!parsed.IsSuccess)
+        {
+            throw new InvalidOperationException("Authored qualification MIME is invalid.");
+        }
+
+        foreach (MessageSnapshot message in messages)
+        {
+            await _profile.StoreBodyAsync(account, message.Id, blob, parsed.Value!, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private async Task EnsureSyntheticFoldersAsync(CancellationToken cancellationToken)
     {
         ImmutableArray<MailboxSnapshot> all = await _profile.MailboxesAsync(cancellationToken).ConfigureAwait(false);

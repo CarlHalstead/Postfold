@@ -2,7 +2,8 @@
 
 Postfold is an open-source email client being developed with .NET and Avalonia, licensed under MPL-2.0.
 The development client provides cached navigation, plain-text reading and durable local drafts/offline commands.
-It is not yet qualified for daily use: native HTML, accessibility, recovery UX and desktop integrations remain gated.
+The private Windows generic client has synthetic/local-server and native qualification evidence. It is a development
+build; provider OAuth, authenticated updates and release packaging belong to later stages.
 Windows is the first product target, followed by Linux, macOS, Android and iOS.
 
 ## Development
@@ -47,8 +48,8 @@ frozen snapshot; Process queued outbox is a separate explicit action. Partial/un
 linked resend draft requires duplicate-delivery consent. Sent-copy retry does not submit again.
 The reviewed sent-copy retry asks you to check the sent folder first, because saving again can duplicate the copy.
 F6 and Shift+F6 cycle the visible panes. Message rows show their account name in unified views.
-Appearance persists theme, density, font, size and right/bottom/hidden preview layouts. Native accessibility
-qualification remains open. Compose supports separately saved plain-text signatures, an attachment list and removal;
+Appearance persists theme, density, font, size and right/bottom/hidden preview layouts. Windows owner checks cover
+Narrator, pane focus, scaling, contrast and reduced motion. Compose supports plain-text signatures, attachments and removal;
 Ctrl+S saves, Ctrl+Enter queues, and Ctrl+Shift+A chooses attachments. Attachment saving supports cancellation
 through a user destination picker. Mailbox commands shows durable command states and preserved review evidence;
 Forward windows let you select original attachments individually; selected content is preserved in the local draft.
@@ -56,7 +57,7 @@ Use Check attachments online before forwarding if only the plain-text part is ca
 retrying held work requires an explicit review decision. Queued outbox work can be cancelled before submission.
 Synchronise reconciles selected-account folders and then processes its durable offline commands.
 Notifications contain generic text only. Tray behaviour is opt-in in Desktop settings; default close exits after
-saving open compose windows. Native notification, tray and screen-reader qualification remains outstanding.
+saving open compose windows. Windows synthetic native notification, tray and screen-reader checks have passed.
 
 Manual setup tests independent IMAP/SMTP endpoints with validating TLS; no certificate bypass is offered.
 Passwords use the Windows secure store unless Session only is deliberately selected.
@@ -64,12 +65,38 @@ Account credentials lets you re-enter independent passwords after restart withou
 Session-only passwords are kept in memory; existing securely stored credentials are not removed by that choice.
 Role selection follows discovery; unavailable roles remain unassigned. TLS rejection, authentication,
 network policy and unavailable secure storage have distinct diagnostics. Cached mail is not
-encrypted by Postfold. HTML/remote images remain disabled until real native isolation qualification passes.
-Do not use the development client with a live mailbox until its remaining acceptance work is reviewed.
+encrypted by Postfold. Windows HTML uses parser sanitisation, CSP, an isolated native profile and native network
+blocking. Remote images require per-message consent and use the bounded application fetcher. Reader failure
+returns to plain text and requires an application restart before HTML can be used again.
+Images currently support PNG; other formats are blocked. HTML links remain inert.
 
 Validation CI targets Windows x64, Ubuntu x64 and macOS Apple Silicon. Headless tests verify managed controls;
-native renderer isolation, secure stores, accessibility and installers require later platform-specific testing.
+native renderer isolation, secure stores and accessibility require tests on the actual platform for this stage.
+Installer qualification belongs to the later packaging stage.
 Linux native startup needs X11 and font libraries; macOS needs a graphical session; Windows needs a desktop session.
+
+Windows development qualification uses separate synthetic profiles and never reads real mail:
+
+```powershell
+dotnet .\Postfold.Desktop\bin\Release\net10.0\Postfold.dll --qualify-client C:/path/to/private/client-observations.json
+dotnet .\Postfold.Desktop\bin\Release\net10.0\Postfold.dll --qualify-renderer C:/path/to/private/renderer-results.json
+dotnet .\Postfold.Desktop\bin\Release\net10.0\Postfold.dll --qualify-reader C:/path/to/private/reader-results.json
+dotnet .\Postfold.Desktop\bin\Release\net10.0\Postfold.dll --measure-client C:/path/to/private/client-performance.json
+```
+
+Use an existing writable private directory for the output paths. Client qualification opens controls for authored
+setup responses, a received attachment, generic notifications, internal mailto activation and draft-save failure
+injection. Its profile is `%LOCALAPPDATA%/Postfold/synthetic-qualification-v1`, with networking disabled.
+Only explicitly checked observations are recorded. Authored HTML is available in this qualification profile.
+The renderer harness records denial, context, resource-budget and lifecycle cases. The separate reader harness
+uses in-process authored HTTP responses through the production fetch pipeline and measures the actual reader
+without preceding hostile-fixture allocations. It terminates only its own isolated WebView browser to exercise
+failure handling. Both harnesses close automatically. No external browser or real profile is used. A saved report
+does not itself establish full qualification.
+Performance uses three accounts and 100k synthetic messages, the actual native rendering loop, a 60-second idle
+observation and application process-tree memory. Record cold/warm cache conditions and actual hardware; no fixed
+CPU, RAM or storage specification is required. These diagnostic modes do not install or register anything.
+`--measure-client-auto` records the same samples and exits automatically for repeatable development runs.
 
 ## Contributing
 

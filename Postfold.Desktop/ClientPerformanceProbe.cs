@@ -59,10 +59,11 @@ public static class ClientPerformanceProbe
         using Process process = Process.GetCurrentProcess();
         TimeSpan cpuBefore = process.TotalProcessorTime;
         long idleStarted = Stopwatch.GetTimestamp();
-        await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(60), cancellationToken);
         process.Refresh();
         double seconds = Stopwatch.GetElapsedTime(idleStarted).TotalSeconds;
         double cpu = (process.TotalProcessorTime - cpuBefore).TotalSeconds / seconds / Environment.ProcessorCount * 100;
+        ProcessTreeMeasurement.Snapshot memory = ProcessTreeMeasurement.Capture();
         object result = new
         {
             CapturedUtc = DateTimeOffset.UtcNow,
@@ -70,6 +71,8 @@ public static class ClientPerformanceProbe
             OperatingSystem = RuntimeInformation.OSDescription,
             Architecture = RuntimeInformation.ProcessArchitecture.ToString(),
             LogicalProcessors = Environment.ProcessorCount,
+            ProcessorIdentifier = Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER"),
+            RuntimeAvailableMemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
             WindowWidth = window.Bounds.Width,
             WindowHeight = window.Bounds.Height,
             Scaling = window.RenderScaling,
@@ -90,11 +93,13 @@ public static class ClientPerformanceProbe
             ScrollFrameP95Milliseconds = Percentile(scrolling),
             IdleObservationSeconds = seconds,
             IdleTotalCpuPercent = cpu,
-            PrivateBytes = process.PrivateMemorySize64,
+            PrivateBytes = memory.PrivateBytes,
+            ProcessIds = memory.ProcessIds,
+            MemoryComplete = memory.Complete,
             WebViews = 0,
-            MemoryScope = "Single application process; no renderer constructed in this mode",
+            MemoryScope = "Application process and all descendants; no renderer constructed in this mode",
             AcceptanceComplete = false,
-            Qualification = "Actual native application samples; reference-machine and native security/accessibility gates remain separate"
+            Qualification = "Actual native application samples on recorded available hardware; native security/accessibility gates remain separate"
         };
         await File.WriteAllTextAsync(output, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }) + "\n",
             cancellationToken);

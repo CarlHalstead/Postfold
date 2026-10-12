@@ -165,6 +165,7 @@
   <data name="ShowPostfold" xml:space="preserve"><value>Open Postfold</value></data>
   <data name="ExitPostfold" xml:space="preserve"><value>Exit Postfold, saving drafts</value></data>
   <data name="HtmlRead" xml:space="preserve"><value>Read HTML</value></data>
+  <data name="MessageHtml" xml:space="preserve"><value>Message HTML</value></data>
   <data name="LoadImages" xml:space="preserve"><value>Load images for this message</value></data>
   <data name="ImageConsent" xml:space="preserve"><value>Loading images contacts their servers. They can learn your IP address and that this message was opened. Only images approved through the bounded fetcher are loaded. This choice applies to this message only.</value></data>
   <data name="ConfirmImages" xml:space="preserve"><value>Allow images for this message</value></data>
