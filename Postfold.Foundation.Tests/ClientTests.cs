@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
@@ -291,6 +292,58 @@ public sealed class ClientTests
 
         // Assert
         Assert.That(result.IsSuccess, Is.EqualTo(expected));
+    }
+
+    [TestCase("127.0.0.1")]
+    [TestCase("10.0.0.1")]
+    [TestCase("100.64.0.1")]
+    [TestCase("192.168.1.1")]
+    [TestCase("169.254.169.254")]
+    [TestCase("198.18.0.1")]
+    [TestCase("::1")]
+    [TestCase("::ffff:127.0.0.1")]
+    public void IsPublic_WhenDestinationIsLocalOrReserved_Denies(string value)
+    {
+        // Arrange
+        IPAddress address = IPAddress.Parse(value);
+
+        // Act
+        bool allowed = RemoteImageFetcher.IsPublic(address);
+
+        // Assert
+        Assert.That(allowed, Is.False);
+    }
+
+    [Test]
+    public async Task FetchAsync_WhenConsentIsAbsent_DoesNotContactDestination()
+    {
+        // Arrange
+        RemoteImageFetcher fetcher = new RemoteImageFetcher();
+
+        // Act
+        Outcome<byte[]> result = await fetcher.FetchAsync(new Uri("https://8.8.8.8/image.png"), false, CancellationToken.None);
+
+        // Assert
+        Assert.That(result.Failure, Is.EqualTo(Failure.Validation));
+    }
+
+    [Test]
+    public void Sanitise_WhenHtmlContainsActiveAndRemoteContent_KeepsOnlyPassiveText()
+    {
+        // Arrange
+        string input = "<script>alert(1)</script><img src='https://example.invalid/pixel'><iframe src='file:///x'></iframe>" +
+            "<form action='https://example.invalid'><input></form><p onclick='x()' style='background:url(file:///x)'>Safe</p>";
+
+        // Act
+        Outcome<string> result = HtmlPolicy.Sanitise(input, 4096);
+
+        // Assert
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.That(result.Value, Does.Contain("<p>Safe</p>"));
+        Assert.That(result.Value, Does.Not.Contain("https://example.invalid"));
+        Assert.That(result.Value, Does.Not.Contain("onclick"));
+        Assert.That(result.Value, Does.Not.Contain("<script"));
+        Assert.That(result.Value, Does.Contain(HtmlPolicy.Csp));
     }
 
     [AvaloniaTest]

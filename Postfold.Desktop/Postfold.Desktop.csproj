@@ -13,6 +13,12 @@
         <ProjectReference Include="../Postfold.UI/Postfold.UI.csproj" />
         <PackageReference Include="Avalonia.Desktop" />
         <PackageReference Include="SkiaSharp" />
+        <PackageReference Include="Avalonia.Controls.WebView" />
+        <PackageReference Include="Microsoft.Web.WebView2" ExcludeAssets="compile;build;buildTransitive"
+                          PrivateAssets="all" GeneratePathProperty="true" />
+        <Reference Include="Microsoft.Web.WebView2.Core">
+            <HintPath>$(PkgMicrosoft_Web_WebView2)/lib_manual/netcoreapp3.0/Microsoft.Web.WebView2.Core.dll</HintPath>
+        </Reference>
         <PackageReference Include="Avalonia.Themes.Fluent" />
     </ItemGroup>
 </Project>

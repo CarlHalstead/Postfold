@@ -23,6 +23,7 @@ internal sealed class DesktopSession
     private bool _exitRequested;
     private DesktopIntegration? _integration;
     private WindowsNewMailNotification? _notifications;
+    private WindowsHtmlReadingService? _html;
     private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
 
     internal DesktopSession(IClassicDesktopStyleApplicationLifetime desktop, MainWindow window)
@@ -70,6 +71,11 @@ internal sealed class DesktopSession
 
             if (window.DataContext is MainWindowViewModel model)
             {
+                if (_html is not null)
+                {
+                    await _html.DisposeAsync();
+                }
+
                 await model.DisposeAsync();
             }
 
@@ -144,6 +150,10 @@ internal sealed class DesktopSession
             }
 
             _window.Configure(_host.Application, demo ? null : new AccountSetup(_host, secure, session), _integration);
+            // Native H01-H04 evidence is still failing; no environment or user-preference bypass is provided.
+            _html = new WindowsHtmlReadingService(_window, _host.Application, new RemoteImageFetcher(),
+                Path.Combine(directory, "html-renderer"), qualified: false);
+            _window.ConfigureHtml(_html);
             _window.ConfigureIdentity(_host.Identity);
             await _window.LoadAppearanceAsync(_host.Appearance);
             await model.InitialiseAsync();

@@ -5,6 +5,8 @@
     <ItemGroup>
         <ProjectReference Include="../Postfold.Core/Postfold.Core.csproj" />
         <PackageReference Include="Avalonia" />
+        <PackageReference Include="HtmlSanitizer" />
+        <PackageReference Include="AngleSharp" />
         <PackageReference Include="CommunityToolkit.Mvvm" />
     </ItemGroup>
 </Project>

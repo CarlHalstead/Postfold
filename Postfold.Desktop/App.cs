@@ -20,6 +20,13 @@ public sealed class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             desktop.Exit += (_, _) => _motion?.Dispose();
+            if (desktop.Args is ["--renderer-probe" or "--renderer-security-probe", string output])
+            {
+                desktop.MainWindow = RendererProbe.Create(output, desktop.Args[0] == "--renderer-security-probe");
+                base.OnFrameworkInitializationCompleted();
+                return;
+            }
+
             desktop.MainWindow = new MainWindow
             {
                 DataContext = new MainWindowViewModel()
