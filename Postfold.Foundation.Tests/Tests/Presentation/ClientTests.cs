@@ -416,8 +416,7 @@ public sealed class ClientTests
             "Restored",
             "Saved body",
             DateTimeOffset.UnixEpoch,
-            "restored@example.invalid",
-            Signature: "Saved signature"
+            "restored@example.invalid"
         ), targetAccount: target);
         ComposeWindow compose = System.Linq.Enumerable.Single(System.Linq.Enumerable.OfType<ComposeWindow>(main.OwnedWindows));
         try
@@ -429,7 +428,7 @@ public sealed class ClientTests
             await application.Received().SaveDraftAsync(
                 target,
                 Arg.Any<Guid>(),
-                Arg.Is<ComposeContent>(content => content.PlainText == "Saved body" && content.Signature == "Saved signature"),
+                Arg.Is<ComposeContent>(content => content.PlainText == "Saved body"),
                 Arg.Any<CancellationToken>()
             );
             await application.DidNotReceive().SaveDraftAsync(

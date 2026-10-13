@@ -158,7 +158,7 @@ public sealed class AccountSetup : IAccountSetup
             cancellationToken
         ).ConfigureAwait(false);
         Failure identityResult = engine.IsSuccess && request.Sender is not null ?
-            await _identity!.SaveAsync(id, new ComposeIdentity(request.Sender, ""), cancellationToken).ConfigureAwait(false) :
+            await _identity!.SaveAsync(id, new ComposeIdentity(request.Sender), cancellationToken).ConfigureAwait(false) :
             Failure.None;
         Failure synchronisation = Failure.None;
         if (engine.IsSuccess)

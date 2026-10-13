@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Postfold.Core.Interfaces;
 
-/// <summary>Validates and saves the account identity used for composing messages and signatures.</summary>
+/// <summary>Validates and saves the account identity used for composing messages.</summary>
 public interface IClientIdentity
 {
     Task<Failure> SaveAsync(AccountId account, ComposeIdentity identity, CancellationToken cancellationToken);

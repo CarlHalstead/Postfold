@@ -38,9 +38,9 @@
   <data name="Destination" xml:space="preserve"><value>Save attachment</value></data>
   <data name="Sender" xml:space="preserve"><value>From address</value></data>
   <data name="Recipients" xml:space="preserve"><value>To addresses, separated by semicolons</value></data>
+  <data name="RecipientsUnavailable" xml:space="preserve"><value>Address suggestions are unavailable. You can still type an address.</value></data>
   <data name="Subject" xml:space="preserve"><value>Subject</value></data>
   <data name="Body" xml:space="preserve"><value>Plain-text message</value></data>
-  <data name="Signature" xml:space="preserve"><value>Signature</value></data>
   <data name="Send" xml:space="preserve"><value>Send</value></data>
   <data name="Sending" xml:space="preserve"><value>Sending…</value></data>
   <data name="CloseCompose" xml:space="preserve"><value>Close</value></data>
@@ -200,8 +200,8 @@
   <data name="CheckAttachments" xml:space="preserve"><value>Check attachments online</value></data>
   <data name="AttachmentDetails" xml:space="preserve"><value>Attachment details refreshed; listed sizes are declared or decoded bytes, and saving asks for your destination</value></data>
   <data name="EditCancelled" xml:space="preserve"><value>Edit a replacement for cancelled mail</value></data>
-  <data name="IdentitySettings" xml:space="preserve"><value>Identity and signature</value></data>
-  <data name="IdentityHint" xml:space="preserve"><value>The primary sender and plain-text signature are saved for this account. New messages, replies and forwards use them. Existing drafts preserve their saved signature.</value></data>
+  <data name="IdentitySettings" xml:space="preserve"><value>Sender identity</value></data>
+  <data name="IdentityHint" xml:space="preserve"><value>The sender address is saved for this account and used for new messages, replies and forwards.</value></data>
   <data name="IdentityAccount" xml:space="preserve"><value>Account for this identity</value></data>
   <data name="ReviewedSentCopy" xml:space="preserve"><value>Retry reviewed sent-copy storage only</value></data>
   <data name="SentCopyConsent" xml:space="preserve"><value>I checked the sent folder. Retrying may create a duplicate saved copy; it never submits mail again.</value></data>
@@ -274,7 +274,7 @@
   <data name="MessageDetails" xml:space="preserve"><value>Message details</value></data>
   <data name="Appearance" xml:space="preserve"><value>Appearance</value></data>
   <data name="Accounts" xml:space="preserve"><value>Accounts</value></data>
-  <data name="SenderAndSignature" xml:space="preserve"><value>Sender &amp; signature</value></data>
+  <data name="SenderIdentity" xml:space="preserve"><value>Sender identity</value></data>
   <data name="Desktop" xml:space="preserve"><value>Desktop</value></data>
   <data name="ChooseAccount" xml:space="preserve"><value>Choose an account</value></data>
   <data name="FontDefault" xml:space="preserve"><value>System default</value></data>

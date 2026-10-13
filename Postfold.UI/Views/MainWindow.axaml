@@ -71,7 +71,7 @@
                                     <StackPanel>
                                         <Border Height="1" Background="{DynamicResource MailLineBrush}" IsVisible="{Binding IsAccount}" Margin="8,12,8,8" />
                                         <Border Name="PART_LayoutRoot" CornerRadius="8" Background="{TemplateBinding Background}" Focusable="True" TemplatedControl.IsTemplateFocusTarget="True">
-                                            <Grid Name="PART_Header" ColumnDefinitions="*,Auto" Background="Transparent" PointerPressed="AccountHeaderPointerPressed">
+                                            <Grid Name="PART_Header" ColumnDefinitions="*,Auto" Background="Transparent" PointerPressed="AccountHeaderPointerPressed" DragDrop.AllowDrop="True" DragDrop.DragOver="FolderDragOver" DragDrop.Drop="FolderDrop">
                                                 <ContentPresenter Name="PART_HeaderPresenter" Content="{TemplateBinding Header}" ContentTemplate="{TemplateBinding HeaderTemplate}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" />
                                                 <ToggleButton Name="PART_ExpandCollapseChevron" Grid.Column="1" Theme="{StaticResource FluentTreeViewExpandCollapseChevron}" VerticalAlignment="Center" Focusable="False" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw" IsChecked="{TemplateBinding IsExpanded, Mode=TwoWay}" />
                                             </Grid>

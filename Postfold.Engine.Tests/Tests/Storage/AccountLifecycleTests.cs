@@ -26,7 +26,7 @@ public sealed class AccountLifecycleTests
         {
             MailEndpoint endpoint = new MailEndpoint("mail.synthetic.invalid", 993, TlsMode.Implicit, "owner@synthetic.invalid", "secure-reference");
             await profile.ConfigureAccountAsync(EngineFixture.Account, endpoint, endpoint, CancellationToken.None);
-            await profile.SaveIdentityAsync(EngineFixture.Account, new ComposeIdentity("owner@synthetic.invalid", "Signature"), CancellationToken.None);
+            await profile.SaveIdentityAsync(EngineFixture.Account, new ComposeIdentity("owner@synthetic.invalid"), CancellationToken.None);
             original = (await profile.AccountsAsync(CancellationToken.None))[0];
 
             // Act

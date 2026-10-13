@@ -185,12 +185,10 @@ public sealed class UiRefinementTests
         main.Show();
         try
         {
-            main.OpenSettings("SenderAndSignature", new AccountId(1));
+            main.OpenSettings("SenderIdentity", new AccountId(1));
             SettingsWindow settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
             TextBox sender = settings.GetVisualDescendants().OfType<TextBox>().Single(field => field.Name == "Sender");
-            TextBox signature = settings.GetVisualDescendants().OfType<TextBox>().Single(field => field.Name == "Signature");
             sender.Text = "Edited <sender@synthetic.invalid>";
-            signature.Text = "Unsaved local edit";
 
             // Act
             await model.InitialiseAsync();
@@ -198,7 +196,6 @@ public sealed class UiRefinementTests
 
             // Assert
             Assert.That(sender.Text, Is.EqualTo("Edited <sender@synthetic.invalid>"));
-            Assert.That(signature.Text, Is.EqualTo("Unsaved local edit"));
             Assert.That(main.OwnedWindows.OfType<SettingsWindow>().Single(), Is.SameAs(settings));
             settings.Close();
         }

@@ -11,6 +11,5 @@ public sealed record ComposeContent(
     DateTimeOffset Date,
     string MessageId,
     ImmutableArray<ComposeAttachment> Attachments = default,
-    string Signature = "",
     Guid? Predecessor = null
 );

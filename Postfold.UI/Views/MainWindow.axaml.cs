@@ -7,6 +7,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
 using Postfold.Core.Models;
@@ -19,6 +20,7 @@ using Postfold.Core.Models.Mime;
 using Postfold.Core.Models.Operations;
 using Postfold.Core.Models.Outbox;
 using Postfold.UI.Controls;
+using Postfold.UI.Models;
 using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
 using System;
@@ -34,6 +36,7 @@ namespace Postfold.UI.Views;
 
 public sealed partial class MainWindow : Window
 {
+    private static readonly DataFormat<MessageSnapshot> MessageDragFormat = DataFormat.CreateInProcessFormat<MessageSnapshot>("Postfold.Message");
     private readonly List<ComposeWindow> _compose = [];
     private readonly List<Task> _work = [];
     private CancellationTokenSource _lifetime = new CancellationTokenSource();
@@ -60,6 +63,9 @@ public sealed partial class MainWindow : Window
     };
     private string? _layoutPreview;
     private AccountId? _removingAccount;
+    private PointerPressedEventArgs? _dragPress;
+    private MessageSnapshot? _dragMessage;
+    private Point _dragStart;
 
     public MainWindow()
     {
@@ -98,6 +104,18 @@ public sealed partial class MainWindow : Window
             }
         };
         this.FindControl<DockPanel>("PreviewPane")!.SizeChanged += (_, _) => AdjustReaderViewport();
+        ListBox messageList = this.FindControl<ListBox>("MessageList")!;
+        messageList.AddHandler(PointerPressedEvent, MessagePointerPressed, RoutingStrategies.Tunnel);
+        messageList.PointerMoved += MessagePointerMoved;
+        messageList.Tapped += (_, args) =>
+        {
+            if (args.Source is Visual source && source.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext is MessageSummary row &&
+                DataContext is MainWindowViewModel model)
+            {
+                Track(() => model.OpenMessageAsync(row.Message));
+            }
+        };
+        messageList.PointerReleased += (_, _) => { _dragPress = null; _dragMessage = null; };
         this.FindControl<DockPanel>("NavigationPane")!.SizeChanged += (_, _) => AdjustPaneToolbars();
         this.FindControl<DockPanel>("MessagePane")!.SizeChanged += (_, _) => AdjustPaneToolbars();
         TextBlock readLabel = ((StackPanel)this.FindControl<Button>("ReadButton")!.Content!).Children.OfType<TextBlock>().Single();
@@ -450,8 +468,7 @@ public sealed partial class MainWindow : Window
         Guid? id = null,
         bool conflict = false,
         Guid? predecessor = null,
-        AccountId? targetAccount = null,
-        bool applyIdentitySignature = false
+        AccountId? targetAccount = null
     )
     {
         MainWindowViewModel? model = DataContext as MainWindowViewModel;
@@ -493,16 +510,8 @@ public sealed partial class MainWindow : Window
             "",
             "",
             DateTimeOffset.UtcNow,
-            Guid.NewGuid().ToString("N") + "@postfold.invalid",
-            Signature: account.Identity?.Signature ?? ""
+            Guid.NewGuid().ToString("N") + "@postfold.invalid"
         );
-        if (applyIdentitySignature)
-        {
-            content = content with
-            {
-                Signature = account.Identity?.Signature ?? ""
-            };
-        }
         if (kind is not null && model?.Selected is MessageSnapshot message)
         {
             content = content with
@@ -524,13 +533,10 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        if (string.IsNullOrEmpty(content.Sender))
+        content = content with
         {
-            content = content with
-            {
-                Sender = account.Identity?.Sender ?? account.Outgoing.Username
-            };
-        }
+            Sender = account.Identity?.Sender ?? account.Outgoing.Username
+        };
 
         ComposeWindow window = new ComposeWindow(
             _application,
@@ -893,6 +899,86 @@ public sealed partial class MainWindow : Window
             Content = FormControls.Page(Strings.Drafts, panel, footer)
         };
         ShowWindow(window);
+    }
+
+    private void MessagePointerPressed(object? sender, PointerPressedEventArgs args)
+    {
+        _dragPress = null;
+        _dragMessage = null;
+        if (args.GetCurrentPoint(this).Properties.IsLeftButtonPressed && args.Source is Visual source &&
+            source.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext is MessageSummary row)
+        {
+            _dragPress = args;
+            _dragMessage = row.Message;
+            _dragStart = args.GetPosition(this);
+        }
+    }
+
+    private void MessagePointerMoved(object? sender, PointerEventArgs args)
+    {
+        if (_dragPress is not PointerPressedEventArgs press || _dragMessage is not MessageSnapshot message)
+        {
+            return;
+        }
+        if (!args.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            _dragPress = null;
+            _dragMessage = null;
+            return;
+        }
+        Point position = args.GetPosition(this);
+        if (Math.Abs(position.X - _dragStart.X) < 6 && Math.Abs(position.Y - _dragStart.Y) < 6)
+        {
+            return;
+        }
+        _dragPress = null;
+        _dragMessage = null;
+        if (DataContext is MainWindowViewModel model && model.Selected?.Account == message.Account &&
+            model.Selected.Id == message.Id && model.CanMove)
+        {
+            Track(async () =>
+            {
+                using DataTransfer data = new DataTransfer();
+                data.Add(DataTransferItem.Create(MessageDragFormat, message));
+                await DragDrop.DoDragDropAsync(press, data, DragDropEffects.Move);
+            });
+        }
+    }
+
+    private void FolderDragOver(object? sender, DragEventArgs args)
+    {
+        MailboxSnapshot? destination = DropDestination(sender, args);
+        args.DragEffects = destination is null ? DragDropEffects.None : DragDropEffects.Move;
+        args.Handled = true;
+    }
+
+    private void FolderDrop(object? sender, DragEventArgs args)
+    {
+        MailboxSnapshot? destination = DropDestination(sender, args);
+        if (destination is not null && args.DataTransfer.TryGetValue(MessageDragFormat) is MessageSnapshot message &&
+            DataContext is MainWindowViewModel model)
+        {
+            args.DragEffects = DragDropEffects.Move;
+            Track(() => model.DropMessageAsync(message, destination));
+        }
+        else
+        {
+            args.DragEffects = DragDropEffects.None;
+        }
+        args.Handled = true;
+    }
+
+    private MailboxSnapshot? DropDestination(object? sender, DragEventArgs args)
+    {
+        if (_stopping || DataContext is not MainWindowViewModel model ||
+            sender is not Control { DataContext: NavigationItemViewModel item } || !item.IsFolder ||
+            args.DataTransfer.TryGetValue(MessageDragFormat) is not MessageSnapshot message)
+        {
+            return null;
+        }
+        MailboxSnapshot? destination = model.Mailboxes.FirstOrDefault(folder =>
+            folder.Account == item.Scope.Account && folder.Id == item.Scope.Folder);
+        return destination is not null && model.CanDropMessage(message, destination) ? destination : null;
     }
 
     private async Task<Control> SendIssuesAsync(AccountId account)

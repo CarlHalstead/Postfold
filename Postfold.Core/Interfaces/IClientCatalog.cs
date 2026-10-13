@@ -21,6 +21,9 @@ public interface IClientCatalog
 
     Task<ImmutableArray<MailboxSnapshot>> MailboxesAsync(CancellationToken cancellationToken);
 
+    /// <summary>Returns at most twenty matching addresses from this account's local correspondents and durable submissions.</summary>
+    Task<ImmutableArray<string>> RecognisedRecipientsAsync(AccountId account, string prefix, CancellationToken cancellationToken);
+
     /// <summary>Counts unread locally cached memberships in the current mailbox generation, never server totals.</summary>
     Task<ImmutableArray<MailboxUnreadCount>> MailboxUnreadCountsAsync(AccountId account, CancellationToken cancellationToken);
 

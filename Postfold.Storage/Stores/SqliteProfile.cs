@@ -18,6 +18,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Mail;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -308,6 +309,74 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             }
 
             return accounts.ToImmutable();
+        }, cancellationToken);
+    }
+
+    public Task<ImmutableArray<string>> RecognisedRecipientsAsync(AccountId account, string prefix, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(prefix) || prefix.Length > 320)
+        {
+            return Task.FromResult(ImmutableArray<string>.Empty);
+        }
+
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(
+                connection,
+                null,
+                """
+                SELECT Address FROM (
+                    SELECT r.Address,o.Created AS LastUsed FROM SubmissionRecipients r
+                    JOIN OutboxSubmissions o ON o.SubmissionId=r.SubmissionId
+                    JOIN Accounts a ON a.AccountId=o.AccountId AND a.Active=1
+                    WHERE o.AccountId=$a AND instr(lower(r.Address),lower($p))>0
+                    UNION ALL
+                    SELECT m.Participants,m.Date AS LastUsed FROM Messages m
+                    JOIN Accounts a ON a.AccountId=m.AccountId AND a.Active=1
+                    WHERE m.AccountId=$a AND length(m.Participants)<=2048
+                        AND instr(lower(m.Participants),lower($p))>0
+                ) GROUP BY Address COLLATE NOCASE ORDER BY MAX(LastUsed) DESC,Address LIMIT 100;
+                """,
+                ("$a", account.Value),
+                ("$p", prefix.Trim())
+            );
+            using SqliteDataReader reader = command.ExecuteReader();
+            ImmutableArray<string>.Builder result = ImmutableArray.CreateBuilder<string>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            while (reader.Read() && result.Count < 20)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string candidate = reader.GetString(0);
+                if (candidate.Contains('\r') || candidate.Contains('\n'))
+                {
+                    continue;
+                }
+
+                MailAddressCollection addresses = new MailAddressCollection();
+                try
+                {
+                    addresses.Add(candidate);
+                }
+                catch (FormatException)
+                {
+                    continue;
+                }
+
+                foreach (MailAddress address in addresses)
+                {
+                    if (address.Address.Length <= 320 && address.Address.Contains(prefix.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                        seen.Add(address.Address))
+                    {
+                        result.Add(address.Address);
+                        if (result.Count == 20)
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return result.ToImmutable();
         }, cancellationToken);
     }
 

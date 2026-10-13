@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Postfold.Core.Interfaces;
 
-/// <summary>Persists an account's compose identity and signature independently of network credentials.</summary>
+/// <summary>Persists an account's compose identity independently of network credentials.</summary>
 public interface IAccountIdentityStore
 {
     Task<Failure> SaveIdentityAsync(AccountId account, ComposeIdentity identity, CancellationToken cancellationToken);

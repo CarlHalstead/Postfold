@@ -87,7 +87,6 @@ public static class Strings
     public static string Recipients => Get("Recipients");
     public static string Subject => Get("Subject");
     public static string Body => Get("Body");
-    public static string Signature => Get("Signature");
     public static string Send => Get("Send");
     public static string Save => Get("Save");
     public static string Attach => Get("Attach");

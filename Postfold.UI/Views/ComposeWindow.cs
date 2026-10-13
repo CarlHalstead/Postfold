@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
 using Postfold.Core.Models;
@@ -37,11 +38,12 @@ public sealed class ComposeWindow : Window
     private readonly Button _send;
     private readonly Button _close;
     private readonly WrapPanel _actionButtons;
-    private readonly TextBox _sender;
-    private readonly TextBox _recipients;
+    private readonly string _sender;
+    private readonly AutoCompleteBox _recipients;
+    private CancellationTokenSource _suggestionLifetime = new CancellationTokenSource();
+    private readonly List<Task> _suggestions = [];
     private readonly TextBox _subject;
     private readonly TextBox _body;
-    private readonly TextBox _signature;
     private readonly TextBlock _status = new TextBlock
     {
         TextWrapping = TextWrapping.Wrap
@@ -89,19 +91,30 @@ public sealed class ComposeWindow : Window
             Margin = new Thickness(24),
             Spacing = 12
         };
-        _sender = FormControls.AddField(form, "Sender", content.Sender);
-        _recipients = FormControls.AddField(form, "Recipients", string.Join(";", content.Recipients));
+        _sender = content.Sender;
+        _recipients = new AutoCompleteBox
+        {
+            Name = "Recipients",
+            Text = string.Join(";", content.Recipients),
+            IsTextCompletionEnabled = false,
+            FilterMode = AutoCompleteFilterMode.None,
+            MinimumPopulateDelay = TimeSpan.FromMilliseconds(150),
+            AsyncPopulator = PopulateRecipientsAsync,
+            MaxDropDownHeight = 240
+        };
+        Avalonia.Automation.AutomationProperties.SetName(_recipients, Strings.Recipients);
+        StackPanel recipients = new StackPanel { Spacing = 4 };
+        TextBlock recipientLabel = new TextBlock { Text = Strings.Recipients, TextWrapping = TextWrapping.Wrap };
+        recipientLabel.Classes.Add("caption");
+        recipients.Children.Add(recipientLabel);
+        recipients.Children.Add(_recipients);
+        form.Children.Add(recipients);
         _subject = FormControls.AddField(form, "Subject", content.Subject);
         _body = FormControls.AddField(form, "Body", content.PlainText);
         _body.AcceptsReturn = true;
         _body.TextWrapping = TextWrapping.Wrap;
         _body.MinHeight = 220;
         _body.Bind(TextBox.FontSizeProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("BodyFontSize"));
-        StackPanel signature = new StackPanel { Spacing = 8 };
-        _signature = FormControls.AddField(signature, "Signature", content.Signature);
-        _signature.AcceptsReturn = true;
-        _signature.TextWrapping = TextWrapping.Wrap;
-        form.Children.Add(new Expander { Header = Strings.Signature, Content = signature });
         if (!content.Attachments.IsDefaultOrEmpty)
         {
             _attachments.AddRange(content.Attachments);
@@ -172,16 +185,13 @@ public sealed class ComposeWindow : Window
         footer.Children.Add(_status);
         Avalonia.Automation.AutomationProperties.SetLiveSetting(_status, Avalonia.Automation.AutomationLiveSetting.Polite);
         Content = FormControls.Page(Strings.Compose, form, footer);
-        SizeChanged += (_, _) => _body.MinHeight = Math.Max(140, Bounds.Height - 540);
-        foreach (TextBox field in new[] { _sender, _recipients, _subject, _body, _signature })
+        SizeChanged += (_, _) => _body.MinHeight = Math.Max(140, Bounds.Height - 380);
+        _recipients.TextChanged += (_, _) => ScheduleSave();
+        foreach (TextBox field in new[] { _subject, _body })
         {
             field.TextChanged += (_, _) =>
             {
-                _timer.Stop();
-                if (!_frozen && !_stopping)
-                {
-                    _timer.Start();
-                }
+                ScheduleSave();
             };
         }
 
@@ -220,6 +230,8 @@ public sealed class ComposeWindow : Window
         {
             _timer.Stop();
             _submissionCancellation.Dispose();
+            _suggestionLifetime.Cancel();
+            _suggestionLifetime.Dispose();
         };
         Opened += (_, _) => _recipients.Focus();
         KeyDown += async (_, args) =>
@@ -287,6 +299,7 @@ public sealed class ComposeWindow : Window
     {
         _stopping = true;
         _submissionCancellation.Cancel();
+        _suggestionLifetime.Cancel();
         IsEnabled = false;
         _timer.Stop();
     }
@@ -296,6 +309,7 @@ public sealed class ComposeWindow : Window
         await _actions.WaitAsync();
         try
         {
+            await Task.WhenAll(_suggestions.ToArray());
             return await FlushAsync();
         }
         finally
@@ -312,6 +326,8 @@ public sealed class ComposeWindow : Window
     public void ResumeEditing()
     {
         _stopping = false;
+        _suggestionLifetime.Dispose();
+        _suggestionLifetime = new CancellationTokenSource();
         _submissionCancellation.Dispose();
         _submissionCancellation = new CancellationTokenSource();
         IsEnabled = true;
@@ -388,10 +404,70 @@ public sealed class ComposeWindow : Window
         }
     }
 
+    private void ScheduleSave()
+    {
+        _timer.Stop();
+        if (!_frozen && !_stopping)
+        {
+            _timer.Start();
+        }
+    }
+
+    private Task<IEnumerable<object>> PopulateRecipientsAsync(string? text, CancellationToken cancellationToken)
+    {
+        Task<IEnumerable<object>> task = ReadRecipientsAsync(text, cancellationToken);
+        _suggestions.RemoveAll(previous => previous.IsCompleted);
+        _suggestions.Add(task);
+        return task;
+    }
+
+    private async Task<IEnumerable<object>> ReadRecipientsAsync(string? text, CancellationToken cancellationToken)
+    {
+        string input = text ?? "";
+        (int start, int caret, int end) = RecipientRange(input);
+        string prefix = input[start..caret].Trim();
+        if (_frozen || _stopping || prefix.Length == 0)
+        {
+            return [];
+        }
+
+        // Keep the original token while keyboard navigation previews different suggestions.
+        _recipients.TextSelector = (_, address) => input[..start] + (start > 0 ? " " : "") + address + input[end..];
+        using CancellationTokenSource lifetime = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _suggestionLifetime.Token
+        );
+        try
+        {
+            ImmutableArray<string> addresses = await _application.Catalog.RecognisedRecipientsAsync(_account, prefix, lifetime.Token);
+            string[] existing = (input[..start] + input[end..]).Split(';', StringSplitOptions.TrimEntries);
+            return addresses.IsDefault ? [] : addresses.Where(address =>
+                !existing.Contains(address, StringComparer.OrdinalIgnoreCase) && MailAddress.TryCreate(address, out _)).Cast<object>().ToArray();
+        }
+        catch (OperationCanceledException)
+        {
+            return [];
+        }
+        catch (IOException)
+        {
+            _status.Text = Strings.Get("RecipientsUnavailable");
+            return [];
+        }
+    }
+
+    private (int Start, int Caret, int End) RecipientRange(string input)
+    {
+        TextBox? editor = _recipients.GetVisualDescendants().OfType<TextBox>().FirstOrDefault();
+        int caret = input == _recipients.Text ? Math.Clamp(editor?.CaretIndex ?? input.Length, 0, input.Length) : input.Length;
+        int start = input[..caret].LastIndexOf(';') + 1;
+        int separator = input.IndexOf(';', caret);
+        return (start, caret, separator >= 0 ? separator : input.Length);
+    }
+
     private ComposeContent Snapshot()
     {
         return new ComposeContent(
-            _sender.Text ?? "",
+            _sender,
             (_recipients.Text ?? "").Split(
     ';',
     StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
@@ -401,7 +477,6 @@ public sealed class ComposeWindow : Window
             DateTimeOffset.UtcNow,
             Guid.NewGuid().ToString("N") + "@postfold.invalid",
             _attachments.ToImmutableArray(),
-            _signature.Text ?? "",
             _predecessor
         );
     }
@@ -449,7 +524,8 @@ public sealed class ComposeWindow : Window
                         button.IsEnabled = false;
                     }
                 }
-                foreach (TextBox field in new[] { _sender, _recipients, _subject, _body, _signature })
+                _recipients.IsEnabled = false;
+                foreach (TextBox field in new[] { _subject, _body })
                 {
                     field.IsReadOnly = true;
                 }

@@ -121,7 +121,26 @@ internal static class UiDesignQualification
         main.OpenCompose();
         ComposeWindow compose = main.OwnedWindows.OfType<ComposeWindow>().Single();
         await CaptureAsync(compose, "compose");
-        compose.GetVisualDescendants().OfType<TextBox>().Single(field => field.Name == "Recipients").Text = "recipient@synthetic.invalid";
+        Apply(AppearanceSettings.Default with
+        {
+            Theme = "Dark"
+        });
+        await CaptureAsync(compose, "compose-dark");
+        Apply(AppearanceSettings.Default with
+        {
+            Theme = "Light",
+            FontSize = 24
+        });
+        compose.Width = 480;
+        compose.Height = 480;
+        await CaptureAsync(compose, "compose-minimum-large-text");
+        Apply(AppearanceSettings.Default with
+        {
+            Theme = "Light"
+        });
+        compose.Width = 760;
+        compose.Height = 760;
+        compose.GetVisualDescendants().OfType<AutoCompleteBox>().Single(field => field.Name == "Recipients").Text = "recipient@synthetic.invalid";
         compose.GetVisualDescendants().OfType<TextBox>().Single(field => field.Name == "Subject").Text = "Synthetic immediate send";
         await compose.QueueAsync();
         await CaptureAsync(compose, "compose-send-offline");
@@ -147,7 +166,7 @@ internal static class UiDesignQualification
         foreach ((string section, string name) in new[]
         {
             ("Appearance", "settings"), ("Accounts", "settings-accounts"),
-            ("SenderAndSignature", "settings-identity"), ("Desktop", "settings-desktop")
+            ("SenderIdentity", "settings-identity"), ("Desktop", "settings-desktop")
         })
         {
             Console.WriteLine("Native settings checkpoint: " + section);

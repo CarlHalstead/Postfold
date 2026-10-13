@@ -112,8 +112,7 @@ public sealed class ClientProtocolFlowTests
             "Client synthetic send",
             "Preserved client text",
             DateTimeOffset.UnixEpoch,
-            "client@synthetic.invalid",
-            Signature: "Synthetic signature"
+            "client@synthetic.invalid"
         );
         ComposeWindow compose = new ComposeWindow(application, EngineFixture.Account, content);
         compose.Show();
@@ -138,7 +137,6 @@ public sealed class ClientProtocolFlowTests
             Assert.That(preserved.Evidence!.Recipients, Has.Length.EqualTo(2));
             Assert.That(outgoing.SubmissionCount, Is.EqualTo(1));
             Assert.That(outgoing.SubmittedMime, Does.Contain("Preserved client text"));
-            Assert.That(outgoing.SubmittedMime, Does.Contain("Synthetic signature"));
             await sentCopy.Received(partial || lostAcknowledgement ? 0 : 1)
                 .SaveAsync(Arg.Any<FrozenSubmission>(), Arg.Any<Stream>(), Arg.Any<CancellationToken>());
         }

@@ -52,7 +52,7 @@ linked resend draft requires duplicate-delivery consent. Sent-copy retry does no
 The reviewed sent-copy retry asks you to check the sent folder first, because saving again can duplicate the copy.
 F6 and Shift+F6 cycle the visible panes. Message rows show their account name in unified views.
 Appearance persists theme, density, font, size and right/bottom/hidden preview layouts. Windows owner checks cover
-Narrator, pane focus, scaling, contrast and reduced motion. Compose supports plain-text signatures, attachments and removal;
+Narrator, pane focus, scaling, contrast and reduced motion. Compose supports plain text, attachments and removal;
 Ctrl+S saves, Ctrl+Enter queues, and Ctrl+Shift+A chooses attachments. Attachment saving supports cancellation
 through a user destination picker. Mailbox commands shows durable command states and preserved review evidence;
 Forward windows let you select original attachments individually; selected content is preserved in the local draft.

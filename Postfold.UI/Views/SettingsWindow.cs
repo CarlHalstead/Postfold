@@ -83,7 +83,7 @@ public sealed class SettingsWindow : Window
         {
             Section("Appearance", Appearance()),
             Section("Accounts", Accounts()),
-            Section("SenderAndSignature", Identity()),
+            Section("SenderIdentity", Identity()),
             Section("Desktop", Desktop())
         };
         _tabs.SelectionChanged += (_, _) => _accounts.IsVisible = _tabs.SelectedIndex is 1 or 2;
@@ -224,11 +224,6 @@ public sealed class SettingsWindow : Window
             StackPanel footer = Footer();
             TextBox sender = FormControls.AddField(form, "Sender");
             sender.MaxLength = 320;
-            TextBox signature = FormControls.AddField(form, "Signature");
-            signature.MaxLength = 8192;
-            signature.AcceptsReturn = true;
-            signature.TextWrapping = TextWrapping.Wrap;
-            signature.MinHeight = 140;
             form.Children.Add(new TextBlock { Text = Strings.Get("IdentityHint"), TextWrapping = TextWrapping.Wrap });
             TextBlock status = Status();
             AccountId? editing = null;
@@ -238,7 +233,7 @@ public sealed class SettingsWindow : Window
                 {
                     return;
                 }
-                Failure result = await identity.SaveAsync(account.Id, new ComposeIdentity(sender.Text ?? "", signature.Text ?? ""), _lifetime.Token);
+                Failure result = await identity.SaveAsync(account.Id, new ComposeIdentity(sender.Text ?? ""), _lifetime.Token);
                 if (result == Failure.None)
                 {
                     editing = null;
@@ -255,7 +250,6 @@ public sealed class SettingsWindow : Window
                 if (editing != account?.Id)
                 {
                     sender.Text = account?.Identity?.Sender ?? "";
-                    signature.Text = account?.Identity?.Signature ?? "";
                     editing = account?.Id;
                     status.Text = "";
                 }
@@ -338,7 +332,7 @@ public sealed class SettingsWindow : Window
         _tabs.SelectedIndex = section switch
         {
             "Accounts" => 1,
-            "SenderAndSignature" => 2,
+            "SenderIdentity" => 2,
             "Desktop" => 3,
             _ => 0
         };

@@ -30,6 +30,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     private CancellationTokenSource? _searching;
     private Task _load = Task.CompletedTask;
     private readonly List<Task> _reads = [];
+    private readonly HashSet<(AccountId Account, MessageId Message, ProviderIdentity Provider)> _markingRead = [];
     private string _title = "Postfold";
     private string _terms = "";
     private string _status = "";
@@ -246,9 +247,11 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         get => _selected;
         set
         {
+            bool opened = value is not null && (_selected?.Account != value.Account || _selected.Id != value.Id ||
+                _selected.Provider != value.Provider);
             if (SetProperty(ref _selected, value))
             {
-                _load = ReadSelectedAsync(false);
+                _load = OpenSelectedAsync(opened);
                 _reads.RemoveAll(item => item.IsCompletedSuccessfully || item.IsCanceled);
                 _reads.Add(_load);
                 NotifyCommands();
@@ -429,6 +432,25 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    /// <summary>Opens a list message, including a second click after explicitly marking the selected message unread.</summary>
+    public Task OpenMessageAsync(MessageSnapshot message)
+    {
+        if (Selected?.Account != message.Account || Selected.Id != message.Id || Selected.Provider != message.Provider)
+        {
+            Selected = message;
+            return _load;
+        }
+        if (Selected.Read || _markingRead.Contains((message.Account, message.Id, message.Provider)))
+        {
+            return _load;
+        }
+
+        _load = OpenSelectedAsync(true);
+        _reads.RemoveAll(item => item.IsCompletedSuccessfully || item.IsCanceled);
+        _reads.Add(_load);
+        return _load;
+    }
+
     public async Task ReadSelectedAsync(bool retrieve)
     {
         _reading?.Cancel();
@@ -514,6 +536,26 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         return MutateAsync(MutationKind.Move, destination.RemoteKey);
     }
 
+    /// <summary>Validates a drop against the exact selected message, its account and currently available writable folders.</summary>
+    public bool CanDropMessage(MessageSnapshot message, MailboxSnapshot destination)
+    {
+        return Selected?.Account == message.Account && Selected.Id == message.Id && Selected.Provider == message.Provider &&
+            (Scope?.Account is null || Scope.Account == message.Account) && CanMove &&
+            destination.Account == message.Account && destination.Selectable && destination.Writable &&
+            Mailboxes.Contains(destination) && destination.RemoteKey != message.Provider.Imap?.Mailbox;
+    }
+
+    public Task DropMessageAsync(MessageSnapshot message, MailboxSnapshot destination)
+    {
+        if (!CanDropMessage(message, destination))
+        {
+            Status = Strings.Get("CommandUnsupported");
+            return Task.CompletedTask;
+        }
+
+        return MoveAsync(destination);
+    }
+
     public bool CanMutate()
     {
         return Selected?.Provider.Imap is ImapIdentity identity && Mailboxes.Any(item =>
@@ -588,6 +630,64 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             _updatingRows = false;
         }
         OnPropertyChanged(nameof(SelectedRow));
+    }
+
+    private async Task OpenSelectedAsync(bool opened)
+    {
+        // Reading owns selection cancellation; an already requested read-state change owns the application lifetime.
+        Task reading = ReadSelectedAsync(false);
+        MessageSnapshot? message = Selected;
+        if (opened && message is not null && !message.Read && CanMutate() && _application is not null &&
+            _markingRead.Add((message.Account, message.Id, message.Provider)))
+        {
+            try
+            {
+                Failure result = await _application.MutateAsync(message, MutationKind.SetRead, true, null, _lifetime.Token);
+                if (result == Failure.None)
+                {
+                    MessageSnapshot current = Messages.FirstOrDefault(item => item.Account == message.Account &&
+                        item.Id == message.Id && item.Provider == message.Provider) ?? message;
+                    MessageSnapshot read = current with
+                    {
+                        Read = true,
+                        Pending = PendingState.Queued
+                    };
+                    int index = Messages.ToList().FindIndex(item => item.Account == message.Account && item.Id == message.Id &&
+                        item.Provider == message.Provider);
+                    if (index >= 0)
+                    {
+                        Messages[index] = read;
+                        RegroupMessages();
+                    }
+                    if (Selected?.Account == message.Account && Selected.Id == message.Id && Selected.Provider == message.Provider)
+                    {
+                        SetProperty(ref _selected, read, nameof(Selected));
+                        OnPropertyChanged(nameof(SelectedRow));
+                        NotifyReader();
+                    }
+                    await RefreshUnreadCountsAsync(_searchGeneration, _lifetime.Token);
+                }
+                else if (Selected?.Account == message.Account && Selected.Id == message.Id)
+                {
+                    Status = Strings.Describe(result);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (System.IO.IOException)
+            {
+                if (Selected?.Account == message.Account && Selected.Id == message.Id)
+                {
+                    Status = Strings.Describe(Failure.Unavailable);
+                }
+            }
+            finally
+            {
+                _markingRead.Remove((message.Account, message.Id, message.Provider));
+            }
+        }
+        await reading;
     }
 
     private void NotifyReader()

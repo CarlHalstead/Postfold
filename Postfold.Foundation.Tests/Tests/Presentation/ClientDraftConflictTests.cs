@@ -97,8 +97,7 @@ public sealed class ClientDraftConflictTests
             "Incomplete local draft",
             "Preserve local text",
             DateTimeOffset.UnixEpoch,
-            "draft@synthetic.invalid",
-            Signature: "Local signature"
+            "draft@synthetic.invalid"
         );
         ComposeWindow compose = new ComposeWindow(application, EngineFixture.Account, content, id);
         compose.Show();
@@ -150,7 +149,6 @@ public sealed class ClientDraftConflictTests
             Assert.That(pushed, Is.EqualTo(Failure.NeedsReview));
             Assert.That(preserved.Conflict, Is.True);
             Assert.That(local.PlainText, Is.EqualTo(content.PlainText));
-            Assert.That(local.Signature, Is.EqualTo(content.Signature));
             Assert.That(remoteContent.PlainText, Is.EqualTo("synthetic body\r\n"));
             Assert.That(versions.Count(version => version.Origin == "Local"), Is.GreaterThanOrEqualTo(2));
             Assert.That(held.IsVisible, Is.True);

@@ -360,7 +360,7 @@ public sealed class MimePipeline : IMimePipeline, IMimeDraftReader, IMimeDraftWr
         message.MessageId = content.MessageId;
         message.Body = new TextPart("plain")
         {
-            Text = content.PlainText + (string.IsNullOrEmpty(content.Signature) ? "" : "\n-- \n" + content.Signature)
+            Text = content.PlainText
         };
         List<Stream> owned = new List<Stream>();
         try

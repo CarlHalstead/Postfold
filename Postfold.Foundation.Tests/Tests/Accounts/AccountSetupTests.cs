@@ -219,7 +219,7 @@ public sealed class AccountSetupTests
                 {
                     Username = existingLogin
                 }, request.Outgoing,
-                Identity: existingSender is null ? null : new Postfold.Core.Models.Drafts.ComposeIdentity(existingSender, ""))
+                Identity: existingSender is null ? null : new Postfold.Core.Models.Drafts.ComposeIdentity(existingSender))
         ));
         ICredentialStore secure = Substitute.For<ICredentialStore>();
         ICredentialStore session = Substitute.For<ICredentialStore>();

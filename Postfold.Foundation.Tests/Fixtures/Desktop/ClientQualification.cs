@@ -98,7 +98,7 @@ internal static class ClientQualification
             );
             if (parsed.IsSuccess)
             {
-                main.OpenCompose(activation: parsed.Value, applyIdentitySignature: true);
+                main.OpenCompose(activation: parsed.Value);
             }
             status.Text = "Activation result: " + parsed.Failure;
         });

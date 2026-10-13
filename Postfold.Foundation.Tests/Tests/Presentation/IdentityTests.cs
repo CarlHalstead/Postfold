@@ -24,13 +24,13 @@ public sealed class IdentityTests
         await profile.ConfigureAccountAsync(EngineFixture.Account, endpoint, endpoint, CancellationToken.None);
         await profile.ConfigureAccountAsync(new AccountId(2), endpoint, endpoint, CancellationToken.None);
         ClientIdentity identity = new ClientIdentity(profile);
-        ComposeIdentity primary = new ComposeIdentity("sender@synthetic.invalid", "Private plain-text signature");
+        ComposeIdentity primary = new ComposeIdentity("sender@synthetic.invalid");
 
         // Act
         Failure saved = await identity.SaveAsync(EngineFixture.Account, primary, CancellationToken.None);
         Failure rejected = await identity.SaveAsync(
             EngineFixture.Account,
-            new ComposeIdentity("sender@synthetic.invalid\r\nBcc: victim@synthetic.invalid", ""),
+            new ComposeIdentity("sender@synthetic.invalid\r\nBcc: victim@synthetic.invalid"),
             CancellationToken.None
         );
         await using SqliteProfile restarted = (await SqliteProfile.OpenAsync(

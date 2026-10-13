@@ -297,7 +297,7 @@ internal sealed class QualificationSession
                 Outcome<ComposeContent> content = MailtoActivation.Parse(activation);
                 if (content.IsSuccess)
                 {
-                    _window.OpenCompose(activation: content.Value, applyIdentitySignature: true);
+                    _window.OpenCompose(activation: content.Value);
                 }
                 else
                 {
