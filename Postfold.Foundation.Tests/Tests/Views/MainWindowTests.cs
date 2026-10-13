@@ -1,10 +1,13 @@
+using Avalonia;
 using Avalonia.Animation;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.NUnit;
 using NSubstitute;
 using NUnit.Framework;
+using Postfold.UI.Controls;
 using Postfold.UI.Policies;
+using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
 using Postfold.UI.Views;
 using System;
@@ -15,6 +18,126 @@ namespace Postfold.Foundation.Tests.Tests.Views;
 
 public sealed class MainWindowTests
 {
+    [AvaloniaTest]
+    public void Reader_WhenSelectingText_AllowsCopyWithoutAnEditableTextBoxOrEmptyAttachmentPanel()
+    {
+        // Arrange
+        MainWindow window = new MainWindow { DataContext = new MainWindowViewModel() };
+        window.Show();
+        try
+        {
+            SelectableTextBlock reader = window.FindControl<SelectableTextBlock>("PlainPreview")!;
+            reader.Text = "A synthetic message for selection.";
+
+            // Act
+            reader.SelectionStart = 2;
+            reader.SelectionEnd = 11;
+            reader.Focus();
+            window.KeyTextInput("attempted edit");
+
+            // Assert
+            Assert.That(reader.SelectedText, Is.EqualTo("synthetic"));
+            Assert.That(reader.CanCopy, Is.True);
+            Assert.That(reader.Text, Is.EqualTo("A synthetic message for selection."));
+            Assert.That(window.FindControl<ScrollViewer>("ReaderAttachmentScroll")!.IsVisible, Is.False);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Disclosure_WhenMotionPreferenceChanges_UsesNativeTransitionOrImmediateHeight(bool reduced)
+    {
+        // Arrange
+        using ReducedMotionPolicy policy = new ReducedMotionPolicy(reduced);
+        AnimatedDisclosure disclosure = new AnimatedDisclosure
+        {
+            Child = new Border { Width = 100, Height = 80 }
+        };
+
+        // Act
+        disclosure.IsExpanded = true;
+        disclosure.Measure(new Size(100, 100));
+
+        // Assert
+        Assert.That(disclosure.Progress, Is.EqualTo(1));
+        Assert.That(disclosure.DesiredSize.Height, Is.EqualTo(80));
+        Assert.That(disclosure.Transitions is null, Is.EqualTo(reduced));
+        disclosure.IsExpanded = false;
+        disclosure.Measure(new Size(100, 100));
+        Assert.That(disclosure.DesiredSize.Height, Is.Zero);
+        Assert.That(disclosure.IsHitTestVisible, Is.False);
+    }
+
+    [AvaloniaTest]
+    [TestCase(14)]
+    [TestCase(24)]
+    public void ApplyAppearance_WhenWindowIsMinimumSize_PreservesReadableBody(double fontSize)
+    {
+        // Arrange
+        MainWindow window = new MainWindow
+        {
+            Width = 760,
+            Height = 480,
+            DataContext = new MainWindowViewModel()
+        };
+        window.Show();
+        try
+        {
+            // Act
+            window.ApplyAppearance(Postfold.Core.Models.Appearance.AppearanceSettings.Default with
+            {
+                FontSize = fontSize,
+                Preview = "Bottom"
+            });
+            window.UpdateLayout();
+
+            // Assert
+            Assert.That(window.FindControl<ScrollViewer>("PlainPreviewScroll")!.Bounds.Height, Is.GreaterThan(fontSize));
+            Assert.That(window.FindControl<ListBox>("MessageList")!.Bounds.Height, Is.GreaterThan(fontSize));
+            Assert.That(window.FindControl<TreeView>("ScopeList")!.Bounds.Height, Is.GreaterThan(fontSize));
+            Assert.That(window.FindControl<Button>("ReplyButton")!.IsEffectivelyVisible, Is.True);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public void ApplyAppearance_WhenThemeChangesThroughHighContrast_KeepsControlsAndTeardownValid()
+    {
+        // Arrange
+        MainWindow window = new MainWindow
+        {
+            DataContext = new MainWindowViewModel()
+        };
+        window.Show();
+        try
+        {
+            // Act
+            Application.Current!.RequestedThemeVariant = MailTheme.HighContrast;
+            window.UpdateLayout();
+            window.ApplyAppearance(Postfold.Core.Models.Appearance.AppearanceSettings.Default with
+            {
+                Theme = "Light"
+            });
+            window.UpdateLayout();
+
+            // Assert
+            Assert.That(window.ActualThemeVariant, Is.EqualTo(Avalonia.Styling.ThemeVariant.Light));
+            Assert.That(window.FindControl<Button>("ComposeButton")!.IsVisible, Is.True);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaTest]
     public void CyclePaneFocus_WhenPreviewIsHidden_SkipsHiddenPaneAndCyclesBackwards()
     {
@@ -30,7 +153,7 @@ public sealed class MainWindowTests
             {
                 Preview = "Hidden"
             });
-            ListBox navigation = window.FindControl<ListBox>("ScopeList")!;
+            TreeView navigation = window.FindControl<TreeView>("ScopeList")!;
             ListBox messages = window.FindControl<ListBox>("MessageList")!;
             navigation.Focus();
 
@@ -42,7 +165,7 @@ public sealed class MainWindowTests
             // Assert
             Assert.That(messageFocused, Is.True);
             Assert.That(navigation.IsKeyboardFocusWithin, Is.True);
-            Assert.That(window.FindControl<TextBox>("PlainPreview")!.IsKeyboardFocusWithin, Is.False);
+            Assert.That(window.FindControl<SelectableTextBlock>("PlainPreview")!.IsKeyboardFocusWithin, Is.False);
         }
         finally
         {
@@ -89,7 +212,7 @@ public sealed class MainWindowTests
     public void ReducedMotion_WhenThemeSetsAControlTransition_RemovesAnimation()
     {
         // Arrange
-        using ReducedMotionPolicy policy = new ReducedMotionPolicy();
+        using ReducedMotionPolicy policy = new ReducedMotionPolicy(true);
         Button button = new Button();
 
         // Act

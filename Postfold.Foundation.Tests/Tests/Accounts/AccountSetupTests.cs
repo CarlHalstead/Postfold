@@ -11,6 +11,8 @@ using Postfold.Engine.Tests.Fixtures;
 using Postfold.Protocols.Adapters;
 using Postfold.Protocols.Services;
 using Postfold.Storage.Stores;
+using Postfold.Sync.Services;
+using Postfold.Sync.Services.Work;
 using System;
 using System.Collections.Immutable;
 using System.Linq;
@@ -21,6 +23,49 @@ namespace Postfold.Foundation.Tests.Tests.Accounts;
 
 public sealed class AccountSetupTests
 {
+    [Test]
+    public async Task AddAsync_WhenSameAddressIsSubmittedConcurrently_AddsOnlyOneAccount()
+    {
+        // Arrange
+        IAccountProvisioner host = Substitute.For<IAccountProvisioner>();
+        host.NetworkAllowed.Returns(true);
+        host.NextAccountIdAsync(Arg.Any<CancellationToken>()).Returns(new AccountId(1));
+        ImmutableArray<AccountConfiguration> stored = [];
+        host.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(_ => stored);
+        TaskCompletionSource<bool> started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<bool> release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IMailAccountEngine engine = Substitute.For<IMailAccountEngine>();
+        engine.Mailboxes.Returns(ImmutableArray<MailboxSnapshot>.Empty);
+        host.ConnectAccountAsync(Arg.Any<AccountId>(), Arg.Any<string>(), Arg.Any<MailEndpoint>(), Arg.Any<MailEndpoint>(),
+            Arg.Any<ICredentialStore>(), Arg.Any<string?>(), Arg.Any<CancellationToken>()).Returns(async call =>
+        {
+            started.TrySetResult(true);
+            await release.Task;
+            stored = ImmutableArray.Create(new AccountConfiguration(call.Arg<AccountId>(), call.ArgAt<string>(1),
+                call.ArgAt<MailEndpoint>(2), call.ArgAt<MailEndpoint>(3)));
+            return Outcome<IMailAccountEngine>.Success(engine);
+        });
+        AccountSetup setup = new AccountSetup(host, Substitute.For<ICredentialStore>(), new SessionCredentialStore());
+        AccountSetupRequest request = Request(465) with
+        {
+            SessionOnly = true
+        };
+
+        // Act
+        Task<AccountSetupResult> first = setup.AddAsync(request, CancellationToken.None);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Task<AccountSetupResult> second = setup.AddAsync(request, CancellationToken.None);
+        bool secondWaited = !second.IsCompleted;
+        release.TrySetResult(true);
+        AccountSetupResult[] results = await Task.WhenAll(first, second);
+
+        // Assert
+        Assert.That(secondWaited, Is.True);
+        Assert.That(results[0].Duplicate, Is.False);
+        Assert.That(results[1].Duplicate, Is.True);
+        Assert.That(stored, Has.Length.EqualTo(1));
+    }
+
     [Test]
     [TestCase(true, true)]
     [TestCase(true, false)]
@@ -37,6 +82,8 @@ public sealed class AccountSetupTests
         await using SqliteProfile profile = await EngineFixture.OpenAsync(EngineFixture.DirectoryPath());
         IAccountProvisioner provisioner = Substitute.For<IAccountProvisioner>();
         provisioner.NetworkAllowed.Returns(true);
+        provisioner.NextAccountIdAsync(Arg.Any<CancellationToken>()).Returns(new AccountId(1));
+        provisioner.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray<AccountConfiguration>.Empty);
         provisioner.Catalog.Returns(profile);
         provisioner.TestOutgoingConnectionAsync(
             Arg.Any<AccountId>(),
@@ -88,11 +135,20 @@ public sealed class AccountSetupTests
                 await profile.ConfigureAccountAsync(account, incoming, outgoing, cancellationToken);
                 IMailAccountEngine engine = Substitute.For<IMailAccountEngine>();
                 engine.Mailboxes.Returns(discovered.Value);
+                engine.ReconcileAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(async sync =>
+                {
+                    await using ImapAdapter reader = new ImapAdapter(account, incoming, call.Arg<ICredentialStore>(), 1048576)
+                    {
+                        FixtureAuthority = incomingServer.Authority
+                    };
+                    MailboxSnapshot mailbox = discovered.Value.Single(item => item.RemoteKey == sync.Arg<string>());
+                    return await new ReconciliationWork(reader, profile, mailbox, 100).RunAsync(sync.Arg<CancellationToken>());
+                });
                 return Outcome<IMailAccountEngine>.Success(engine);
             });
         ICredentialStore secure = Substitute.For<ICredentialStore>();
         SessionCredentialStore session = new SessionCredentialStore();
-        AccountSetup setup = new AccountSetup(provisioner, secure, session);
+        AccountSetup setup = new AccountSetup(provisioner, secure, session, new ClientIdentity(profile));
         AccountSetupRequest request = new AccountSetupRequest(
             "Authored setup",
             new MailEndpoint("localhost", incomingServer.Port, TlsMode.Implicit, "incoming-synthetic", ""),
@@ -100,7 +156,8 @@ public sealed class AccountSetupTests
             "incoming-secret",
             "outgoing-secret",
             true,
-            null
+            null,
+            "sender@synthetic.invalid"
         );
 
         // Act
@@ -112,11 +169,14 @@ public sealed class AccountSetupTests
         Assert.That(result.Incoming, Is.EqualTo(incomingTrusted ? Failure.None : Failure.TlsRejected));
         Assert.That(result.Outgoing, Is.EqualTo(outgoingTrusted ? Failure.None : Failure.TlsRejected));
         Assert.That(accounts.Length, Is.EqualTo(incomingTrusted ? 1 : 0));
+        Assert.That(result.Synchronisation, Is.EqualTo(Failure.None));
+        Assert.That(await profile.CachedMessageCountAsync(CancellationToken.None), Is.EqualTo(incomingTrusted ? 2 : 0));
         if (incomingTrusted)
         {
             Assert.That(result.Mailboxes, Is.Not.Empty);
             Assert.That(accounts[0].Incoming.Port, Is.EqualTo(incomingServer.Port));
             Assert.That(accounts[0].Outgoing.Port, Is.EqualTo(outgoingServer.Port));
+            Assert.That(accounts[0].Identity!.Sender, Is.EqualTo("sender@synthetic.invalid"));
             Assert.That(
                 (await session.ReadAsync(accounts[0].Incoming.CredentialKey, CancellationToken.None)).Value!.Secret,
                 Is.EqualTo("incoming-secret")
@@ -135,6 +195,76 @@ public sealed class AccountSetupTests
         );
         Assert.That(outgoingServer.SubmissionCount, Is.Zero);
         await secure.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
+    }
+
+    [Test]
+    [TestCase("sender@synthetic.invalid", "SENDER@synthetic.invalid", "other-login")]
+    [TestCase(null, "LOGIN@synthetic.invalid", "login@synthetic.invalid")]
+    public async Task AddAsync_WhenAddressIsAlreadyAdded_RejectsBeforeCredentialsOrNetwork(
+        string? existingSender,
+        string requestedSender,
+        string existingLogin
+    )
+    {
+        // Arrange
+        IAccountProvisioner host = Substitute.For<IAccountProvisioner>();
+        host.NetworkAllowed.Returns(true);
+        AccountSetupRequest request = Request(465) with
+        {
+            Sender = requestedSender
+        };
+        host.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray.Create(
+            new AccountConfiguration(new AccountId(1), "Different display name",
+                request.Incoming with
+                {
+                    Username = existingLogin
+                }, request.Outgoing,
+                Identity: existingSender is null ? null : new Postfold.Core.Models.Drafts.ComposeIdentity(existingSender, ""))
+        ));
+        ICredentialStore secure = Substitute.For<ICredentialStore>();
+        ICredentialStore session = Substitute.For<ICredentialStore>();
+        AccountSetup setup = new AccountSetup(host, secure, session, Substitute.For<IClientIdentity>());
+
+        // Act
+        AccountSetupResult result = await setup.AddAsync(request, CancellationToken.None);
+
+        // Assert
+        Assert.That(result.Duplicate, Is.True);
+        await secure.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
+        await session.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
+        await host.DidNotReceiveWithAnyArgs().TestOutgoingConnectionAsync(default, default!, default!, default);
+        await host.DidNotReceiveWithAnyArgs().ConnectAccountAsync(default, default!, default!, default!, default!, default, default);
+    }
+
+    [Test]
+    public async Task AddAsync_WhenInitialSyncFails_KeepsAddedAccountAndSeparatesSyncDiagnostic()
+    {
+        // Arrange
+        IAccountProvisioner host = Substitute.For<IAccountProvisioner>();
+        host.NetworkAllowed.Returns(true);
+        host.NextAccountIdAsync(Arg.Any<CancellationToken>()).Returns(new AccountId(1));
+        host.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray<AccountConfiguration>.Empty);
+        IMailAccountEngine engine = Substitute.For<IMailAccountEngine>();
+        engine.Mailboxes.Returns(ImmutableArray.Create(EngineFixture.Mailbox()));
+        engine.ReconcileAsync("INBOX", Arg.Any<CancellationToken>()).Returns(Failure.Transient);
+        host.ConnectAccountAsync(Arg.Any<AccountId>(), Arg.Any<string>(), Arg.Any<MailEndpoint>(), Arg.Any<MailEndpoint>(),
+            Arg.Any<ICredentialStore>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Outcome<IMailAccountEngine>.Success(engine));
+        SessionCredentialStore session = new SessionCredentialStore();
+        AccountSetup setup = new AccountSetup(host, Substitute.For<ICredentialStore>(), session);
+
+        // Act
+        AccountSetupResult result = await setup.AddAsync(Request(465) with
+        {
+            SessionOnly = true
+        }, CancellationToken.None);
+
+        // Assert
+        Assert.That(result.Incoming, Is.EqualTo(Failure.None));
+        Assert.That(result.Outgoing, Is.EqualTo(Failure.None));
+        Assert.That(result.Credentials, Is.EqualTo(Failure.None));
+        Assert.That(result.Synchronisation, Is.EqualTo(Failure.Transient));
+        Assert.That(result.Mailboxes, Has.Length.EqualTo(1));
     }
 
     [Test]
@@ -222,6 +352,8 @@ public sealed class AccountSetupTests
         // Arrange
         IAccountProvisioner provisioner = Substitute.For<IAccountProvisioner>();
         provisioner.NetworkAllowed.Returns(true);
+        provisioner.NextAccountIdAsync(Arg.Any<CancellationToken>()).Returns(new AccountId(1));
+        provisioner.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray<AccountConfiguration>.Empty);
         ICredentialStore secure = Substitute.For<ICredentialStore>();
         secure.WriteAsync(Arg.Any<string>(), Arg.Any<Credential>(), Arg.Any<CancellationToken>())
             .Returns(Outcome<bool>.Fail(Failure.Unavailable));
@@ -252,6 +384,8 @@ public sealed class AccountSetupTests
         await using LocalMailServer outgoing = new LocalMailServer(false);
         IAccountProvisioner provisioner = Substitute.For<IAccountProvisioner>();
         provisioner.NetworkAllowed.Returns(true);
+        provisioner.NextAccountIdAsync(Arg.Any<CancellationToken>()).Returns(new AccountId(1));
+        provisioner.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray<AccountConfiguration>.Empty);
         IClientCatalog catalog = Substitute.For<IClientCatalog>();
         catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray<AccountConfiguration>.Empty);
         provisioner.Catalog.Returns(catalog);

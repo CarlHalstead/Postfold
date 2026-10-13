@@ -7,7 +7,6 @@ using Postfold.Core.Models.Appearance;
 using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.Core.Services;
-using Postfold.Desktop.Diagnostics;
 using Postfold.Desktop.Services;
 using Postfold.Desktop.Stores;
 using Postfold.UI.Resources;
@@ -27,6 +26,7 @@ internal sealed class DesktopSession
     private readonly MainWindow _window;
     private DesktopMailRuntime? _host;
     private Task _starting = Task.CompletedTask;
+    private Task _synchronising = Task.CompletedTask;
     private bool _closing;
     private bool _finished;
     private bool _started;
@@ -34,7 +34,6 @@ internal sealed class DesktopSession
     private DesktopIntegration? _integration;
     private WindowsNewMailNotification? _notifications;
     private WindowsHtmlReadingService? _html;
-    private QualificationImageTransport? _qualificationImages;
     private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
 
     internal DesktopSession(IClassicDesktopStyleApplicationLifetime desktop, MainWindow window)
@@ -73,6 +72,7 @@ internal sealed class DesktopSession
             _closing = true;
             await _lifetime.CancelAsync();
             await _starting;
+            await _synchronising;
             if (!await window.FlushComposeAsync())
             {
                 _closing = false;
@@ -97,7 +97,6 @@ internal sealed class DesktopSession
 
             _integration?.Dispose();
             _notifications?.Dispose();
-            _qualificationImages?.Dispose();
 
             _finished = true;
             _desktop.Shutdown();
@@ -107,57 +106,32 @@ internal sealed class DesktopSession
     private async Task StartAsync()
     {
         string[] arguments = _desktop.Args ?? [];
-        long started = Program.Started;
-        string? measurement = arguments is ["--measure-client" or "--measure-client-auto", string output] ? output : null;
-        string? qualification = arguments is ["--qualify-client", string evidenceOutput] ? evidenceOutput : null;
-        bool scale = arguments.Contains("--demo-scale") || measurement is not null;
-        bool demo = arguments.Contains("--demo") || scale || qualification is not null;
         string directory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Postfold",
-            qualification is not null ? "synthetic-qualification-v1" : scale ? "synthetic-scale-v1" :
-                demo ? "synthetic-demo-v1" : "profiles/default"
+            "profiles/default"
         );
         try
         {
             EngineLimits limits = new EngineLimits(2, 256, 3, 200, 33554432, 200, 30, 20, 1073741824);
             Outcome<DesktopMailRuntime> opened = await DesktopMailRuntime.OpenAsync(
                 directory,
-                new EnginePolicy(!demo, false, false),
+                new EnginePolicy(true, false, false),
                 TimeProvider.System,
                 limits,
                 CancellationToken.None
             );
             if (!opened.IsSuccess)
             {
-                _window.Title = "Postfold — " + opened.Failure;
+                _window.Title = "Postfold — " + Strings.Describe(opened.Failure);
                 return;
             }
-
             _host = opened.Value!;
             WindowsCredentialStore secure = new WindowsCredentialStore(Path.Combine(directory, "credentials"));
             SessionCredentialStore session = new SessionCredentialStore();
-            if (demo)
-            {
-                bool populated = (await _host.Catalog.AccountsAsync(_lifetime.Token)).IsEmpty;
-                await _host.SeedSyntheticAsync(scale ? 100000 : 360, _lifetime.Token);
-                if (qualification is not null)
-                {
-                    await _host.SeedReadingFixtureAsync(_lifetime.Token);
-                }
-                if (measurement is not null && populated)
-                {
-                    _window.Tag = "InitialPopulation";
-                }
-            }
-
-            await _host.RestoreAccountsAsync(new CombinedCredentialStore(secure, session), CancellationToken.None);
-            IMailApplication application = qualification is null ? _host.Application :
-                new QualificationMailApplication(_host.Application);
-            MainWindowViewModel model = new MainWindowViewModel(application)
-            {
-                Title = demo ? Strings.Synthetic : "Postfold"
-            };
+            await _host.RestoreAccountsAsync(new CombinedCredentialStore(secure, session), _lifetime.Token);
+            IMailApplication application = _host.Application;
+            MainWindowViewModel model = new MainWindowViewModel(application);
             _window.DataContext = model;
             _notifications = new WindowsNewMailNotification(_window, TimeProvider.System);
             _integration = new DesktopIntegration(_window, _host.DesktopPreferences, _notifications);
@@ -175,20 +149,11 @@ internal sealed class DesktopSession
                     TrayEnabled = false
                 }, _lifetime.Token);
             }
-
-            QualificationAccountSetup? fixtureSetup = qualification is null ? null :
-                new QualificationAccountSetup(_host.Catalog, new AccountSetup(_host, secure, session));
-            _window.Configure(application, fixtureSetup is not null ? fixtureSetup :
-                demo ? null : new AccountSetup(_host, secure, session), _integration);
-            // Windows native isolation, reader lifetime and accessibility gates are qualified for this stage.
-            // Only the authored qualification profile substitutes in-process image responses.
-            _qualificationImages = qualification is null ? null : new QualificationImageTransport();
-            IRemoteImageFetcher images = _qualificationImages is null ? new RemoteImageFetcher() :
-                new RemoteImageFetcher(_qualificationImages);
+            _window.Configure(application, new AccountSetup(_host, secure, session, _host.Identity), _integration, _host);
             _html = new WindowsHtmlReadingService(
                 _window,
                 application,
-                images,
+                new RemoteImageFetcher(),
                 Path.Combine(directory, "html-renderer"),
                 qualified: true
             );
@@ -196,52 +161,21 @@ internal sealed class DesktopSession
             _window.ConfigureIdentity(_host.Identity);
             await _window.LoadAppearanceAsync(_host.Appearance);
             await model.InitialiseAsync();
-            if (qualification is not null)
-            {
-                ClientQualification.Open(
-                    _window,
-                    _host,
-                    (QualificationMailApplication)application,
-                    fixtureSetup!,
-                    _integration,
-                    qualification
-                );
-            }
+            _window.OpenAccountSetupIfNeeded();
+            _synchronising = SynchroniseAccountsAsync(model);
             long observedMessages = model.CachedMessageCount;
             model.PropertyChanged += (_, change) =>
             {
                 if (change.PropertyName == nameof(MainWindowViewModel.CachedMessageCount))
                 {
                     long current = model.CachedMessageCount;
-                    if (current > observedMessages)
+                    if (current > observedMessages && _integration.NotifyNewMail() != Failure.None)
                     {
-                        Failure notified = _integration.NotifyNewMail();
-                        if (notified != Failure.None)
-                        {
-                            model.ReportNotificationFailure();
-                        }
+                        model.ReportNotificationFailure();
                     }
-
                     observedMessages = current;
                 }
             };
-            if (measurement is not null)
-            {
-                await ClientPerformanceProbe.RunAsync(
-                    _window,
-                    model,
-                    measurement,
-                    started,
-                    _window.Tag as string == "InitialPopulation",
-                    _lifetime.Token
-                );
-                if (arguments.Contains("--measure-client-auto"))
-                {
-                    _exitRequested = true;
-                    _window.Close();
-                    return;
-                }
-            }
             string? activation = arguments.FirstOrDefault(item => item.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase));
             if (activation is not null)
             {
@@ -252,7 +186,7 @@ internal sealed class DesktopSession
                 }
                 else
                 {
-                    _window.Title = "Postfold — " + content.Failure;
+                    model.ReportReadingResult(content.Failure);
                 }
             }
         }
@@ -262,6 +196,33 @@ internal sealed class DesktopSession
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             _window.Title = "Postfold — local profile unavailable";
+        }
+    }
+
+    private async Task SynchroniseAccountsAsync(MainWindowViewModel model)
+    {
+        try
+        {
+            if (_host is null)
+            {
+                return;
+            }
+            foreach (Postfold.Core.Models.Accounts.AccountConfiguration account in model.Accounts.ToArray())
+            {
+                Failure result = await _host.Application.SynchroniseAsync(account.Id, _lifetime.Token);
+                await model.InitialiseAsync();
+                if (result != Failure.None)
+                {
+                    model.ReportReadingResult(result);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (IOException)
+        {
+            model.ReportReadingResult(Failure.Unavailable);
         }
     }
 }

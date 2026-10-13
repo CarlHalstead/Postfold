@@ -7,7 +7,7 @@ using System.Collections.Immutable;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Postfold.Desktop.Diagnostics;
+namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 /// <summary>Authored form responses; never stores credentials, creates an account or connects a server.</summary>
 internal sealed class QualificationAccountSetup(IClientCatalog catalog, IAccountSetup roles) : IAccountSetup

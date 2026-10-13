@@ -5,7 +5,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace Postfold.Desktop.Diagnostics;
+namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 internal static class ProcessTreeMeasurement
 {

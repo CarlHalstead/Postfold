@@ -17,7 +17,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 
-namespace Postfold.Desktop.Diagnostics;
+namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 /// <summary>Interactive qualification controls for a separate synthetic profile. All observations are explicit.</summary>
 internal static class ClientQualification
@@ -152,7 +152,7 @@ internal static class ClientQualification
                     Runtime = RuntimeInformation.FrameworkDescription,
                     OperatingSystem = RuntimeInformation.OSDescription,
                     Architecture = RuntimeInformation.ProcessArchitecture.ToString(),
-                    DesktopAssemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(Program).Assembly.Location))),
+                    DesktopAssemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(Postfold.Desktop.Program).Assembly.Location))),
                     UiAssemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(MainWindow).Assembly.Location))),
                     Scaling = main.RenderScaling,
                     Theme = main.ActualThemeVariant.ToString(),

@@ -3,19 +3,29 @@
   <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
   <resheader name="version"><value>2.0</value></resheader>
   <data name="Compose" xml:space="preserve"><value>New message</value></data>
-  <data name="Search" xml:space="preserve"><value>Local search</value></data>
-  <data name="Refresh" xml:space="preserve"><value>Refresh cached view</value></data>
+  <data name="Search" xml:space="preserve"><value>Search</value></data>
+  <data name="Refresh" xml:space="preserve"><value>Refresh</value></data>
+  <data name="NoMessages" xml:space="preserve"><value>No messages</value></data>
+  <data name="SkipSetup" xml:space="preserve"><value>Skip for now</value></data>
   <data name="Setup" xml:space="preserve"><value>Add account</value></data>
+  <data name="DuplicateAccount" xml:space="preserve"><value>This email address is already added. Use its existing account or remove it before adding it again.</value></data>
+  <data name="SetupConnecting" xml:space="preserve"><value>Testing endpoints and loading initial messages…</value></data>
+  <data name="InitialSync" xml:space="preserve"><value>Initial message sync</value></data>
+  <data name="RemoveAccount" xml:space="preserve"><value>Remove account</value></data>
+  <data name="ConfirmRemoveAccount" xml:space="preserve"><value>Remove from Postfold</value></data>
+  <data name="RemoveAccountHint" xml:space="preserve"><value>Disconnect this account and remove it from navigation and search. Server mail is unchanged. Local cache, history and stored credentials are retained in this profile; this is not a data wipe. Drafts and unresolved sends or changes must be reviewed first.</value></data>
+  <data name="RemoveAccountComposeOpen" xml:space="preserve"><value>Close this account’s compose windows first. Their edits must be saved before removing the account.</value></data>
+  <data name="RemoveAccountWorkBlocked" xml:space="preserve"><value>Account removal is blocked to preserve drafts or unresolved sends and changes. Review Local drafts, Outbox and Pending commands first.</value></data>
   <data name="More" xml:space="preserve"><value>Next page</value></data>
   <data name="Retrieve" xml:space="preserve"><value>Retrieve content</value></data>
   <data name="Read" xml:space="preserve"><value>Toggle read</value></data>
   <data name="Flag" xml:space="preserve"><value>Toggle flag</value></data>
   <data name="Archive" xml:space="preserve"><value>Archive</value></data>
-  <data name="Trash" xml:space="preserve"><value>Trash</value></data>
+  <data name="Trash" xml:space="preserve"><value>Move to trash</value></data>
   <data name="Reply" xml:space="preserve"><value>Reply</value></data>
   <data name="Forward" xml:space="preserve"><value>Forward</value></data>
-  <data name="SearchHint" xml:space="preserve"><value>Local search includes downloaded bodies only. Select an account or explicitly choose all accounts.</value></data>
-  <data name="HtmlUnavailable" xml:space="preserve"><value>HTML and remote images are disabled pending native isolation qualification.</value></data>
+  <data name="SearchHint" xml:space="preserve"><value>Search includes downloaded mail. Select one account or choose all accounts.</value></data>
+  <data name="HtmlUnavailable" xml:space="preserve"><value>This message contains HTML. Choose Read HTML in More message actions to open it safely.</value></data>
   <data name="UnifiedInbox" xml:space="preserve"><value>Unified inbox</value></data>
   <data name="UnifiedSearch" xml:space="preserve"><value>All accounts — local search</value></data>
   <data name="Ready" xml:space="preserve"><value>Cached view ready</value></data>
@@ -46,11 +56,11 @@
   <data name="Port" xml:space="preserve"><value>Port</value></data>
   <data name="Username" xml:space="preserve"><value>Username</value></data>
   <data name="Password" xml:space="preserve"><value>Password</value></data>
-  <data name="Name" xml:space="preserve"><value>Account name</value></data>
+  <data name="Name" xml:space="preserve"><value>Account name (optional; defaults to email)</value></data>
   <data name="DraftMailbox" xml:space="preserve"><value>Remote drafts mailbox (optional exact path)</value></data>
   <data name="Drafts" xml:space="preserve"><value>Local drafts</value></data>
   <data name="Outbox" xml:space="preserve"><value>Outbox and recipient evidence</value></data>
-  <data name="Synchronise" xml:space="preserve"><value>Synchronise selected account</value></data>
+  <data name="Synchronise" xml:space="preserve"><value>Sync mail</value></data>
   <data name="Transmit" xml:space="preserve"><value>Submit the next queued message</value></data>
   <data name="Synthetic" xml:space="preserve"><value>Postfold — SYNTHETIC DEMO (no network)</value></data>
   <data name="Settings" xml:space="preserve"><value>Appearance</value></data>
@@ -137,7 +147,7 @@
   <data name="OutgoingTls" xml:space="preserve"><value>Outgoing TLS mode</value></data>
   <data name="IncomingUsername" xml:space="preserve"><value>Incoming username</value></data>
   <data name="OutgoingUsername" xml:space="preserve"><value>Outgoing username</value></data>
-  <data name="IncomingPassword" xml:space="preserve"><value>Incoming password</value></data>
+  <data name="IncomingPassword" xml:space="preserve"><value>Password for receiving</value></data>
   <data name="OutgoingPassword" xml:space="preserve"><value>Outgoing password</value></data>
   <data name="CredentialResult" xml:space="preserve"><value>Credential storage</value></data>
   <data name="ComposeAttachments" xml:space="preserve"><value>Draft attachments</value></data>
@@ -191,7 +201,47 @@
   <data name="NavigationResize" xml:space="preserve"><value>Resize navigation pane</value></data>
   <data name="PreviewResize" xml:space="preserve"><value>Resize preview pane</value></data>
   <data name="Credentials" xml:space="preserve"><value>Account credentials</value></data>
-  <data name="CredentialsHint" xml:space="preserve"><value>Re-enter independent incoming and outgoing passwords for an existing account. This preserves cached mail and pending work. Session-only passwords must be entered again after restart. Previously stored secure credentials are not removed.</value></data>
+  <data name="CredentialsHint" xml:space="preserve"><value>Re-enter the password for this account. Sending can share it or use a separate password. Cached mail and pending work are preserved. Session-only passwords need re-entry after restart. Previously stored secure credentials are not removed.</value></data>
   <data name="SaveCredentials" xml:space="preserve"><value>Save account credentials</value></data>
   <data name="CredentialsSaved" xml:space="preserve"><value>Credentials saved. Synchronise checks incoming TLS and authentication; submitting queued mail checks outgoing TLS and authentication.</value></data>
+  <data name="NewMail" xml:space="preserve"><value>New mail</value></data>
+  <data name="AccountActions" xml:space="preserve"><value>Account actions</value></data>
+  <data name="MoreSettings" xml:space="preserve"><value>More settings</value></data>
+  <data name="AllMail" xml:space="preserve"><value>All</value></data>
+  <data name="Unread" xml:space="preserve"><value>Unread</value></data>
+  <data name="KnownAttachments" xml:space="preserve"><value>Known attachments</value></data>
+  <data name="SearchScopeHint" xml:space="preserve"><value>Search options</value></data>
+  <data name="SelectMessage" xml:space="preserve"><value>Select a message</value></data>
+  <data name="MarkRead" xml:space="preserve"><value>Mark as read</value></data>
+  <data name="MarkUnread" xml:space="preserve"><value>Mark as unread</value></data>
+  <data name="Attachments" xml:space="preserve"><value>attachments</value></data>
+  <data name="AttachmentMark" xml:space="preserve"><value>Attachment</value></data>
+  <data name="MessageActions" xml:space="preserve"><value>More message actions</value></data>
+  <data name="Today" xml:space="preserve"><value>Today</value></data>
+  <data name="Yesterday" xml:space="preserve"><value>Yesterday</value></data>
+  <data name="Email" xml:space="preserve"><value>Email address</value></data>
+  <data name="SharedCredentials" xml:space="preserve"><value>Use the same credentials for sending</value></data>
+  <data name="SharedPassword" xml:space="preserve"><value>Use the same password for sending</value></data>
+  <data name="LoginHint" xml:space="preserve"><value>Enter your password once. Your email address is the default login; custom usernames are optional.</value></data>
+  <data name="ServerSettings" xml:space="preserve"><value>Server settings</value></data>
+  <data name="ServerHint" xml:space="preserve"><value>Manual configuration is required. Receiving (IMAP) and sending (SMTP) use independent servers and certificate-validating TLS.</value></data>
+  <data name="AdvancedLogin" xml:space="preserve"><value>Advanced login and draft options</value></data>
+  <data name="ReceivingSettings" xml:space="preserve"><value>Receiving (IMAP)</value></data>
+  <data name="SendingSettings" xml:space="preserve"><value>Sending (SMTP)</value></data>
+  <data name="ContinueServers" xml:space="preserve"><value>Continue to server settings</value></data>
+  <data name="BackLogin" xml:space="preserve"><value>Back to login</value></data>
+  <data name="SendingOverrideHint" xml:space="preserve"><value>Sending uses a separate username and password. Switching back clears the unused sending password.</value></data>
+  <data name="CredentialUsernames" xml:space="preserve"><value>Configured receiving and sending usernames are preserved. Change the account server configuration separately.</value></data>
+  <data name="ReadState" xml:space="preserve"><value>Read</value></data>
+  <data name="UnreadState" xml:space="preserve"><value>Unread</value></data>
+  <data name="Flagged" xml:space="preserve"><value>Flagged</value></data>
+  <data name="ReplyAll" xml:space="preserve"><value>Reply all</value></data>
+  <data name="ThisWeek" xml:space="preserve"><value>This week</value></data>
+  <data name="RecipientsLimited" xml:space="preserve"><value>Only the first 100 To/Cc recipients are shown. Reply all is unavailable for this message; compose recipients explicitly.</value></data>
+  <data name="AddAccountHint" xml:space="preserve"><value>Add an account to start reading and composing mail.</value></data>
+  <data name="RenameAccount" xml:space="preserve"><value>Rename account</value></data>
+  <data name="RenameName" xml:space="preserve"><value>Account name</value></data>
+  <data name="SaveAccountName" xml:space="preserve"><value>Save name</value></data>
+  <data name="SharedLoginOptions" xml:space="preserve"><value>Login options</value></data>
+  <data name="AccountPassword" xml:space="preserve"><value>Password</value></data>
 </root>

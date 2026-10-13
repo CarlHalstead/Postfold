@@ -16,7 +16,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Postfold.Desktop.Diagnostics;
+namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 /// <summary>Authored native security cases, independent of all real profiles.</summary>
 public static class RendererQualification

@@ -33,13 +33,15 @@ For inspection without credentials or network access:
 $env:PROCESSOR_ARCHITECTURE = 'AMD64' # Required by the currently qualified local SDK environment
 dotnet restore Postfold.slnx --locked-mode
 dotnet build Postfold.slnx -c Release --no-restore
-dotnet run --project Postfold.Desktop -c Release --no-build -- --demo
+dotnet run --project Postfold.Foundation.Tests -c Release --no-build -- --demo
 ```
 
 The labelled demo seeds three synthetic accounts and 360 messages in a separate profile under
 `%LOCALAPPDATA%/Postfold/synthetic-demo-v1`. It cannot connect or transmit. `--demo-scale` uses a different
 synthetic profile with 100,000 messages; initial seeding takes longer and is not a startup measurement.
-The ordinary launch uses `%LOCALAPPDATA%/Postfold/profiles/default`; it does not connect on startup.
+Demo and qualification code lives in the test project and is excluded from the desktop application.
+The ordinary launch uses `%LOCALAPPDATA%/Postfold/profiles/default`, opens dismissible setup when no accounts
+exist, and refreshes configured accounts after showing local mail.
 
 Select an account or inbox in the left pane, select cached mail in the centre, and read plain text on the right.
 Search scope is the selected navigation entry; choose Unified inbox or All accounts explicitly.
@@ -79,10 +81,10 @@ Linux native startup needs X11 and font libraries; macOS needs a graphical sessi
 Windows development qualification uses separate synthetic profiles and never reads real mail:
 
 ```powershell
-dotnet .\Postfold.Desktop\bin\Release\net10.0\Postfold.dll --qualify-client C:/path/to/private/client-observations.json
-dotnet .\Postfold.Desktop\bin\Release\net10.0\Postfold.dll --qualify-renderer C:/path/to/private/renderer-results.json
-dotnet .\Postfold.Desktop\bin\Release\net10.0\Postfold.dll --qualify-reader C:/path/to/private/reader-results.json
-dotnet .\Postfold.Desktop\bin\Release\net10.0\Postfold.dll --measure-client C:/path/to/private/client-performance.json
+dotnet .\Postfold.Foundation.Tests\bin\Release\net10.0\Postfold.Foundation.Tests.dll --qualify-client C:/path/to/private/client-observations.json
+dotnet .\Postfold.Foundation.Tests\bin\Release\net10.0\Postfold.Foundation.Tests.dll --qualify-renderer C:/path/to/private/renderer-results.json
+dotnet .\Postfold.Foundation.Tests\bin\Release\net10.0\Postfold.Foundation.Tests.dll --qualify-reader C:/path/to/private/reader-results.json
+dotnet .\Postfold.Foundation.Tests\bin\Release\net10.0\Postfold.Foundation.Tests.dll --measure-client C:/path/to/private/client-performance.json
 ```
 
 Use an existing writable private directory for the output paths. Client qualification opens controls for authored

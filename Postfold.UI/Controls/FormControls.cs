@@ -35,6 +35,7 @@ internal static class FormControls
         {
             Name = key,
             Text = value,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             PasswordChar = password ? '●' : '\0'
         };
         AutomationProperties.SetName(field, label);
@@ -53,6 +54,10 @@ internal static class FormControls
             Name = key,
             Content = Strings.Get(key)
         };
+        if (key is "Send" or "Save" or "SaveCredentials" or "SaveRoles")
+        {
+            button.Classes.Add("primary");
+        }
         button.Click += async (_, _) =>
         {
             button.IsEnabled = false;

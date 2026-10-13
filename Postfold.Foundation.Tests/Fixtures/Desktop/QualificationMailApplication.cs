@@ -14,7 +14,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Postfold.Desktop.Diagnostics;
+namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 /// <summary>Failure injection used only by the isolated, network-disabled qualification profile.</summary>
 internal sealed class QualificationMailApplication(IMailApplication application) : IMailApplication

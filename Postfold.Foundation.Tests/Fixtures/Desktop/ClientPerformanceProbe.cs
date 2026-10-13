@@ -14,7 +14,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Postfold.Desktop.Diagnostics;
+namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 /// <summary>Opt-in synthetic measurements on the actual desktop rendering loop, never headless test timings.</summary>
 public static class ClientPerformanceProbe
@@ -92,6 +92,7 @@ public static class ClientPerformanceProbe
             ActualCachedMessages = model.CachedMessageCount,
             IncludesInitialPopulation = populated,
             StartupMilliseconds = startup,
+            StartupStages = window.Resources.TryGetValue("StartupStages", out object? stages) ? stages : null,
             StartupClassification = "Process startup; OS cold/warm cache state requires operator annotation",
             PreviewSamples = previews,
             PreviewP95Milliseconds = Percentile(previews),

@@ -60,7 +60,7 @@ public sealed class HtmlQualificationTests
         Assert.That(images, Is.EqualTo(Failure.Unavailable));
         Assert.That(window.FindControl<Button>("HtmlButton")!.IsEnabled, Is.False);
         Assert.That(window.FindControl<Button>("ImagesButton")!.IsEnabled, Is.False);
-        Assert.That(window.FindControl<TextBox>("PlainPreview")!.IsVisible, Is.True);
+        Assert.That(window.FindControl<ScrollViewer>("PlainPreviewScroll")!.IsVisible, Is.True);
         Assert.That(window.FindControl<ContentControl>("HtmlSurface")!.Content, Is.Null);
         await application.DidNotReceiveWithAnyArgs().ReadHtmlAsync(default!, default, default);
         await fetcher.DidNotReceiveWithAnyArgs().FetchAsync(default!, default, default);

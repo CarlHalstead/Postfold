@@ -19,6 +19,9 @@ public interface IAccountProvisioner
         get;
     }
 
+    /// <summary>Returns an unused account id, including ids retained for removed accounts.</summary>
+    Task<AccountId> NextAccountIdAsync(CancellationToken cancellationToken);
+
     Task<Failure> TestOutgoingConnectionAsync(
         AccountId account,
         MailEndpoint outgoing,

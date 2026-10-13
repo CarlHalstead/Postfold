@@ -7,7 +7,8 @@ public sealed record AccountSetupRequest(
     string IncomingPassword,
     string OutgoingPassword,
     bool SessionOnly,
-    string? DraftMailbox
+    string? DraftMailbox,
+    string? Sender = null
 )
 {
     public override string ToString()

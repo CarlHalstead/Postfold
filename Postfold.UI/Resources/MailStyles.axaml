@@ -1,0 +1,144 @@
+<Styles xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Styles.Resources>
+        <Thickness x:Key="MessagePadding">12,10</Thickness>
+        <Thickness x:Key="ReaderPadding">24</Thickness>
+        <CornerRadius x:Key="MailRadius">8</CornerRadius>
+        <x:Double x:Key="SubjectFontSize">21</x:Double>
+        <StreamGeometry x:Key="ComposeIcon">M 2,14 L 3,10 L 12,1 L 15,4 L 6,13 Z M 10,3 L 13,6</StreamGeometry>
+        <StreamGeometry x:Key="FolderIcon">M 1,4 L 6,4 L 8,6 L 15,6 L 15,14 L 1,14 Z</StreamGeometry>
+        <StreamGeometry x:Key="ReplyIcon">M 7,2 L 1,8 L 7,14 M 1,8 L 10,8 Q 15,8 15,14</StreamGeometry>
+    </Styles.Resources>
+    <Style Selector="Window">
+        <Setter Property="Background" Value="{DynamicResource MailSurfaceBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource MailTextBrush}" />
+    </Style>
+    <Style Selector="Button">
+        <Setter Property="Background" Value="{DynamicResource MailButtonBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource MailTextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource MailLineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource MailRadius}" />
+        <Setter Property="Padding" Value="12,8" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.primary">
+        <Setter Property="Background" Value="{DynamicResource MailAccentBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource MailAccentTextBrush}" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.quiet">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Button.quiet /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Button.quiet:disabled /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource MailMetadataBrush}" />
+    </Style>
+    <Style Selector="Button.quiet:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource MailSelectionBrush}" />
+    </Style>
+    <Style Selector="Button.navigation">
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Background" Value="{DynamicResource MailNavigationBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Padding" Value="16,10" />
+    </Style>
+    <Style Selector="Button.navigation /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource MailNavigationBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Button.navigation:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource MailSelectionBrush}" />
+    </Style>
+    <Style Selector="Expander.navigation">
+        <Setter Property="Background" Value="{DynamicResource MailNavigationBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    </Style>
+    <Style Selector="Expander.navigation /template/ ToggleButton">
+        <Setter Property="Background" Value="{DynamicResource MailNavigationBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="Padding" Value="16,10" />
+    </Style>
+    <Style Selector="Expander.navigation /template/ ToggleButton /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource MailNavigationBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Expander.navigation /template/ ToggleButton /template/ Border#ToggleButtonBackground">
+        <Setter Property="Background" Value="{DynamicResource MailNavigationBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Expander.navigation /template/ ToggleButton:pointerover /template/ Border#ToggleButtonBackground">
+        <Setter Property="Background" Value="{DynamicResource MailSelectionBrush}" />
+    </Style>
+    <Style Selector="Expander.navigation /template/ ToggleButton:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Expander.navigation /template/ ToggleButton /template/ Border#ExpandCollapseChevronBorder">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Expander.navigation /template/ ToggleButton:pointerover /template/ Border#ExpandCollapseChevronBorder">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="TreeViewItem /template/ ContentPresenter#PART_HeaderPresenter">
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+    <Style Selector="Expander.quiet /template/ ToggleButton">
+        <Setter Property="Background" Value="{DynamicResource MailSurfaceBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Expander.quiet /template/ ToggleButton /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource MailSurfaceBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Button.pill">
+        <Setter Property="CornerRadius" Value="24" />
+        <Setter Property="Padding" Value="20,10" />
+    </Style>
+    <Style Selector="TextBox">
+        <Setter Property="CornerRadius" Value="{DynamicResource MailRadius}" />
+    </Style>
+    <Style Selector="TextBlock.caption">
+        <Setter Property="Foreground" Value="{DynamicResource MailMetadataBrush}" />
+    </Style>
+    <Style Selector="TextBlock.heading">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="0,12,0,8" />
+    </Style>
+    <Style Selector="ListBox.mail">
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Padding" Value="8,0" />
+    </Style>
+    <Style Selector="ListBox.mail ListBoxItem">
+        <Setter Property="CornerRadius" Value="{DynamicResource MailRadius}" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    </Style>
+    <Style Selector="ListBox.mail ListBoxItem:selected /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource MailSelectionBrush}" />
+    </Style>
+    <Style Selector="TreeViewItem:selected /template/ Border">
+        <Setter Property="Background" Value="{DynamicResource MailSelectionBrush}" />
+    </Style>
+    <Style Selector="Border.card">
+        <Setter Property="BorderBrush" Value="{DynamicResource MailLineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource MailRadius}" />
+        <Setter Property="Padding" Value="12" />
+    </Style>
+    <Style Selector="GridSplitter">
+        <Setter Property="Background" Value="{DynamicResource MailLineBrush}" />
+    </Style>
+</Styles>

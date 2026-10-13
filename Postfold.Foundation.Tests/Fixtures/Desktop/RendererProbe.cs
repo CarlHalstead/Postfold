@@ -8,7 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 
-namespace Postfold.Desktop.Diagnostics;
+namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 /// <summary>Development-only native feasibility probe; never accepts message content or URLs.</summary>
 public static class RendererProbe

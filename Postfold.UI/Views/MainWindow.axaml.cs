@@ -1,11 +1,13 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
-using Avalonia.Styling;
+using Avalonia.Threading;
 using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
 using Postfold.Core.Models;
@@ -39,10 +41,46 @@ public sealed partial class MainWindow : Window
     private IClientAppearance? _appearance;
     private AppearanceSettings _settings = AppearanceSettings.Default;
     private IMailApplication? _application;
+    private IAccountSetup? _setup;
+    private IAccountManagement? _management;
+    private readonly DispatcherTimer _dates = new DispatcherTimer
+    {
+        Interval = TimeSpan.FromMinutes(1)
+    };
+    private string? _layoutPreview;
+    private AccountId? _removingAccount;
 
     public MainWindow()
     {
         AvaloniaXamlLoader.Load(this);
+        this.FindControl<DockPanel>("PreviewPane")!.SizeChanged += (_, _) => AdjustReaderViewport();
+        this.FindControl<DockPanel>("NavigationPane")!.SizeChanged += (_, _) => AdjustPaneToolbars();
+        this.FindControl<DockPanel>("MessagePane")!.SizeChanged += (_, _) => AdjustPaneToolbars();
+        _dates.Tick += (_, _) => (DataContext as MainWindowViewModel)?.RegroupMessages();
+        Opened += (_, _) => _dates.Start();
+        Closed += (_, _) => _dates.Stop();
+        Opened += (_, _) =>
+        {
+            if (Application.Current?.PlatformSettings is Avalonia.Platform.IPlatformSettings platform)
+            {
+                platform.ColorValuesChanged += SystemColoursChanged;
+            }
+        };
+        Closed += (_, _) =>
+        {
+            if (Application.Current?.PlatformSettings is Avalonia.Platform.IPlatformSettings platform)
+            {
+                platform.ColorValuesChanged -= SystemColoursChanged;
+            }
+        };
+        SizeChanged += (_, _) =>
+        {
+            string preview = Bounds.Width < 1050 && _settings.Preview == "Right" ? "Bottom" : _settings.Preview;
+            if (_layoutPreview != preview)
+            {
+                ReflowPreview(preview);
+            }
+        };
     }
 
     public void SetHtmlSurface(Control? surface)
@@ -53,7 +91,7 @@ public sealed partial class MainWindow : Window
             html.Content = surface;
         }
         html.IsVisible = surface is not null;
-        this.FindControl<TextBox>("PlainPreview")!.IsVisible = surface is null;
+        this.FindControl<ScrollViewer>("PlainPreviewScroll")!.IsVisible = surface is null;
     }
 
     public void ReleaseHtmlSurface()
@@ -133,7 +171,7 @@ public sealed partial class MainWindow : Window
                 }
             }, status);
             panel.Children.Add(status);
-            new Window
+            ShowWindow(new Window
             {
                 Title = Strings.IdentitySettings,
                 Width = 620,
@@ -144,7 +182,7 @@ public sealed partial class MainWindow : Window
                 {
                     Content = panel
                 }
-            }.Show(this);
+            });
             return Task.CompletedTask;
         });
     }
@@ -188,22 +226,47 @@ public sealed partial class MainWindow : Window
                     status.Text = Strings.Describe(await reader.LoadImagesAsync(message, _lifetime.Token));
                 }, status);
                 panel.Children.Add(status);
-                new Window
+                ShowWindow(new Window
                 {
                     Title = Strings.LoadImages,
                     Width = 540,
                     Height = 300,
                     Content = panel
-                }.Show(this);
+                });
             }
 
             return Task.CompletedTask;
         });
     }
 
-    public void Configure(IMailApplication application, IAccountSetup? setup, IDesktopIntegration? desktop = null)
+    public void Configure(
+        IMailApplication application,
+        IAccountSetup? setup,
+        IDesktopIntegration? desktop = null,
+        IAccountManagement? management = null
+    )
     {
+        this.FindControl<Button>("RenameAccountButton")!.IsEnabled = management is not null;
+        Wire("RenameAccountButton", () =>
+        {
+            if (management is not null)
+            {
+                RenameAccount(management);
+            }
+            return Task.CompletedTask;
+        });
+        _management = management;
         _application = application;
+        _setup = setup;
+        this.FindControl<Button>("RemoveAccountButton")!.IsEnabled = management is not null;
+        Wire("RemoveAccountButton", () =>
+        {
+            if (management is not null)
+            {
+                RemoveAccount(management);
+            }
+            return Task.CompletedTask;
+        });
         this.FindControl<Button>("DesktopButton")!.IsEnabled = desktop is not null;
         Wire("DesktopButton", async () =>
         {
@@ -214,24 +277,27 @@ public sealed partial class MainWindow : Window
         });
         Wire("ComposeButton", () => { OpenCompose(); return Task.CompletedTask; });
         Wire("ReplyButton", () => { OpenCompose("Reply"); return Task.CompletedTask; });
+        Wire("ReplyAllButton", () => { OpenCompose("ReplyAll"); return Task.CompletedTask; });
         Wire("ForwardButton", () => { OpenCompose("Forward"); return Task.CompletedTask; });
+        Wire("BottomReplyButton", () => { OpenCompose("Reply"); return Task.CompletedTask; });
+        Wire("BottomReplyAllButton", () => { OpenCompose("ReplyAll"); return Task.CompletedTask; });
+        Wire("BottomForwardButton", () => { OpenCompose("Forward"); return Task.CompletedTask; });
+        Wire("AllFilterButton", async () =>
+        {
+            if (DataContext is MainWindowViewModel model)
+            {
+                model.UnreadOnly = false;
+                model.KnownAttachmentsOnly = false;
+                await model.RefreshAsync(false);
+            }
+        });
+        foreach (string filter in new[] { "UnreadFilter", "AttachmentFilter" })
+        {
+            this.FindControl<CheckBox>(filter)!.IsCheckedChanged += (_, _) => Track(RefreshFromControlsAsync);
+        }
         Wire("SetupButton", () =>
         {
-            if (setup is not null)
-            {
-                AccountSetupWindow window = new AccountSetupWindow(setup);
-                window.FontFamily = FontFamily;
-                window.FontSize = FontSize;
-                window.Closed += (_, _) => Track(async () =>
-                {
-                    if (DataContext is MainWindowViewModel model)
-                    {
-                        await model.InitialiseAsync();
-                    }
-                });
-                window.Show(this);
-            }
-
+            OpenAccountSetup();
             return Task.CompletedTask;
         });
         this.FindControl<Button>("SetupButton")!.IsEnabled = setup is not null;
@@ -245,6 +311,13 @@ public sealed partial class MainWindow : Window
         });
         Wire("DraftsButton", DraftsAsync);
         Wire("OutboxButton", OutboxAsync);
+        Wire("CheckEmptyAttachmentsButton", async () =>
+        {
+            if (DataContext is MainWindowViewModel model)
+            {
+                await model.CheckAttachmentsAsync();
+            }
+        });
         Wire("CheckAttachmentsButton", async () =>
         {
             if (DataContext is MainWindowViewModel model)
@@ -265,13 +338,7 @@ public sealed partial class MainWindow : Window
                 args.Handled = true;
             }
         };
-        this.FindControl<ListBox>("ScopeList")!.SelectionChanged += (_, _) => Track(async () =>
-        {
-            if (DataContext is MainWindowViewModel model)
-            {
-                await model.RefreshAsync(false);
-            }
-        });
+        this.FindControl<TreeView>("ScopeList")!.SelectionChanged += (_, _) => Track(RefreshFromControlsAsync);
         KeyDown += (_, args) =>
         {
             if (args.KeyModifiers == KeyModifiers.Control && args.Key == Key.N)
@@ -292,17 +359,71 @@ public sealed partial class MainWindow : Window
         };
     }
 
+    /// <summary>Opens or activates the dismissible account dialog, including first-run startup.</summary>
+    public void OpenAccountSetupIfNeeded()
+    {
+        if (DataContext is MainWindowViewModel model && !model.HasAccounts)
+        {
+            OpenAccountSetup();
+        }
+    }
+
+    /// <summary>Opens or activates the account dialog without creating a second copy.</summary>
+    public void OpenAccountSetup()
+    {
+        if (_setup is null)
+        {
+            return;
+        }
+        AccountSetupWindow? existing = OwnedWindows.OfType<AccountSetupWindow>().FirstOrDefault();
+        if (existing is not null)
+        {
+            existing.Activate();
+            return;
+        }
+        AccountSetupWindow window = new AccountSetupWindow(_setup);
+        window.FontFamily = FontFamily;
+        window.FontSize = FontSize;
+        window.AccountAdded += account => Track(async () =>
+        {
+            if (DataContext is MainWindowViewModel model)
+            {
+                await model.InitialiseAsync();
+                model.Scope = model.Scopes.FirstOrDefault(scope => scope.Account == account &&
+                    model.Mailboxes.Any(mailbox => mailbox.Id == scope.Folder && mailbox.Account == account &&
+                        mailbox.Role == MailboxRole.Inbox)) ?? model.Scopes.FirstOrDefault(scope => scope.Account == account);
+                await model.RefreshAsync(false);
+            }
+        });
+        window.Closed += (_, _) => Track(async () =>
+        {
+            if (DataContext is MainWindowViewModel model)
+            {
+                await model.InitialiseAsync();
+            }
+        });
+        ShowWindow(window);
+    }
+
     public async Task LoadAppearanceAsync(IClientAppearance appearance)
     {
         _appearance = appearance;
         ApplyAppearance(await appearance.ReadAsync(_lifetime.Token));
     }
 
+    /// <summary>Observes currently started window actions without changing their cancellation or durable-work state.</summary>
+    public async Task WaitForActionsAsync()
+    {
+        await Task.WhenAll(_work.ToArray());
+        await FormControls.DrainAsync(this);
+        await Task.WhenAll(_work.ToArray());
+    }
+
     public void CyclePaneFocus(bool backwards)
     {
         ContentControl html = this.FindControl<ContentControl>("HtmlSurface")!;
-        Control preview = html.IsVisible && html.Content is Control surface ? surface : this.FindControl<TextBox>("PlainPreview")!;
-        Control[] panes = [this.FindControl<ListBox>("ScopeList")!, this.FindControl<ListBox>("MessageList")!, preview];
+        Control preview = html.IsVisible && html.Content is Control surface ? surface : this.FindControl<SelectableTextBlock>("PlainPreview")!;
+        Control[] panes = [this.FindControl<TreeView>("ScopeList")!, this.FindControl<ListBox>("MessageList")!, preview];
         panes = panes.Where(pane => pane.IsEffectivelyVisible).ToArray();
         if (panes.Length == 0)
         {
@@ -324,44 +445,20 @@ public sealed partial class MainWindow : Window
         _settings = settings;
         if (Application.Current is Application application)
         {
-            application.RequestedThemeVariant = settings.Theme switch
-            {
-                "Light" => ThemeVariant.Light,
-                "Dark" => ThemeVariant.Dark,
-                _ => ThemeVariant.Default
-            };
+            application.RequestedThemeVariant = MailTheme.Resolve(settings.Theme, application.PlatformSettings);
         }
 
         FontSize = settings.FontSize;
+        Resources["SubjectFontSize"] = settings.FontSize * 1.5;
         FontFamily = string.IsNullOrWhiteSpace(settings.Font) ? FontFamily.Default : new FontFamily(settings.Font);
-        Resources["MessagePadding"] = settings.Density == "Compact" ? new Thickness(4, 2) : new Thickness(4, 8);
+        Resources["MessagePadding"] = settings.Density == "Compact" ? new Thickness(8, 4) : new Thickness(12, 10);
         foreach (Window child in OwnedWindows)
         {
             child.FontSize = FontSize;
             child.FontFamily = FontFamily;
         }
 
-        Grid panes = this.FindControl<Grid>("Panes")!;
-        Control navigation = this.FindControl<DockPanel>("NavigationPane")!;
-        Control navigationSplitter = this.FindControl<GridSplitter>("NavigationSplitter")!;
-        Control messages = this.FindControl<ListBox>("MessageList")!;
-        GridSplitter splitter = this.FindControl<GridSplitter>("PreviewSplitter")!;
-        Control preview = this.FindControl<DockPanel>("PreviewPane")!;
-        bool bottom = settings.Preview == "Bottom";
-        bool hidden = settings.Preview == "Hidden";
-        panes.ColumnDefinitions = new ColumnDefinitions(bottom || hidden ? "220,5,*" : "220,5,*,5,1.3*");
-        panes.RowDefinitions = new RowDefinitions(bottom ? "*,5,*" : "*");
-        Grid.SetRowSpan(navigation, bottom ? 3 : 1);
-        Grid.SetRowSpan(navigationSplitter, bottom ? 3 : 1);
-        Grid.SetRow(messages, 0);
-        Grid.SetColumn(preview, bottom || hidden ? 2 : 4);
-        Grid.SetRow(preview, bottom ? 2 : 0);
-        Grid.SetColumn(splitter, bottom || hidden ? 2 : 3);
-        Grid.SetRow(splitter, bottom ? 1 : 0);
-        splitter.ResizeDirection = bottom ? GridResizeDirection.Rows : GridResizeDirection.Columns;
-        splitter.IsVisible = !hidden;
-        preview.IsVisible = !hidden;
-        preview.Margin = bottom ? new Thickness(0, 12, 0, 0) : new Thickness(12, 0, 0, 0);
+        ReflowPreview(Bounds.Width > 0 && Bounds.Width < 1050 && settings.Preview == "Right" ? "Bottom" : settings.Preview);
     }
 
     public void OpenCompose(
@@ -380,11 +477,20 @@ public sealed partial class MainWindow : Window
             model?.ReportReadingResult(Failure.NotFound);
             return;
         }
+        if (kind == "ReplyAll" && model?.CanReplyAll != true)
+        {
+            model?.ReportReadingResult(Failure.Unsupported);
+            return;
+        }
         AccountId? requested = targetAccount ?? (kind is not null ? model?.Selected?.Account : model?.Scope?.Account) ??
             model?.Selected?.Account;
         AccountConfiguration? account = requested is AccountId explicitAccount ?
             model?.Accounts.FirstOrDefault(item => item.Id == explicitAccount) : model?.Accounts.FirstOrDefault();
         if (_application is null || account is null)
+        {
+            return;
+        }
+        if (_removingAccount == account.Id)
         {
             return;
         }
@@ -418,11 +524,21 @@ public sealed partial class MainWindow : Window
         {
             content = content with
             {
-                Subject = (kind == "Reply" ? "Re: " : "Fwd: ") + message.Subject,
+                Subject = (kind is "Reply" or "ReplyAll" ? "Re: " : "Fwd: ") + message.Subject,
                 PlainText = "\n\n" + string.Join("\n", (model.Content?.PlainText ?? "").Split('\n').Select(line => "> " + line)),
-                Recipients = kind == "Reply" && model.Content is MimeSnapshot original &&
+                Recipients = kind is "Reply" or "ReplyAll" && model.Content is MimeSnapshot original &&
                     !original.ReplyRecipients.IsDefault ? original.ReplyRecipients : []
             };
+            if (kind == "ReplyAll" && model.Content is MimeSnapshot reply)
+            {
+                content = content with
+                {
+                    Recipients = content.Recipients.Concat(reply.ToRecipients.IsDefault ? [] : reply.ToRecipients)
+                        .Concat(reply.CcRecipients.IsDefault ? [] : reply.CcRecipients)
+                        .Where(address => !address.Equals(content.Sender, StringComparison.OrdinalIgnoreCase))
+                        .Distinct(StringComparer.OrdinalIgnoreCase).ToImmutableArray()
+                };
+            }
         }
 
         if (string.IsNullOrEmpty(content.Sender))
@@ -447,7 +563,7 @@ public sealed partial class MainWindow : Window
         window.FontSize = FontSize;
         _compose.Add(window);
         window.Closed += (_, _) => { _compose.Remove(window); this.FindControl<Button>("ComposeButton")!.Focus(); };
-        window.Show(this);
+        ShowWindow(window);
     }
 
     public async Task<bool> FlushComposeAsync()
@@ -570,7 +686,7 @@ public sealed partial class MainWindow : Window
         };
         EventHandler<WindowClosingEventArgs> closing = (_, _) => saving.Cancel();
         progress.Closing += closing;
-        progress.Show(this);
+        ShowWindow(progress);
         try
         {
             await using Stream destination = await file.OpenWriteAsync();
@@ -606,16 +722,18 @@ public sealed partial class MainWindow : Window
         }
 
         ImmutableArray<AccountConfiguration> accounts = await _application.Catalog.AccountsAsync(_lifetime.Token);
+        CancellationTokenSource credentialsLifetime = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        CancellationToken credentialsToken = credentialsLifetime.Token;
         StackPanel form = new StackPanel
         {
-            Margin = new Thickness(16),
-            Spacing = 8
+            Margin = new Thickness(24),
+            Spacing = 12
         };
         Window window = new Window
         {
             Title = Strings.Credentials,
             Width = 520,
-            Height = 460,
+            Height = 640,
             FontFamily = FontFamily,
             FontSize = FontSize,
             Content = new ScrollViewer
@@ -639,8 +757,25 @@ public sealed partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap
         });
         form.Children.Add(account);
-        TextBox incoming = FormControls.AddField(form, "IncomingPassword", password: true);
-        TextBox outgoing = FormControls.AddField(form, "OutgoingPassword", password: true);
+        TextBlock usernames = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap
+        };
+        form.Children.Add(usernames);
+        CredentialFields credentials = new CredentialFields(form, includeUsernames: false);
+        void SelectAccount()
+        {
+            credentials.Clear();
+            if (account.SelectedItem is AccountConfiguration selected)
+            {
+                usernames.Text = Strings.CredentialUsernames + "\n" +
+                    Strings.Get("IncomingUsername") + ": " + selected.Incoming.Username + "\n" +
+                    Strings.Get("OutgoingUsername") + ": " + selected.Outgoing.Username;
+                credentials.Shared.IsChecked = selected.Incoming.Username == selected.Outgoing.Username;
+            }
+        }
+        account.SelectionChanged += (_, _) => SelectAccount();
+        SelectAccount();
         CheckBox session = new CheckBox
         {
             Content = Strings.SessionOnly,
@@ -659,27 +794,292 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
+            if (!credentials.Validate(status))
+            {
+                return;
+            }
+
             try
             {
                 Failure result = await setup.RestoreCredentialsAsync(
                     selected.Id,
-                    incoming.Text ?? "",
-                    outgoing.Text ?? "",
+                    credentials.ReceivingPassword.Text ?? "",
+                    credentials.OutgoingPassword,
                     session.IsChecked == true,
-                    _lifetime.Token
+                    credentialsToken
                 );
                 status.Text = result == Failure.None ? Strings.Get("CredentialsSaved") : Strings.Describe(result);
             }
             finally
             {
-                incoming.Text = "";
-                outgoing.Text = "";
+                credentials.Clear();
             }
         }, status);
         form.Children.Add(status);
         window.Opened += (_, _) => account.Focus();
-        window.Closed += (_, _) => { incoming.Text = ""; outgoing.Text = ""; };
+        window.Closed += (_, _) =>
+        {
+            credentials.Clear();
+            credentialsLifetime.Cancel();
+            credentialsLifetime.Dispose();
+        };
+        ShowWindow(window);
+    }
+
+    private void ReflowPreview(string position)
+    {
+        _layoutPreview = position;
+        Grid panes = this.FindControl<Grid>("Panes")!;
+        Control navigation = this.FindControl<DockPanel>("NavigationPane")!;
+        Control navigationSplitter = this.FindControl<GridSplitter>("NavigationSplitter")!;
+        Control messages = this.FindControl<DockPanel>("MessagePane")!;
+        GridSplitter splitter = this.FindControl<GridSplitter>("PreviewSplitter")!;
+        Control preview = this.FindControl<DockPanel>("PreviewPane")!;
+        bool bottom = position == "Bottom";
+        bool hidden = position == "Hidden";
+        this.FindControl<Expander>("ReaderAttachments")!.IsExpanded = !bottom;
+        panes.ColumnDefinitions = new ColumnDefinitions(bottom || hidden ? "250,5,*" : "250,5,*,5,1.3*");
+        panes.RowDefinitions = new RowDefinitions(bottom ? "*,5,*" : "*");
+        Grid.SetRowSpan(navigation, bottom ? 3 : 1);
+        Grid.SetRowSpan(navigationSplitter, bottom ? 3 : 1);
+        Grid.SetRow(messages, 0);
+        Grid.SetColumn(preview, bottom || hidden ? 2 : 4);
+        Grid.SetRow(preview, bottom ? 2 : 0);
+        Grid.SetColumn(splitter, bottom || hidden ? 2 : 3);
+        Grid.SetRow(splitter, bottom ? 1 : 0);
+        splitter.ResizeDirection = bottom ? GridResizeDirection.Rows : GridResizeDirection.Columns;
+        splitter.IsVisible = !hidden;
+        preview.IsVisible = !hidden;
+        preview.Margin = new Thickness(0);
+        AdjustReaderViewport();
+    }
+
+    private void AdjustReaderViewport()
+    {
+        double height = this.FindControl<DockPanel>("PreviewPane")!.Bounds.Height;
+        if (height <= 0)
+        {
+            return;
+        }
+        double width = this.FindControl<DockPanel>("PreviewPane")!.Bounds.Width;
+        this.FindControl<UniformGrid>("ReaderActions")!.Columns = Math.Clamp((int)(width / (FontSize * 8)), 1, 5);
+        this.FindControl<ScrollViewer>("ReaderHeaderScroll")!.MaxHeight = Math.Max(48, Math.Min(260, height * 0.32));
+        this.FindControl<ScrollViewer>("ReaderAttachmentScroll")!.MaxHeight = Math.Max(48, Math.Min(180, height * 0.24));
+        this.FindControl<WrapPanel>("ReaderReplyActions")!.IsVisible = height >= 320;
+    }
+
+    private void AdjustPaneToolbars()
+    {
+        double navigation = this.FindControl<DockPanel>("NavigationPane")!.Bounds.Height;
+        double messages = this.FindControl<DockPanel>("MessagePane")!.Bounds.Height;
+        this.FindControl<ScrollViewer>("NavigationActionsScroll")!.MaxHeight = Math.Max(80, Math.Min(360, navigation * 0.4));
+        this.FindControl<ScrollViewer>("ListToolbarScroll")!.MaxHeight = Math.Max(48, Math.Min(240, messages * 0.4));
+    }
+
+    private void RenameAccountClicked(object? sender, RoutedEventArgs args)
+    {
+        if (_management is not null && sender is MenuItem { DataContext: NavigationItemViewModel item } && item.Scope.IsAccount)
+        {
+            RenameAccount(_management, item.Scope.Account);
+        }
+    }
+
+    private void RenameAccount(IAccountManagement management, AccountId? selected = null)
+    {
+        if (DataContext is not MainWindowViewModel model || model.Accounts.Count == 0)
+        {
+            return;
+        }
+        StackPanel panel = new StackPanel { Spacing = 12 };
+        ComboBox accounts = new ComboBox
+        {
+            Name = "RenameAccountSelection",
+            ItemsSource = model.Accounts.ToArray(),
+            ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => new TextBlock { Text = account!.Name }),
+            SelectedItem = model.Accounts.FirstOrDefault(account => account.Id == (selected ?? model.Scope?.Account)) ?? model.Accounts[0]
+        };
+        Avalonia.Automation.AutomationProperties.SetName(accounts, Strings.Get("RenameAccount"));
+        panel.Children.Add(accounts);
+        TextBox name = FormControls.AddField(panel, "RenameName");
+        name.MaxLength = 200;
+        name.Text = ((AccountConfiguration)accounts.SelectedItem!).Name;
+        accounts.SelectionChanged += (_, _) => name.Text = (accounts.SelectedItem as AccountConfiguration)?.Name;
+        TextBlock status = new TextBlock
+        {
+            Name = "RenameAccountStatus",
+            TextWrapping = TextWrapping.Wrap
+        };
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(status, Avalonia.Automation.AutomationLiveSetting.Polite);
+        Window window = new Window
+        {
+            Title = Strings.Get("RenameAccount"),
+            Width = 480,
+            Height = 320,
+            MinWidth = 360,
+            MinHeight = 260,
+            Content = panel
+        };
+        FormControls.AddActionButton(panel, "SaveAccountName", async () =>
+        {
+            if (accounts.SelectedItem is not AccountConfiguration account)
+            {
+                return;
+            }
+            Failure result = await management.RenameAsync(account.Id, name.Text ?? "", _lifetime.Token);
+            if (result != Failure.None)
+            {
+                status.Text = Strings.Describe(result);
+                return;
+            }
+            await model.InitialiseAsync();
+            window.Close();
+        }, status);
+        FormControls.AddActionButton(panel, "Cancel", () =>
+        {
+            window.Close();
+            return Task.CompletedTask;
+        }, status);
+        panel.Children.Add(status);
+        ShowWindow(window);
+        name.Focus();
+        name.SelectAll();
+    }
+
+    private void RemoveAccount(IAccountManagement management)
+    {
+        if (DataContext is not MainWindowViewModel model || model.Accounts.Count == 0)
+        {
+            return;
+        }
+        StackPanel panel = new StackPanel
+        {
+            Spacing = 12
+        };
+        ComboBox accounts = new ComboBox
+        {
+            Name = "RemoveAccountSelection",
+            ItemsSource = model.Accounts.ToArray(),
+            ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => new TextBlock
+            {
+                Text = account!.Name + " — " + account.Incoming.Host
+            }),
+            SelectedItem = model.Accounts.FirstOrDefault(account => account.Id == model.Scope?.Account) ?? model.Accounts[0]
+        };
+        Avalonia.Automation.AutomationProperties.SetName(accounts, Strings.RemoveAccount);
+        panel.Children.Add(accounts);
+        panel.Children.Add(new TextBlock
+        {
+            Text = Strings.Get("RemoveAccountHint"),
+            TextWrapping = TextWrapping.Wrap
+        });
+        TextBlock status = new TextBlock
+        {
+            Name = "RemoveAccountStatus",
+            TextWrapping = TextWrapping.Wrap
+        };
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(status, Avalonia.Automation.AutomationLiveSetting.Polite);
+        Window window = new Window
+        {
+            Title = Strings.RemoveAccount,
+            Width = 560,
+            Height = 420,
+            MinWidth = 360,
+            MinHeight = 300,
+            Content = panel
+        };
+        FormControls.AddActionButton(panel, "ConfirmRemoveAccount", async () =>
+        {
+            if (accounts.SelectedItem is not AccountConfiguration account)
+            {
+                return;
+            }
+            if (_compose.Any(compose => compose.Account == account.Id))
+            {
+                status.Text = Strings.Get("RemoveAccountComposeOpen");
+                return;
+            }
+            if (_removingAccount is not null)
+            {
+                status.Text = Strings.Describe(Failure.Unavailable);
+                return;
+            }
+            _removingAccount = account.Id;
+            IsEnabled = false;
+            Failure result;
+            try
+            {
+                result = await management.RemoveAsync(account.Id, _lifetime.Token);
+            }
+            finally
+            {
+                _removingAccount = null;
+                IsEnabled = !_stopping;
+            }
+            if (result != Failure.None)
+            {
+                status.Text = result == Failure.NeedsReview ? Strings.Get("RemoveAccountWorkBlocked") : Strings.Describe(result);
+                return;
+            }
+            await model.InitialiseAsync();
+            window.Close();
+        }, status);
+        FormControls.AddActionButton(panel, "Cancel", () =>
+        {
+            window.Close();
+            return Task.CompletedTask;
+        }, status);
+        panel.Children.Add(status);
+        ShowWindow(window);
+    }
+
+    private void ShowWindow(Window window)
+    {
+        window.FontFamily = FontFamily;
+        window.FontSize = FontSize;
+        bool wrap = window.Content is StackPanel;
+        StackPanel? panel = window.Content as StackPanel ?? (window.Content as ScrollViewer)?.Content as StackPanel;
+        if (panel is not null)
+        {
+            if (wrap)
+            {
+                window.Content = null;
+            }
+            panel.Margin = new Thickness(24);
+            panel.Spacing = 12;
+            panel.Children.Insert(0, new TextBlock
+            {
+                Text = window.Title,
+                FontWeight = FontWeight.SemiBold,
+                FontSize = FontSize * 1.4,
+                TextWrapping = TextWrapping.Wrap
+            });
+            if (wrap)
+            {
+                window.Content = new ScrollViewer
+                {
+                    Content = panel
+                };
+            }
+        }
         window.Show(this);
+    }
+
+    private void SystemColoursChanged(object? sender, Avalonia.Platform.PlatformColorValues values)
+    {
+        Dispatcher.UIThread.Post(() => ApplyAppearance(_settings));
+    }
+
+    private Task RefreshFromControlsAsync()
+    {
+        if (DataContext is not MainWindowViewModel model || model.UpdatingNavigation)
+        {
+            return Task.CompletedTask;
+        }
+        // Avalonia raises control events before its two-way bindings update the source.
+        model.Scope = (this.FindControl<TreeView>("ScopeList")!.SelectedItem as NavigationItemViewModel)?.Scope;
+        model.UnreadOnly = this.FindControl<CheckBox>("UnreadFilter")!.IsChecked == true;
+        model.KnownAttachmentsOnly = this.FindControl<CheckBox>("AttachmentFilter")!.IsChecked == true;
+        return model.RefreshAsync(false);
     }
 
     private void Wire(string name, Func<Task> action)
@@ -705,14 +1105,14 @@ public sealed partial class MainWindow : Window
             }
             catch (IOException)
             {
-                new Window
+                ShowWindow(new Window
                 {
                     Title = Strings.DraftFailed,
                     Content = new TextBlock
                     {
                         Text = Strings.DraftFailed
                     }
-                }.Show(this);
+                });
             }
             catch (OperationCanceledException)
             {
@@ -760,13 +1160,13 @@ public sealed partial class MainWindow : Window
             }
         }, status);
         panel.Children.Add(status);
-        new Window
+        ShowWindow(new Window
         {
             Title = Strings.Move,
             Width = 480,
             Height = 240,
             Content = panel
-        }.Show(this);
+        });
     }
 
     private async Task DesktopSettingsAsync(IDesktopIntegration desktop)
@@ -811,7 +1211,7 @@ public sealed partial class MainWindow : Window
             return Task.CompletedTask;
         }, status);
         panel.Children.Add(status);
-        new Window
+        ShowWindow(new Window
         {
             Title = Strings.DesktopSettings,
             Width = 620,
@@ -822,7 +1222,7 @@ public sealed partial class MainWindow : Window
             {
                 Content = panel
             }
-        }.Show(this);
+        });
     }
 
     private async Task CommandsAsync()
@@ -893,7 +1293,7 @@ public sealed partial class MainWindow : Window
             list.ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token);
         }, status);
         panel.Children.Add(status);
-        new Window
+        ShowWindow(new Window
         {
             Title = Strings.Commands,
             Width = 760,
@@ -904,7 +1304,7 @@ public sealed partial class MainWindow : Window
             {
                 Content = panel
             }
-        }.Show(this);
+        });
     }
 
     private async Task DraftsAsync()
@@ -974,7 +1374,7 @@ public sealed partial class MainWindow : Window
             Height = 480,
             Content = panel
         };
-        window.Show(this);
+        ShowWindow(window);
     }
 
     private async Task ReviewVersionsAsync(DraftSnapshot draft)
@@ -1049,7 +1449,7 @@ public sealed partial class MainWindow : Window
             return Task.CompletedTask;
         }, status);
         panel.Children.Add(status);
-        new Window
+        ShowWindow(new Window
         {
             Title = Strings.Get("ReviewVersions"),
             Width = 760,
@@ -1058,7 +1458,7 @@ public sealed partial class MainWindow : Window
             {
                 Content = panel
             }
-        }.Show(this);
+        });
     }
 
     private async Task OutboxAsync()
@@ -1182,7 +1582,7 @@ public sealed partial class MainWindow : Window
         }, status);
         panel.Children.Add(status);
         panel.Children.Add(list);
-        new Window
+        ShowWindow(new Window
         {
             Title = Strings.Outbox,
             Width = 900,
@@ -1191,7 +1591,7 @@ public sealed partial class MainWindow : Window
             {
                 Content = panel
             }
-        }.Show(this);
+        });
     }
 
     private void Appearance()
@@ -1253,7 +1653,7 @@ public sealed partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap
         });
         panel.Children.Add(status);
-        new Window
+        ShowWindow(new Window
         {
             Title = Strings.Settings,
             Width = 500,
@@ -1262,7 +1662,7 @@ public sealed partial class MainWindow : Window
             {
                 Content = panel
             }
-        }.Show(this);
+        });
 
         ComboBox Choice(string label, string[] values, string selected)
         {

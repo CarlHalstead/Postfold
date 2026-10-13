@@ -13,6 +13,7 @@ using Postfold.Core.Models.Synchronisation;
 using Postfold.Desktop.Composition;
 using Postfold.Desktop.Stores;
 using Postfold.Engine.Tests.Fixtures;
+using Postfold.Foundation.Tests.Fixtures.Desktop;
 using Postfold.UI.ViewModels;
 using Postfold.UI.Views;
 using System;

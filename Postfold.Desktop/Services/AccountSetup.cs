@@ -2,9 +2,12 @@ using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
 using Postfold.Core.Models;
 using Postfold.Core.Models.Accounts;
+using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Mailboxes;
 using System;
 using System.Collections.Immutable;
+using System.Linq;
+using System.Net.Mail;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -15,78 +18,28 @@ public sealed class AccountSetup : IAccountSetup
     private readonly IAccountProvisioner _host;
     private readonly ICredentialStore _secure;
     private readonly ICredentialStore _session;
+    private readonly IClientIdentity? _identity;
+    private readonly SemaphoreSlim _additions = new SemaphoreSlim(1, 1);
 
-    public AccountSetup(IAccountProvisioner host, ICredentialStore secure, ICredentialStore session)
+    public AccountSetup(IAccountProvisioner host, ICredentialStore secure, ICredentialStore session, IClientIdentity? identity = null)
     {
         _host = host;
         _secure = secure;
         _session = session;
+        _identity = identity;
     }
 
     public async Task<AccountSetupResult> AddAsync(AccountSetupRequest request, CancellationToken cancellationToken)
     {
-        if (!_host.NetworkAllowed)
+        await _additions.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return new AccountSetupResult(Failure.PolicyBlocked, Failure.PolicyBlocked, Failure.PolicyBlocked, []);
+            return await AddCoreAsync(request, cancellationToken).ConfigureAwait(false);
         }
-
-        if (!Valid(request.Incoming) || !Valid(request.Outgoing) || string.IsNullOrWhiteSpace(request.Name))
+        finally
         {
-            return new AccountSetupResult(Failure.Validation, Failure.Validation, Failure.Validation, []);
+            _additions.Release();
         }
-
-        ICredentialStore store = request.SessionOnly ? _session : _secure;
-        string incomingKey = Guid.NewGuid().ToString("N");
-        string outgoingKey = Guid.NewGuid().ToString("N");
-        MailEndpoint incoming = request.Incoming with
-        {
-            CredentialKey = incomingKey
-        };
-        MailEndpoint outgoing = request.Outgoing with
-        {
-            CredentialKey = outgoingKey
-        };
-        Outcome<bool> first = await store.WriteAsync(
-            incomingKey,
-            new Credential(request.IncomingPassword, false),
-            cancellationToken
-        ).ConfigureAwait(false);
-        Outcome<bool> second = await store.WriteAsync(
-            outgoingKey,
-            new Credential(request.OutgoingPassword, false),
-            cancellationToken
-        ).ConfigureAwait(false);
-        if (!first.IsSuccess || !second.IsSuccess)
-        {
-            return new AccountSetupResult(Failure.CredentialStorageUnavailable, Failure.Unavailable, Failure.Unavailable, []);
-        }
-
-        ImmutableArray<AccountConfiguration> accounts = await _host.Catalog.AccountsAsync(
-            cancellationToken
-        ).ConfigureAwait(false);
-        long next = 1;
-        foreach (AccountConfiguration account in accounts)
-        {
-            next = Math.Max(next, account.Id.Value + 1);
-        }
-
-        AccountId id = new AccountId(next);
-        Failure outgoingResult = await _host.TestOutgoingConnectionAsync(
-            id,
-            outgoing,
-            store,
-            cancellationToken
-        ).ConfigureAwait(false);
-        Outcome<IMailAccountEngine> engine = await _host.ConnectAccountAsync(
-            id,
-            request.Name,
-            incoming,
-            outgoing,
-            store,
-            request.DraftMailbox,
-            cancellationToken
-        ).ConfigureAwait(false);
-        return new AccountSetupResult(Failure.None, engine.Failure, outgoingResult, engine.Value?.Mailboxes ?? []);
     }
 
     public async Task<Failure> RestoreCredentialsAsync(
@@ -134,6 +87,94 @@ public sealed class AccountSetup : IAccountSetup
     public Task<Failure> SetRolesAsync(AccountId account, FolderRoles roles, CancellationToken cancellationToken)
     {
         return _host.SetRolesAsync(account, roles, cancellationToken);
+    }
+
+    private async Task<AccountSetupResult> AddCoreAsync(AccountSetupRequest request, CancellationToken cancellationToken)
+    {
+        if (!_host.NetworkAllowed)
+        {
+            return new AccountSetupResult(Failure.PolicyBlocked, Failure.PolicyBlocked, Failure.PolicyBlocked, []);
+        }
+
+        if (!Valid(request.Incoming) || !Valid(request.Outgoing) || string.IsNullOrWhiteSpace(request.Name) ||
+            request.Sender is not null && (!MailAddress.TryCreate(request.Sender, out MailAddress? sender) ||
+                sender.Address != request.Sender || _identity is null))
+        {
+            return new AccountSetupResult(Failure.Validation, Failure.Validation, Failure.Validation, []);
+        }
+
+        ImmutableArray<AccountConfiguration> accounts = await _host.Catalog.AccountsAsync(
+            cancellationToken
+        ).ConfigureAwait(false);
+        string address = request.Sender ?? request.Incoming.Username;
+        if (accounts.Any(account => string.Equals(account.Identity?.Sender ?? account.Incoming.Username,
+            address, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(account.Incoming.Host, request.Incoming.Host, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(account.Incoming.Username, request.Incoming.Username, StringComparison.OrdinalIgnoreCase)))
+        {
+            return new AccountSetupResult(Failure.Validation, Failure.Validation, Failure.Validation, [], Duplicate: true);
+        }
+
+        AccountId id = await _host.NextAccountIdAsync(cancellationToken).ConfigureAwait(false);
+        ICredentialStore store = request.SessionOnly ? _session : _secure;
+        string incomingKey = Guid.NewGuid().ToString("N");
+        string outgoingKey = Guid.NewGuid().ToString("N");
+        MailEndpoint incoming = request.Incoming with
+        {
+            CredentialKey = incomingKey
+        };
+        MailEndpoint outgoing = request.Outgoing with
+        {
+            CredentialKey = outgoingKey
+        };
+        Outcome<bool> first = await store.WriteAsync(
+            incomingKey,
+            new Credential(request.IncomingPassword, false),
+            cancellationToken
+        ).ConfigureAwait(false);
+        Outcome<bool> second = await store.WriteAsync(
+            outgoingKey,
+            new Credential(request.OutgoingPassword, false),
+            cancellationToken
+        ).ConfigureAwait(false);
+        if (!first.IsSuccess || !second.IsSuccess)
+        {
+            return new AccountSetupResult(Failure.CredentialStorageUnavailable, Failure.Unavailable, Failure.Unavailable, []);
+        }
+
+        Failure outgoingResult = await _host.TestOutgoingConnectionAsync(
+            id,
+            outgoing,
+            store,
+            cancellationToken
+        ).ConfigureAwait(false);
+        Outcome<IMailAccountEngine> engine = await _host.ConnectAccountAsync(
+            id,
+            request.Name,
+            incoming,
+            outgoing,
+            store,
+            request.DraftMailbox,
+            cancellationToken
+        ).ConfigureAwait(false);
+        Failure identityResult = engine.IsSuccess && request.Sender is not null ?
+            await _identity!.SaveAsync(id, new ComposeIdentity(request.Sender, ""), cancellationToken).ConfigureAwait(false) :
+            Failure.None;
+        Failure synchronisation = Failure.None;
+        if (engine.IsSuccess)
+        {
+            foreach (MailboxSnapshot mailbox in engine.Value!.Mailboxes.Where(item => item.Selectable)
+                .OrderByDescending(item => item.Role == Postfold.Core.Enums.MailboxRole.Inbox))
+            {
+                synchronisation = await engine.Value.ReconcileAsync(mailbox.RemoteKey, cancellationToken).ConfigureAwait(false);
+                if (synchronisation != Failure.None)
+                {
+                    break;
+                }
+            }
+        }
+        return new AccountSetupResult(Failure.None, engine.Failure, outgoingResult, engine.Value?.Mailboxes ?? [],
+            identityResult, synchronisation);
     }
 
     private static bool Valid(MailEndpoint endpoint)

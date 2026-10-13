@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <IsTestProject>true</IsTestProject>
+        <OutputType>Exe</OutputType>
+        <StartupObject>Postfold.Foundation.Tests.Fixtures.Desktop.QualificationProgram</StartupObject>
         <IsPackable>false</IsPackable>
     </PropertyGroup>
     <ItemGroup>
@@ -8,6 +10,11 @@
         <Compile Include="../Postfold.Engine.Tests/Fixtures/EngineFixture.cs" Link="Fixtures/EngineFixture.cs" />
         <ProjectReference Include="../Postfold.Desktop/Postfold.Desktop.csproj" />
         <PackageReference Include="Avalonia.Headless.NUnit" />
+        <PackageReference Include="Microsoft.Web.WebView2" ExcludeAssets="compile;build;buildTransitive"
+                          PrivateAssets="all" GeneratePathProperty="true" />
+        <Reference Include="Microsoft.Web.WebView2.Core">
+            <HintPath>$(PkgMicrosoft_Web_WebView2)/lib_manual/netcoreapp3.0/Microsoft.Web.WebView2.Core.dll</HintPath>
+        </Reference>
         <PackageReference Include="NUnit" />
         <PackageReference Include="NSubstitute" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" />

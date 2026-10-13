@@ -8,5 +8,8 @@ public sealed record AccountSetupResult(
     Failure Credentials,
     Failure Incoming,
     Failure Outgoing,
-    ImmutableArray<MailboxSnapshot> Mailboxes
+    ImmutableArray<MailboxSnapshot> Mailboxes,
+    Failure Identity = Failure.None,
+    Failure Synchronisation = Failure.None,
+    bool Duplicate = false
 );

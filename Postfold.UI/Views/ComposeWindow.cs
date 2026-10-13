@@ -78,9 +78,15 @@ public sealed class ComposeWindow : Window
         Height = 760;
         StackPanel form = new StackPanel
         {
-            Margin = new Thickness(16),
-            Spacing = 8
+            Margin = new Thickness(24),
+            Spacing = 12
         };
+        form.Children.Add(new TextBlock
+        {
+            Text = Strings.NewMail,
+            FontWeight = FontWeight.SemiBold,
+            FontSize = 22
+        });
         _sender = FormControls.AddField(form, "Sender", content.Sender);
         _recipients = FormControls.AddField(form, "Recipients", string.Join(";", content.Recipients));
         _subject = FormControls.AddField(form, "Subject", content.Subject);

@@ -3,148 +3,284 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:ui="using:Postfold.UI.Resources"
     xmlns:viewModels="using:Postfold.UI.ViewModels"
-    xmlns:converters="using:Postfold.UI.Converters"
+    xmlns:controls="using:Postfold.UI.Controls"
+    xmlns:models="using:Postfold.UI.Models"
     xmlns:core="using:Postfold.Core.Models.Messages"
     x:Class="Postfold.UI.Views.MainWindow"
     x:DataType="viewModels:MainWindowViewModel"
     Title="{Binding Title}"
-    Width="1200"
-    Height="760"
+    Width="1400"
+    Height="900"
     MinWidth="760"
     MinHeight="480">
-    <Window.Resources>
-        <Thickness x:Key="MessagePadding">
-            4,8
-        </Thickness>
-        <converters:StateTextConverter x:Key="StateText" />
-        <converters:MessageStatusConverter x:Key="MessageStatus" />
-        <converters:AccountNameConverter x:Key="AccountName" />
-    </Window.Resources>
-    <DockPanel Margin="12">
-        <StackPanel DockPanel.Dock="Top" Spacing="8">
-            <WrapPanel>
-                <Button Name="ComposeButton" Content="{x:Static ui:Strings.Compose}" />
-                <Button Name="SetupButton" Content="{x:Static ui:Strings.Setup}" />
-                <Button Name="CredentialsButton" Content="{x:Static ui:Strings.Credentials}" />
-                <Button Content="{x:Static ui:Strings.Refresh}" Command="{Binding RefreshCommand}" />
-                <Button Name="DraftsButton" Content="{x:Static ui:Strings.Drafts}" />
-                <Button Name="OutboxButton" Content="{x:Static ui:Strings.Outbox}" />
-                <Button Name="CommandsButton" Content="{x:Static ui:Strings.Commands}" />
-                <Button Name="AppearanceButton" Content="{x:Static ui:Strings.Settings}" />
-                <Button Name="DesktopButton" Content="{x:Static ui:Strings.DesktopSettings}" />
-                <Button Name="IdentityButton" Content="{x:Static ui:Strings.IdentitySettings}" IsEnabled="False" />
-            </WrapPanel>
-            <Grid ColumnDefinitions="*,Auto,Auto">
-                <TextBox
-                    Name="SearchBox"
-                    Text="{Binding Terms}"
-                    PlaceholderText="{x:Static ui:Strings.Search}"
-                    AutomationProperties.Name="{x:Static ui:Strings.Search}"
-                    MaxLength="1024" />
-                <Button Grid.Column="1" Content="{x:Static ui:Strings.Search}" Command="{Binding RefreshCommand}" />
-                <Button Grid.Column="2" Content="{x:Static ui:Strings.More}" Command="{Binding MoreCommand}" />
-            </Grid>
-            <TextBlock Text="{x:Static ui:Strings.SearchHint}" TextWrapping="Wrap" />
-        </StackPanel>
-        <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Bottom" Margin="16,4" Spacing="2" IsVisible="{Binding HasStatus}">
             <TextBlock Text="{Binding Status}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
             <TextBlock Text="{Binding NotificationStatus}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
         </StackPanel>
-        <Grid Name="Panes" ColumnDefinitions="220,5,*,5,1.3*" Margin="0,12,0,0">
-            <DockPanel Name="NavigationPane">
-                <Button DockPanel.Dock="Bottom" Content="{x:Static ui:Strings.Synchronise}" Command="{Binding SynchroniseCommand}" />
-                <ListBox
+        <Grid Name="Panes" ColumnDefinitions="250,5,*,5,1.3*">
+            <DockPanel Name="NavigationPane" Background="{DynamicResource MailNavigationBrush}">
+                <StackPanel DockPanel.Dock="Top" Margin="16" Spacing="16">
+                    <Button
+                        Name="ComposeButton"
+                        IsEnabled="{Binding HasAccounts}"
+                        Classes="primary"
+                        HorizontalAlignment="Stretch"
+                        MinHeight="48">
+                        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                            <Path Data="{StaticResource ComposeIcon}" Stroke="{DynamicResource MailAccentTextBrush}" StrokeThickness="1.5" Width="18" Height="18" Stretch="Uniform" />
+                            <TextBlock Text="{x:Static ui:Strings.NewMail}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+                <ScrollViewer Name="NavigationActionsScroll" DockPanel.Dock="Bottom" MaxHeight="360" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="0,8" Spacing="0">
+                        <Button Classes="navigation" Name="SetupButton" Content="{x:Static ui:Strings.Setup}" HorizontalAlignment="Stretch" />
+                        <Expander Classes="navigation" HorizontalAlignment="Stretch">
+                            <Expander.Header>
+                                <TextBlock Text="{x:Static ui:Strings.AccountActions}" TextWrapping="Wrap" />
+                            </Expander.Header>
+                            <StackPanel Spacing="8">
+                                <Button Classes="navigation" Name="CredentialsButton" Content="{x:Static ui:Strings.Credentials}" />
+                                <Button Classes="navigation" Name="RenameAccountButton" Content="{x:Static ui:Strings.RenameAccount}" IsEnabled="False" />
+                                <Button Classes="navigation" Name="RemoveAccountButton" Content="{x:Static ui:Strings.RemoveAccount}" IsEnabled="False" />
+                                <Button Classes="navigation" Name="DraftsButton" Content="{x:Static ui:Strings.Drafts}" />
+                                <Button Classes="navigation" Name="OutboxButton" Content="{x:Static ui:Strings.Outbox}" />
+                                <Button Classes="navigation" Name="CommandsButton" Content="{x:Static ui:Strings.Commands}" />
+                                <Button Classes="navigation" Content="{x:Static ui:Strings.Synchronise}" Command="{Binding SynchroniseCommand}" />
+                            </StackPanel>
+                        </Expander>
+                        <Button Classes="navigation" Name="AppearanceButton" Content="{x:Static ui:Strings.Settings}" HorizontalAlignment="Stretch" />
+                        <Expander Classes="navigation" HorizontalAlignment="Stretch">
+                            <Expander.Header>
+                                <TextBlock Text="{x:Static ui:Strings.MoreSettings}" TextWrapping="Wrap" />
+                            </Expander.Header>
+                            <StackPanel Spacing="8">
+                                <Button Classes="navigation" Name="DesktopButton" Content="{x:Static ui:Strings.DesktopSettings}" />
+                                <Button Classes="navigation" Name="IdentityButton" Content="{x:Static ui:Strings.IdentitySettings}" IsEnabled="False" />
+                            </StackPanel>
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
+                <TreeView
                     Name="ScopeList"
-                    ItemsSource="{Binding Scopes}"
-                    SelectedItem="{Binding Scope}"
                     Focusable="True"
-                    AutomationProperties.Name="{x:Static ui:Strings.Scope}" />
+                    ItemsSource="{Binding Navigation}"
+                    SelectedItem="{Binding NavigationSelection}"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    AutomationProperties.Name="{x:Static ui:Strings.Scope}">
+                    <TreeView.Styles>
+                        <Style Selector="TreeViewItem" x:DataType="viewModels:NavigationItemViewModel">
+                            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                            <Setter Property="HorizontalAlignment" Value="Stretch" />
+                            <Setter Property="Template">
+                                <ControlTemplate>
+                                    <StackPanel>
+                                        <Border Name="PART_LayoutRoot" Background="{TemplateBinding Background}" Focusable="True" TemplatedControl.IsTemplateFocusTarget="True">
+                                            <Grid Name="PART_Header" ColumnDefinitions="28,*">
+                                                <ToggleButton Name="PART_ExpandCollapseChevron" Theme="{StaticResource FluentTreeViewExpandCollapseChevron}" Focusable="False" IsChecked="{TemplateBinding IsExpanded, Mode=TwoWay}" />
+                                                <ContentPresenter Name="PART_HeaderPresenter" Grid.Column="1" Content="{TemplateBinding Header}" ContentTemplate="{TemplateBinding HeaderTemplate}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" />
+                                            </Grid>
+                                        </Border>
+                                        <controls:AnimatedDisclosure IsExpanded="{TemplateBinding IsExpanded}">
+                                            <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}" />
+                                        </controls:AnimatedDisclosure>
+                                    </StackPanel>
+                                </ControlTemplate>
+                            </Setter>
+                        </Style>
+                        <Style Selector="TreeViewItem:empty /template/ ToggleButton#PART_ExpandCollapseChevron">
+                            <Setter Property="IsVisible" Value="False" />
+                        </Style>
+                        <Style Selector="TreeViewItem /template/ Border#PART_LayoutRoot:pointerover">
+                            <Setter Property="Background" Value="{DynamicResource MailSelectionBrush}" />
+                        </Style>
+                    </TreeView.Styles>
+                    <TreeView.ItemTemplate>
+                        <TreeDataTemplate x:DataType="viewModels:NavigationItemViewModel" ItemsSource="{Binding Children}">
+                            <Grid ColumnDefinitions="24,*" Margin="4,8">
+                                <Grid.ContextMenu>
+                                    <ContextMenu IsEnabled="{Binding Scope.IsAccount}">
+                                        <MenuItem Header="{x:Static ui:Strings.RenameAccount}" Click="RenameAccountClicked" />
+                                    </ContextMenu>
+                                </Grid.ContextMenu>
+                                <Path Data="{StaticResource FolderIcon}" Stroke="{DynamicResource MailTextBrush}" StrokeThickness="1.5" IsVisible="{Binding IsFolder}" Width="16" Height="16" Stretch="Uniform" />
+                                <TextBlock Grid.Column="1" Text="{Binding Name}" TextWrapping="Wrap" HorizontalAlignment="Left" />
+                            </Grid>
+                        </TreeDataTemplate>
+                    </TreeView.ItemTemplate>
+                </TreeView>
             </DockPanel>
             <GridSplitter
                 Name="NavigationSplitter"
                 Grid.Column="1"
                 ResizeDirection="Columns"
                 AutomationProperties.Name="{x:Static ui:Strings.NavigationResize}" />
-            <ListBox
-                Grid.Column="2"
-                Name="MessageList"
-                ItemsSource="{Binding Messages}"
-                SelectedItem="{Binding Selected}"
-                Focusable="True"
-                AutomationProperties.Name="{x:Static ui:Strings.Messages}">
-                <ListBox.ItemTemplate>
-                    <DataTemplate x:DataType="core:MessageSnapshot">
-                        <StackPanel Margin="{DynamicResource MessagePadding}" Spacing="4">
-                            <TextBlock Text="{Binding Subject}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Participants}" TextTrimming="CharacterEllipsis" />
-                            <WrapPanel>
-                                <TextBlock>
-                                    <TextBlock.Text>
-                                        <MultiBinding Converter="{StaticResource AccountName}">
-                                            <Binding Path="Account" />
-                                            <ReflectionBinding Path="DataContext.Accounts" RelativeSource="{RelativeSource AncestorType=Window}" />
-                                        </MultiBinding>
-                                    </TextBlock.Text>
-                                </TextBlock>
-                                <TextBlock Text="{Binding Availability, Converter={StaticResource StateText}}" Margin="8,0" />
-                                <TextBlock Text="{Binding Read, Converter={StaticResource MessageStatus}, ConverterParameter=Read}" Margin="0,0,8,0" />
-                                <TextBlock Text="{Binding Flagged, Converter={StaticResource MessageStatus}}" Margin="0,0,8,0" />
-                                <TextBlock Text="{Binding Pending, Converter={StaticResource StateText}}" />
-                            </WrapPanel>
-                        </StackPanel>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
+            <DockPanel Grid.Column="2" Name="MessagePane">
+                <ScrollViewer Name="ListToolbarScroll" DockPanel.Dock="Top" MaxHeight="220" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="16,12" Spacing="8">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBox
+                                Name="SearchBox"
+                                Text="{Binding Terms}"
+                                PlaceholderText="{x:Static ui:Strings.Search}"
+                                AutomationProperties.Name="{x:Static ui:Strings.Search}"
+                                MaxLength="1024" />
+                            <Button Grid.Column="1" Content="{x:Static ui:Strings.Search}" Command="{Binding RefreshCommand}" Margin="8,0,0,0" />
+                        </Grid>
+                        <WrapPanel>
+                            <Button Name="AllFilterButton" Content="{x:Static ui:Strings.AllMail}" />
+                            <CheckBox Name="UnreadFilter" Content="{x:Static ui:Strings.Unread}" IsChecked="{Binding UnreadOnly}" Margin="8,0" />
+                            <CheckBox Name="AttachmentFilter" Content="{x:Static ui:Strings.KnownAttachments}" IsChecked="{Binding KnownAttachmentsOnly}" />
+                            <Button Content="{x:Static ui:Strings.Refresh}" Command="{Binding SynchroniseCommand}" />
+                        </WrapPanel>
+                        <TextBlock Text="{Binding Scope.Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <Expander Header="{x:Static ui:Strings.SearchScopeHint}">
+                            <TextBlock Text="{x:Static ui:Strings.SearchHint}" TextWrapping="Wrap" />
+                        </Expander>
+                        <Button Content="{x:Static ui:Strings.More}" Command="{Binding MoreCommand}" />
+                    </StackPanel>
+                </ScrollViewer>
+                <Grid>
+                    <TextBlock Text="{x:Static ui:Strings.NoMessages}" IsVisible="{Binding IsEmpty}" Margin="24" TextWrapping="Wrap" />
+                <ListBox
+                    Name="MessageList"
+                    Focusable="True"
+                    Classes="mail"
+                    ItemsSource="{Binding Rows}"
+                    SelectedItem="{Binding SelectedRow}"
+                    AutomationProperties.Name="{x:Static ui:Strings.Messages}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="models:MessageSummary">
+                            <StackPanel>
+                                <Border IsVisible="{Binding HasGroup}" Background="{DynamicResource MailSurfaceBrush}">
+                                    <TextBlock Text="{Binding Group}" Classes="caption" Margin="8,8,0,4" />
+                                </Border>
+                                <Border Padding="{DynamicResource MessagePadding}" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource MailLineBrush}">
+                                    <Grid ColumnDefinitions="8,44,*" RowDefinitions="Auto,Auto,Auto,Auto">
+                                        <Ellipse Grid.Column="0" Width="6" Height="6" Fill="{DynamicResource MailAccentBrush}" IsVisible="{Binding Unread}" VerticalAlignment="Center" />
+                                        <Border
+                                            Grid.Column="1"
+                                            Grid.RowSpan="3"
+                                            Width="36"
+                                            Height="36"
+                                            CornerRadius="18"
+                                            Background="{DynamicResource MailSelectionBrush}"
+                                            VerticalAlignment="Top">
+                                            <TextBlock Text="{Binding Initials}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <Grid Grid.Column="2" ColumnDefinitions="*,Auto" Margin="8,0,0,0">
+                                            <TextBlock Text="{Binding Sender}" FontWeight="{Binding Weight}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Date}" Classes="caption" Margin="8,0,0,0" />
+                                        </Grid>
+                                        <TextBlock Grid.Column="2" Grid.Row="1" Text="{Binding Subject}" FontWeight="{Binding Weight}" TextTrimming="CharacterEllipsis" Margin="8,2,0,0" />
+                                        <TextBlock Grid.Column="2" Grid.Row="2" Text="{Binding Preview}" IsVisible="{Binding HasPreview}" Classes="caption" TextTrimming="CharacterEllipsis" Margin="8,2,0,0" />
+                                        <WrapPanel Grid.Column="2" Grid.Row="3" Margin="8,4,0,0">
+                                            <TextBlock Text="{Binding AccountName}" Classes="caption" Margin="0,0,8,0" />
+                                            <TextBlock Text="{Binding State}" Classes="caption" />
+                                            <TextBlock Text="{x:Static ui:Strings.AttachmentMark}" IsVisible="{Binding HasAttachments}" Margin="8,0,0,0" />
+                                        </WrapPanel>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                </Grid>
+            </DockPanel>
             <GridSplitter
                 Name="PreviewSplitter"
                 Grid.Column="3"
                 ResizeDirection="Columns"
                 AutomationProperties.Name="{x:Static ui:Strings.PreviewResize}" />
-            <DockPanel Grid.Column="4" Name="PreviewPane" Margin="12,0,0,0">
-                <StackPanel DockPanel.Dock="Top" Spacing="8">
-                    <WrapPanel>
-                        <Button Content="{x:Static ui:Strings.Retrieve}" Command="{Binding RetrieveCommand}" />
-                        <Button Content="{x:Static ui:Strings.Read}" Command="{Binding ReadCommand}" />
-                        <Button Content="{x:Static ui:Strings.Flag}" Command="{Binding FlagCommand}" />
-                        <Button Content="{x:Static ui:Strings.Archive}" Command="{Binding ArchiveCommand}" />
-                        <Button Content="{x:Static ui:Strings.Trash}" Command="{Binding TrashCommand}" />
-                        <Button Name="MoveButton" Content="{x:Static ui:Strings.Move}" IsEnabled="{Binding CanMove}" />
-                        <Button Name="ReplyButton" Content="{x:Static ui:Strings.Reply}" />
-                        <Button Name="ForwardButton" Content="{x:Static ui:Strings.Forward}" />
-                        <Button Name="HtmlButton" Content="{x:Static ui:Strings.HtmlRead}" IsEnabled="False" />
-                        <Button Name="ImagesButton" Content="{x:Static ui:Strings.LoadImages}" IsEnabled="False" />
-                    </WrapPanel>
-                    <TextBlock Text="{x:Static ui:Strings.HtmlUnavailable}" TextWrapping="Wrap" />
-                    <TextBlock Text="{Binding MoveSupport}" TextWrapping="Wrap" />
-                </StackPanel>
-                <StackPanel DockPanel.Dock="Bottom">
-                    <Button Name="SaveAttachmentButton" Content="{x:Static ui:Strings.Destination}" />
-                    <Button Name="CheckAttachmentsButton" Content="{x:Static ui:Strings.CheckAttachments}" />
-                    <ListBox
-                        Name="AttachmentList"
-                        ItemsSource="{Binding Attachments}"
-                        MaxHeight="160"
-                        AutomationProperties.Name="{x:Static ui:Strings.Attach}">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate x:DataType="core:AttachmentSnapshot">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Text="{Binding Name}" />
-                                    <TextBlock Text="{Binding MediaType}" />
-                                    <TextBlock Text="{Binding Length}" />
-                                    <TextBlock Text="{Binding Availability, Converter={StaticResource StateText}}" />
+            <DockPanel Grid.Column="4" Name="PreviewPane">
+                <ScrollViewer Name="ReaderHeaderScroll" DockPanel.Dock="Top" MaxHeight="260" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="24,12,24,8" Spacing="8">
+                        <UniformGrid Name="ReaderActions" Columns="5">
+                            <Button Name="ReplyButton" Classes="quiet" Margin="0,0,8,8" Content="{x:Static ui:Strings.Reply}" IsEnabled="{Binding CanComposeFromMessage}" />
+                            <Button Name="ReplyAllButton" Classes="quiet" Margin="0,0,8,8" Content="{x:Static ui:Strings.ReplyAll}" IsEnabled="{Binding CanReplyAll}" />
+                            <Button Name="ForwardButton" Classes="quiet" Margin="0,0,8,8" Content="{x:Static ui:Strings.Forward}" IsEnabled="{Binding CanComposeFromMessage}" />
+                            <Button Classes="quiet" Margin="0,0,8,8" Content="{Binding ReadAction}" Command="{Binding ReadCommand}" />
+                            <Button Classes="quiet" Margin="0,0,8,8" Content="{x:Static ui:Strings.Trash}" Command="{Binding TrashCommand}" />
+                        </UniformGrid>
+                        <Expander Classes="quiet" Header="{x:Static ui:Strings.MessageActions}">
+                            <StackPanel Spacing="8">
+                                <WrapPanel>
+                                    <Button Content="{x:Static ui:Strings.Retrieve}" Command="{Binding RetrieveCommand}" />
+                                    <Button Content="{x:Static ui:Strings.Flag}" Command="{Binding FlagCommand}" />
+                                    <Button Content="{x:Static ui:Strings.Archive}" Command="{Binding ArchiveCommand}" />
+                                    <Button Name="MoveButton" Content="{x:Static ui:Strings.Move}" IsEnabled="{Binding CanMove}" />
+                                    <Button Name="HtmlButton" Content="{x:Static ui:Strings.HtmlRead}" IsEnabled="False" />
+                                    <Button Name="CheckEmptyAttachmentsButton" Content="{x:Static ui:Strings.CheckAttachments}" />
+                                    <Button Name="ImagesButton" Content="{x:Static ui:Strings.LoadImages}" IsEnabled="False" />
+                                </WrapPanel>
+                                <TextBlock Text="{Binding MoveSupport}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Expander>
+                        <TextBlock Text="{Binding ReaderSubject}" FontWeight="Bold" FontSize="{DynamicResource SubjectFontSize}" TextWrapping="Wrap" Margin="0,16,0,8" />
+                        <Grid ColumnDefinitions="44,*">
+                            <Border Width="36" Height="36" CornerRadius="18" Background="{DynamicResource MailSelectionBrush}">
+                                <TextBlock Text="{Binding ReaderInitials}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <TextBlock Grid.Column="1" Text="{Binding ReaderSender}" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        </Grid>
+                        <TextBlock Text="{Binding ReaderDate}" Classes="caption" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding ReaderAccount}" Classes="caption" TextWrapping="Wrap" />
+                        <Expander Header="{x:Static ui:Strings.Recipients}">
+                            <TextBlock Text="{Binding ReaderRecipients}" TextWrapping="Wrap" />
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
+                <StackPanel DockPanel.Dock="Bottom" Margin="24,8" Spacing="8">
+                    <ScrollViewer IsVisible="{Binding HasAttachments}" Name="ReaderAttachmentScroll" MaxHeight="180" HorizontalScrollBarVisibility="Disabled">
+                        <Expander Name="ReaderAttachments" Header="{Binding AttachmentHeading}" IsExpanded="True" MaxHeight="240">
+                            <ScrollViewer>
+                                <StackPanel Spacing="8">
+                                    <ListBox Name="AttachmentList" Classes="mail" ItemsSource="{Binding Attachments}" MaxHeight="140" AutomationProperties.Name="{x:Static ui:Strings.Attach}">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate x:DataType="core:AttachmentSnapshot">
+                                                <Border Classes="card" Margin="0,0,8,8" MaxWidth="280">
+                                                    <StackPanel Spacing="4">
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                        <TextBlock Text="{Binding MediaType}" Classes="caption" TextWrapping="Wrap" />
+                                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                                            <TextBlock Text="{Binding Length, StringFormat='{}{0:N0}'}" Classes="caption" />
+                                                            <TextBlock Text="{x:Static ui:Strings.Bytes}" Classes="caption" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <WrapPanel>
+                                        <Button Name="SaveAttachmentButton" Content="{x:Static ui:Strings.Destination}" />
+                                        <Button Name="CheckAttachmentsButton" Content="{x:Static ui:Strings.CheckAttachments}" />
+                                    </WrapPanel>
                                 </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
+                            </ScrollViewer>
+                        </Expander>
+                    </ScrollViewer>
+                    <WrapPanel Name="ReaderReplyActions">
+                        <Button Name="BottomReplyButton" Content="{x:Static ui:Strings.Reply}" Classes="quiet" IsEnabled="{Binding CanComposeFromMessage}" />
+                        <Button Name="BottomReplyAllButton" Content="{x:Static ui:Strings.ReplyAll}" Classes="pill" IsEnabled="{Binding CanReplyAll}" />
+                        <Button Name="BottomForwardButton" Content="{x:Static ui:Strings.Forward}" Classes="pill" IsEnabled="{Binding CanComposeFromMessage}" />
+                    </WrapPanel>
                 </StackPanel>
-                <Grid>
-                    <TextBox
+                <Grid Margin="24,8">
+                    <ScrollViewer Name="PlainPreviewScroll" HorizontalScrollBarVisibility="Disabled">
+                    <SelectableTextBlock
                         Name="PlainPreview"
                         Text="{Binding Body}"
-                        IsReadOnly="True"
-                        AcceptsReturn="True"
+                        Focusable="True"
                         TextWrapping="Wrap"
                         AutomationProperties.Name="{x:Static ui:Strings.Preview}" />
+                    </ScrollViewer>
                     <ContentControl Name="HtmlSurface" IsVisible="False" />
                 </Grid>
             </DockPanel>

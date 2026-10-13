@@ -1,6 +1,6 @@
 using SkiaSharp;
 
-namespace Postfold.Desktop.Diagnostics;
+namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 internal static class QualificationImage
 {

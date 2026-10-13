@@ -4,7 +4,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Postfold.Desktop.Diagnostics;
+namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 /// <summary>In-process authored responses for native reader integration; never opens a socket.</summary>
 internal sealed class QualificationImageTransport : HttpMessageHandler

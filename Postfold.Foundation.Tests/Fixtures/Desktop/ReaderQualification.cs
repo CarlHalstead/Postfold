@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 
-namespace Postfold.Desktop.Diagnostics;
+namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 /// <summary>Measures the real reader in its own process, without raw renderer stress-fixture allocations.</summary>
 public static class ReaderQualification

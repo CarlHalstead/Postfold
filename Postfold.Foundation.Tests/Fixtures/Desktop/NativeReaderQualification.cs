@@ -17,7 +17,7 @@ using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Postfold.Desktop.Diagnostics;
+namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 internal static class NativeReaderQualification
 {

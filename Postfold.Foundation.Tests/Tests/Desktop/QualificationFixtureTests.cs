@@ -11,10 +11,10 @@ using Postfold.Core.Models.Mime;
 using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.Desktop.Composition;
-using Postfold.Desktop.Diagnostics;
 using Postfold.Desktop.Services;
 using Postfold.Desktop.Stores;
 using Postfold.Engine.Tests.Fixtures;
+using Postfold.Foundation.Tests.Fixtures.Desktop;
 using System;
 using System.Collections.Immutable;
 using System.IO;
@@ -26,6 +26,34 @@ namespace Postfold.Foundation.Tests.Tests.Desktop;
 
 public sealed class QualificationFixtureTests
 {
+    [Test]
+    public async Task SeedDesignFixtureAsync_WhenNoAttachmentMessageIsRead_ContainsPlainTextWithoutAttachmentMetadata()
+    {
+        // Arrange
+        EngineLimits limits = new EngineLimits(2, 16, 1, 10, 1048576, 50, 0, 0, 10485760);
+        await using DesktopMailRuntime host = (await DesktopMailRuntime.OpenAsync(
+            EngineFixture.DirectoryPath(),
+            new EnginePolicy(false, false, false),
+            TimeProvider.System,
+            limits,
+            CancellationToken.None
+        )).Value!;
+        await host.SeedSyntheticAsync(8, CancellationToken.None);
+
+        // Act
+        await host.SeedDesignFixtureAsync(CancellationToken.None);
+        SearchPage page = (await host.Application.SearchAsync(new SearchRequest(
+            new AccountId(1), false, "", null, false, 8
+        ), CancellationToken.None)).Value!;
+        MessageSnapshot message = System.Linq.Enumerable.Single(page.Messages, item => item.Subject == "Lunch next week?");
+        MimeSnapshot content = (await host.Application.ReadAsync(message, false, CancellationToken.None)).Value!;
+
+        // Assert
+        Assert.That(content.PlainText, Does.Contain("meet for lunch"));
+        Assert.That(content.Attachments, Is.Empty);
+        Assert.That(message.HasKnownAttachments, Is.False);
+    }
+
     [Test]
     public void Capture_WhenRunningOnWindows_IncludesCurrentProcessAndReadsPrivateMemoryAndCpu()
     {

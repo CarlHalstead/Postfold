@@ -21,6 +21,106 @@ namespace Postfold.Foundation.Tests.Tests.Accounts;
 public sealed class AccountSetupWindowTests
 {
     [AvaloniaTest]
+    public void TestEndpoints_WhenSharedCredentialsAreSubmitted_UsesEmailNameAndSecureStorage()
+    {
+        // Arrange
+        IAccountSetup setup = Substitute.For<IAccountSetup>();
+        setup.AddAsync(Arg.Any<AccountSetupRequest>(), Arg.Any<CancellationToken>()).Returns(
+            new AccountSetupResult(Failure.None, Failure.NeedsAuthentication, Failure.None, [])
+        );
+        AccountSetupWindow window = new AccountSetupWindow(setup);
+        window.Show();
+        try
+        {
+            Control<TextBox>(window, "Email").Text = "owner@synthetic.invalid";
+            Control<TextBox>(window, "IncomingPassword").Text = "synthetic-secret";
+            Click(window, "ContinueServers");
+            Control<TextBox>(window, "IncomingHost").Text = "mail.synthetic.invalid";
+            Control<TextBox>(window, "OutgoingHost").Text = "mail.synthetic.invalid";
+
+            // Act
+            Click(window, "TestEndpoints");
+
+            // Assert
+            setup.Received(1).AddAsync(Arg.Is<AccountSetupRequest>(request =>
+                request.Name == "owner@synthetic.invalid" && !request.SessionOnly && request.Incoming.Username == "owner@synthetic.invalid" &&
+                request.Outgoing.Username == "owner@synthetic.invalid" && request.Incoming.Port == 993 &&
+                request.Outgoing.Port == 465 && request.Incoming.Tls == TlsMode.Implicit &&
+                request.Outgoing.Tls == TlsMode.Implicit), Arg.Any<CancellationToken>());
+            Assert.That(
+                Control<TextBlock>(window, "SetupStatus").Text,
+                Does.Contain("IMAP: " + Strings.Describe(Failure.NeedsAuthentication))
+            );
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public void TestEndpoints_WhenSharedLoginIsEditedBeforeSubmission_UsesCurrentLoginAndDistinctSender()
+    {
+        // Arrange
+        IAccountSetup setup = Substitute.For<IAccountSetup>();
+        setup.AddAsync(Arg.Any<AccountSetupRequest>(), Arg.Any<CancellationToken>()).Returns(
+            new AccountSetupResult(Failure.None, Failure.NeedsAuthentication, Failure.None, [])
+        );
+        AccountSetupWindow window = new AccountSetupWindow(setup);
+        window.Show();
+        try
+        {
+            Control<Expander>(window, "ReceivingLoginOptions").IsExpanded = true;
+            Control<TextBox>(window, "Email").Text = "sender@synthetic.invalid";
+            Control<TextBox>(window, "IncomingUsername").Text = "original-login";
+            Control<TextBox>(window, "IncomingPassword").Text = "original-secret";
+            Control<TextBox>(window, "IncomingUsername").Text = "latest-login";
+            Control<TextBox>(window, "IncomingPassword").Text = "latest-secret";
+
+            // Act
+            Click(window, "ContinueServers");
+            Click(window, "TestEndpoints");
+
+            // Assert
+            setup.Received(1).AddAsync(Arg.Is<AccountSetupRequest>(request =>
+                request.Sender == "sender@synthetic.invalid" && request.Incoming.Username == "latest-login" &&
+                request.Outgoing.Username == "latest-login" && request.IncomingPassword == "latest-secret" &&
+                request.OutgoingPassword == "latest-secret"), Arg.Any<CancellationToken>());
+            Assert.That(Control<TextBox>(window, "IncomingPassword").Text, Is.Empty);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public void Setup_WhenOpened_OffersOnlySharedCredentialsAndNoAccountNameOrStorageChoice()
+    {
+        // Arrange
+        AccountSetupWindow window = new AccountSetupWindow(Substitute.For<IAccountSetup>());
+        window.Show();
+        try
+        {
+            // Act
+            window.UpdateLayout();
+            string?[] names = window.GetVisualDescendants().OfType<Control>().Select(control => control.Name).ToArray();
+
+            // Assert
+            Assert.That(names, Does.Not.Contain("Name"));
+            Assert.That(names, Does.Not.Contain("SessionOnly"));
+            Assert.That(names, Does.Not.Contain("SharedCredentials"));
+            Assert.That(names, Does.Not.Contain("OutgoingPassword"));
+            Assert.That(names, Does.Not.Contain("OutgoingUsername"));
+            Assert.That(names, Does.Contain("IncomingPassword"));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
     [TestCase(Failure.Validation)]
     [TestCase(Failure.TlsRejected)]
     [TestCase(Failure.NeedsAuthentication)]
@@ -36,6 +136,9 @@ public sealed class AccountSetupWindowTests
         );
         AccountSetupWindow window = new AccountSetupWindow(setup);
         window.Show();
+        Control<Expander>(window, "ReceivingLoginOptions").IsExpanded = true;
+        Control<TextBox>(window, "Email").Text = "owner@synthetic.invalid";
+        Control<TextBox>(window, "IncomingPassword").Text = "synthetic-secret";
         try
         {
             // Act
@@ -61,6 +164,9 @@ public sealed class AccountSetupWindowTests
         IAccountSetup setup = Substitute.For<IAccountSetup>();
         AccountSetupWindow window = new AccountSetupWindow(setup);
         window.Show();
+        Control<Expander>(window, "ReceivingLoginOptions").IsExpanded = true;
+        Control<TextBox>(window, "Email").Text = "owner@synthetic.invalid";
+        Control<TextBox>(window, "IncomingPassword").Text = "synthetic-secret";
         try
         {
             Control<TextBox>(window, "IncomingPort").Text = "invalid";
@@ -95,18 +201,17 @@ public sealed class AccountSetupWindowTests
         ));
         AccountSetupWindow window = new AccountSetupWindow(setup);
         window.Show();
+        Control<Expander>(window, "ReceivingLoginOptions").IsExpanded = true;
+        Control<TextBox>(window, "Email").Text = "owner@synthetic.invalid";
+        Control<TextBox>(window, "IncomingPassword").Text = "synthetic-secret";
         try
         {
-            Control<TextBox>(window, "Name").Text = "Synthetic";
             Control<TextBox>(window, "IncomingHost").Text = "incoming.synthetic.invalid";
             Control<TextBox>(window, "IncomingUsername").Text = "reader";
             Control<TextBox>(window, "IncomingPassword").Text = "read-secret";
             Control<ComboBox>(window, "IncomingTls").SelectedItem = TlsMode.RequiredStartTls;
             Control<TextBox>(window, "OutgoingHost").Text = "outgoing.synthetic.invalid";
             Control<TextBox>(window, "OutgoingPort").Text = "587";
-            Control<TextBox>(window, "OutgoingUsername").Text = "sender";
-            Control<TextBox>(window, "OutgoingPassword").Text = "send-secret";
-            Control<CheckBox>(window, "SessionOnly").IsChecked = true;
 
             // Act
             Click(window, "TestEndpoints");
@@ -115,11 +220,10 @@ public sealed class AccountSetupWindowTests
             setup.Received(1).AddAsync(Arg.Is<AccountSetupRequest>(request =>
                 request.Incoming.Host == "incoming.synthetic.invalid" && request.Incoming.Username == "reader" &&
                 request.Incoming.Tls == TlsMode.RequiredStartTls && request.Incoming.Port == 993 &&
-                request.Outgoing.Host == "outgoing.synthetic.invalid" && request.Outgoing.Username == "sender" &&
+                request.Outgoing.Host == "outgoing.synthetic.invalid" && request.Outgoing.Username == "reader" &&
                 request.Outgoing.Port == 587 && request.IncomingPassword == "read-secret" &&
-                request.OutgoingPassword == "send-secret" && request.SessionOnly), Arg.Any<CancellationToken>());
+                request.OutgoingPassword == "read-secret" && !request.SessionOnly), Arg.Any<CancellationToken>());
             Assert.That(Control<TextBox>(window, "IncomingPassword").Text, Is.Empty);
-            Assert.That(Control<TextBox>(window, "OutgoingPassword").Text, Is.Empty);
             string diagnostic = Control<TextBlock>(window, "SetupStatus").Text!;
             Assert.That(diagnostic, Does.Contain(Strings.Describe(Failure.CredentialStorageUnavailable)));
             Assert.That(diagnostic, Does.Contain("IMAP: " + Strings.Describe(Failure.TlsRejected)));
@@ -168,6 +272,9 @@ public sealed class AccountSetupWindowTests
         );
         AccountSetupWindow window = new AccountSetupWindow(setup);
         window.Show();
+        Control<Expander>(window, "ReceivingLoginOptions").IsExpanded = true;
+        Control<TextBox>(window, "Email").Text = "owner@synthetic.invalid";
+        Control<TextBox>(window, "IncomingPassword").Text = "synthetic-secret";
         try
         {
             Click(window, "TestEndpoints");
@@ -176,6 +283,7 @@ public sealed class AccountSetupWindowTests
             Click(window, "SaveRoles");
 
             // Act
+            Control<TextBox>(window, "IncomingPassword").Text = "synthetic-secret";
             Click(window, "TestEndpoints");
 
             // Assert
@@ -210,6 +318,9 @@ public sealed class AccountSetupWindowTests
         });
         AccountSetupWindow window = new AccountSetupWindow(setup);
         window.Show();
+        Control<Expander>(window, "ReceivingLoginOptions").IsExpanded = true;
+        Control<TextBox>(window, "Email").Text = "owner@synthetic.invalid";
+        Control<TextBox>(window, "IncomingPassword").Text = "synthetic-secret";
         Control<TextBox>(window, "IncomingPassword").Text = "synthetic-secret";
         Click(window, "TestEndpoints");
 
@@ -230,6 +341,7 @@ public sealed class AccountSetupWindowTests
 
     private static TControl Control<TControl>(Window window, string name) where TControl : Avalonia.Controls.Control
     {
+        window.UpdateLayout();
         return window.GetVisualDescendants().OfType<TControl>().Single(control => control.Name == name);
     }
 
