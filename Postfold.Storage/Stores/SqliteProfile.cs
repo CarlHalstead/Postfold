@@ -47,10 +47,67 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
 
     public IBlobStore Blobs => _blobs;
 
+    public Task<AccountId> NextAccountIdAsync(CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection => new AccountId(Convert.ToInt64(
+            Scalar(connection, null, "SELECT COALESCE(MAX(AccountId),0)+1 FROM Accounts;"),
+            CultureInfo.InvariantCulture
+        )), cancellationToken);
+    }
+
+    /// <summary>Retains local data and credential references; refuses to hide durable work needing a decision.</summary>
+    public Task<Failure> DeactivateAccountAsync(AccountId account, CancellationToken cancellationToken)
+    {
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            if (Convert.ToInt64(Scalar(connection, transaction,
+                "SELECT COUNT(*) FROM Accounts WHERE AccountId=$a AND Active=1;", ("$a", account.Value)),
+                CultureInfo.InvariantCulture) == 0)
+            {
+                return Failure.NotFound;
+            }
+            long protectedWork = Convert.ToInt64(Scalar(connection, transaction, """
+                SELECT (SELECT COUNT(*) FROM Drafts WHERE AccountId=$a)
+                    + (SELECT COUNT(*) FROM OutboxSubmissions WHERE AccountId=$a AND State NOT IN($done,$cancelled))
+                    + (SELECT COUNT(*) FROM PendingOperations WHERE AccountId=$a AND State NOT IN($finished,$dismissed));
+                """, ("$a", account.Value), ("$done", (int)SubmissionState.Completed),
+                ("$cancelled", (int)SubmissionState.Cancelled), ("$finished", (int)PendingState.Completed),
+                ("$dismissed", (int)PendingState.Dismissed)), CultureInfo.InvariantCulture);
+            if (protectedWork > 0)
+            {
+                return Failure.NeedsReview;
+            }
+            Execute(connection, transaction, "UPDATE Accounts SET Active=0 WHERE AccountId=$a;", ("$a", account.Value));
+            transaction.Commit();
+            return Failure.None;
+        }, cancellationToken);
+    }
+
+    /// <summary>Changes only the active account's local label.</summary>
+    public Task<Failure> RenameAccountAsync(AccountId account, string name, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 200 || name.Any(char.IsControl))
+        {
+            return Task.FromResult(Failure.Validation);
+        }
+        return WriteAsync(connection =>
+        {
+            using SqliteCommand command = Command(
+                connection,
+                null,
+                "UPDATE Accounts SET DisplayName=$name WHERE AccountId=$a AND Active=1;",
+                ("$name", name.Trim()),
+                ("$a", account.Value)
+            );
+            return command.ExecuteNonQuery() == 1 ? Failure.None : Failure.NotFound;
+        }, cancellationToken);
+    }
+
     public Task<long> CachedMessageCountAsync(CancellationToken cancellationToken)
     {
         return ReadAsync(connection => Convert.ToInt64(
-            Scalar(connection, null, "SELECT COUNT(*) FROM Messages;"),
+            Scalar(connection, null, "SELECT COUNT(*) FROM Messages m JOIN Accounts a ON a.AccountId=m.AccountId WHERE a.Active=1;"),
             CultureInfo.InvariantCulture
         ), cancellationToken);
     }
@@ -259,8 +316,8 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             using SqliteCommand command = Command(
                 connection,
                 null,
-                "SELECT AccountId,FolderId,RemoteKey,Name,Role,Selectable,Writable,UidValidity FROM Collections " +
-                "ORDER BY AccountId,Name;"
+                "SELECT c.AccountId,c.FolderId,c.RemoteKey,c.Name,c.Role,c.Selectable,c.Writable,c.UidValidity FROM Collections c " +
+                "JOIN Accounts a ON a.AccountId=c.AccountId WHERE a.Active=1 ORDER BY c.AccountId,c.Name;"
             );
             using SqliteDataReader reader = command.ExecuteReader();
             ImmutableArray<MailboxSnapshot>.Builder mailboxes = ImmutableArray.CreateBuilder<MailboxSnapshot>();
@@ -1136,10 +1193,16 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         return ReadAsync(connection =>
         {
             string sql = """
-                SELECT m.*,c.RemoteKey,i.UidValidity,i.Uid FROM Messages m
+                SELECT m.*,c.RemoteKey,i.UidValidity,i.Uid,
+                    (SELECT substr(s.Body,1,200) FROM SearchText s WHERE s.rowid=m.MessageId) AS CachedPreview,
+                    EXISTS(SELECT 1 FROM Attachments a WHERE a.AccountId=m.AccountId AND a.MessageId=m.MessageId)
+                FROM Messages m
+                JOIN Accounts active ON active.AccountId=m.AccountId AND active.Active=1
                 LEFT JOIN ImapInstances i ON i.AccountId=m.AccountId AND i.MessageId=m.MessageId
                 LEFT JOIN Collections c ON c.AccountId=i.AccountId AND c.FolderId=i.FolderId
                 WHERE ($a IS NULL OR m.AccountId=$a) AND ($u=0 OR m.IsRead=0)
+                AND ($attachments=0 OR EXISTS(SELECT 1 FROM Attachments a
+                    WHERE a.AccountId=m.AccountId AND a.MessageId=m.MessageId))
                 AND (i.UidValidity IS NULL OR i.UidValidity=c.UidValidity)
                 AND EXISTS(SELECT 1 FROM Memberships x WHERE x.AccountId=m.AccountId AND x.MessageId=m.MessageId
                     AND ($f IS NULL OR x.FolderId=$f)
@@ -1159,6 +1222,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 sql,
                 ("$a", request.Account?.Value),
                 ("$u", request.UnreadOnly),
+                ("$attachments", request.KnownAttachmentsOnly),
                 ("$f", request.Folder?.Value),
                 ("$d", date),
                 ("$i", id),
@@ -2211,7 +2275,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             reader.GetBoolean(9),
             (ContentAvailability)reader.GetInt32(10),
             (PendingState)reader.GetInt32(11),
-            reader.IsDBNull(12) ? null : reader.GetString(12)
+            reader.IsDBNull(12) ? null : reader.GetString(12),
+            reader.IsDBNull(16) ? null : reader.GetString(16).Replace('\r', ' ').Replace('\n', ' '),
+            reader.GetBoolean(17)
         );
     }
 

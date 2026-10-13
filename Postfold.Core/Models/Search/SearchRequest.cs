@@ -11,5 +11,6 @@ public sealed record SearchRequest(
     bool UnreadOnly,
     int Limit,
     string? Continuation = null,
-    bool InboxOnly = false
+    bool InboxOnly = false,
+    bool KnownAttachmentsOnly = false
 );

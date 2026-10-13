@@ -17,5 +17,7 @@ public sealed record MessageSnapshot(
     bool Flagged,
     ContentAvailability Availability,
     PendingState Pending,
-    string? NativeThreadId = null
+    string? NativeThreadId = null,
+    string? CachedPreview = null,
+    bool HasKnownAttachments = false
 );

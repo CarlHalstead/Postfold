@@ -106,10 +106,12 @@ public sealed class MailAccountEngine : IMailAccountEngine
 
     public async Task<Failure> ReconcileAsync(string mailbox, CancellationToken cancellationToken)
     {
-        if (!_policy.AllowNetwork)
+        if (_stopping || !_policy.AllowNetwork)
         {
             return Failure.Unavailable;
         }
+        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
+        cancellationToken = linked.Token;
 
         MailboxSnapshot? selected = Mailboxes.SingleOrDefault(item => item.RemoteKey == mailbox && item.Selectable);
         if (selected is null)
@@ -371,7 +373,7 @@ public sealed class MailAccountEngine : IMailAccountEngine
 
     public Task<Failure> ProcessOutboxAsync(CancellationToken cancellationToken)
     {
-        if (!_policy.AllowNetwork)
+        if (_stopping || !_policy.AllowNetwork)
         {
             return Task.FromResult(Failure.Unavailable);
         }
@@ -386,7 +388,7 @@ public sealed class MailAccountEngine : IMailAccountEngine
 
     public Task<Failure> StoreSentCopyAsync(Guid submission, CancellationToken cancellationToken)
     {
-        if (_sent is null || !_policy.AllowNetwork)
+        if (_stopping || _sent is null || !_policy.AllowNetwork)
         {
             return Task.FromResult(Failure.Unavailable);
         }

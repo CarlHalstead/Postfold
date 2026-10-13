@@ -14,6 +14,44 @@ namespace Postfold.Engine.Tests.Tests.Scheduling;
 public sealed class SchedulerTests
 {
     [Test]
+    public async Task SuspendAsync_WhenAccountHasRunningAndQueuedWork_StopsOnlyThatAccountAndCanResume()
+    {
+        // Arrange
+        IWorkPolicy policy = Substitute.For<IWorkPolicy>();
+        IRetryDelayPolicy retry = Substitute.For<IRetryDelayPolicy>();
+        await using AccountScheduler scheduler = new AccountScheduler(2, 10, 1, TimeProvider.System, policy, retry);
+        AccountId account = new AccountId(1);
+        TaskCompletionSource<bool> started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IAccountWork slow = Substitute.For<IAccountWork>();
+        slow.RunAsync(Arg.Any<CancellationToken>()).Returns(async call =>
+        {
+            started.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+            return Failure.None;
+        });
+        IAccountWork queued = Substitute.For<IAccountWork>();
+        queued.RunAsync(Arg.Any<CancellationToken>()).Returns(Failure.None);
+        Task<Failure> active = scheduler.EnqueueAsync(account, slow, WorkPriority.Reconciliation, CancellationToken.None);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Task<Failure> waiting = scheduler.EnqueueAsync(account, queued, WorkPriority.Interactive, CancellationToken.None);
+
+        // Act
+        await scheduler.SuspendAsync(account).WaitAsync(TimeSpan.FromSeconds(10));
+        Failure blocked = await scheduler.EnqueueAsync(account, queued, WorkPriority.Interactive, CancellationToken.None);
+        Failure other = await scheduler.EnqueueAsync(new AccountId(2), queued, WorkPriority.Interactive, CancellationToken.None);
+        scheduler.Resume(account);
+        Failure resumed = await scheduler.EnqueueAsync(account, queued, WorkPriority.Interactive, CancellationToken.None);
+
+        // Assert
+        Assert.That(active.IsCanceled, Is.True);
+        Assert.That(await waiting, Is.EqualTo(Failure.Unavailable));
+        Assert.That(blocked, Is.EqualTo(Failure.Unavailable));
+        Assert.That(other, Is.EqualTo(Failure.None));
+        Assert.That(resumed, Is.EqualTo(Failure.None));
+        await queued.Received(2).RunAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Test]
     public async Task EnqueueAsync_WhenTransientFailureHasDeadline_RetriesOnlyAtInjectedTime()
     {
         // Arrange

@@ -18,6 +18,9 @@ public sealed class AccountScheduler : IAccountScheduler
     private readonly Queue<AccountId> _turns = new Queue<AccountId>();
     private readonly HashSet<AccountId> _active = new HashSet<AccountId>();
     private readonly List<Task> _running = new List<Task>();
+    private readonly Dictionary<AccountId, Task> _accountTasks = new Dictionary<AccountId, Task>();
+    private readonly Dictionary<AccountId, CancellationTokenSource> _accountStops = new Dictionary<AccountId, CancellationTokenSource>();
+    private readonly HashSet<AccountId> _suspended = new HashSet<AccountId>();
     private readonly Channel<byte> _signal = Channel.CreateBounded<byte>(
         new BoundedChannelOptions(1)
         {
@@ -71,6 +74,14 @@ public sealed class AccountScheduler : IAccountScheduler
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_stopping, this);
+            if (_suspended.Contains(account))
+            {
+                return Task.FromResult(Failure.Unavailable);
+            }
+            if (!_accountStops.ContainsKey(account))
+            {
+                _accountStops.Add(account, new CancellationTokenSource());
+            }
             if (_count >= _queueLimit)
             {
                 return Task.FromResult(Failure.Unavailable);
@@ -91,6 +102,44 @@ public sealed class AccountScheduler : IAccountScheduler
         return completion.Task;
     }
 
+    /// <summary>Stops new work, cancels queued/running work and observes this account before disconnecting it.</summary>
+    public async Task SuspendAsync(AccountId account)
+    {
+        Task running;
+        CancellationTokenSource? stop;
+        lock (_gate)
+        {
+            _suspended.Add(account);
+            _accountStops.TryGetValue(account, out stop);
+            if (_queues.TryGetValue(account, out List<ScheduledWork>? queue))
+            {
+                foreach (ScheduledWork work in queue)
+                {
+                    work.Completion.TrySetResult(Failure.Unavailable);
+                }
+                _count -= queue.Count;
+                queue.Clear();
+            }
+            running = _accountTasks.GetValueOrDefault(account) ?? Task.CompletedTask;
+        }
+        if (stop is not null)
+        {
+            await stop.CancelAsync().ConfigureAwait(false);
+        }
+        await running.ConfigureAwait(false);
+    }
+
+    public void Resume(AccountId account)
+    {
+        lock (_gate)
+        {
+            if (_suspended.Remove(account) && _accountStops.Remove(account, out CancellationTokenSource? previous))
+            {
+                previous.Dispose();
+            }
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         bool cancel;
@@ -107,6 +156,10 @@ public sealed class AccountScheduler : IAccountScheduler
         }
 
         await _pump.ConfigureAwait(false);
+        foreach (CancellationTokenSource stop in _accountStops.Values)
+        {
+            stop.Dispose();
+        }
     }
 
     private async Task PumpAsync()
@@ -150,7 +203,10 @@ public sealed class AccountScheduler : IAccountScheduler
 
                     foreach (ScheduledWork work in ready)
                     {
-                        _running.Add(Task.Run(() => RunAsync(work)));
+                        CancellationToken stop = _accountStops[work.Account].Token;
+                        Task task = Task.Run(() => RunAsync(work, stop));
+                        _running.Add(task);
+                        _accountTasks[work.Account] = task;
                     }
                 }
             }
@@ -176,11 +232,12 @@ public sealed class AccountScheduler : IAccountScheduler
         }
     }
 
-    private async Task RunAsync(ScheduledWork work)
+    private async Task RunAsync(ScheduledWork work, CancellationToken accountStop)
     {
         using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(
             _shutdown.Token,
-            work.Cancellation
+            work.Cancellation,
+            accountStop
         );
         try
         {

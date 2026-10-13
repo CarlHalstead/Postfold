@@ -10,5 +10,8 @@ public sealed record MimeSnapshot(
     string? PlainText,
     string? Html,
     ImmutableArray<AttachmentSnapshot> Attachments,
-    ImmutableArray<string> ReplyRecipients = default
+    ImmutableArray<string> ReplyRecipients = default,
+    ImmutableArray<string> ToRecipients = default,
+    ImmutableArray<string> CcRecipients = default,
+    bool RecipientHeadersComplete = true
 );

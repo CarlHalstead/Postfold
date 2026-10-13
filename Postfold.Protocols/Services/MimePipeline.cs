@@ -77,6 +77,8 @@ public sealed class MimePipeline : IMimePipeline, IMimeDraftReader, IMimeDraftWr
 
             InternetAddressList reply = message.ReplyTo.Count > 0 ? message.ReplyTo : message.From;
             ImmutableArray<string> replyRecipients = reply.Mailboxes.Select(item => item.Address).Take(101).ToImmutableArray();
+            ImmutableArray<string> toRecipients = message.To.Mailboxes.Select(item => item.Address).Take(101).ToImmutableArray();
+            ImmutableArray<string> ccRecipients = message.Cc.Mailboxes.Select(item => item.Address).Take(101).ToImmutableArray();
             if (replyRecipients.Length > 100)
             {
                 return Outcome<MimeSnapshot>.Fail(Failure.Validation);
@@ -89,7 +91,10 @@ public sealed class MimePipeline : IMimePipeline, IMimeDraftReader, IMimeDraftWr
                 message.TextBody,
                 message.HtmlBody,
                 attachments.ToImmutable(),
-                replyRecipients
+                replyRecipients,
+                toRecipients.Take(100).ToImmutableArray(),
+                ccRecipients.Take(Math.Max(0, 100 - Math.Min(100, toRecipients.Length))).ToImmutableArray(),
+                toRecipients.Length + ccRecipients.Length <= 100
             ));
         }
         catch (Exception exception) when (exception is FormatException or InvalidDataException)

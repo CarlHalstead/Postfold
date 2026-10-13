@@ -303,6 +303,49 @@ public sealed class StorageTests
     }
 
     [Test]
+    public async Task SearchAsync_WhenKnownAttachmentsAreFiltered_AppliesBeforePagingAndBoundsCachedPreview()
+    {
+        // Arrange
+        await using SqliteProfile profile = await EngineFixture.OpenAsync(EngineFixture.DirectoryPath());
+        await profile.CommitAsync(EngineFixture.Mailbox(), EngineFixture.Page([
+            EngineFixture.Message(1), EngineFixture.Message(2), EngineFixture.Message(3)
+        ]), CancellationToken.None);
+        SearchRequest all = new SearchRequest(EngineFixture.Account, false, "", null, false, 10);
+        MessageSnapshot[] messages = (await profile.SearchAsync(all, CancellationToken.None)).Value!.Messages.ToArray();
+        foreach (MessageSnapshot message in messages.Skip(1))
+        {
+            await profile.StoreAttachmentsAsync(message, [new AttachmentSnapshot("1", "safe.txt", "text/plain", 3)], CancellationToken.None);
+        }
+        BlobReference body = await EngineFixture.BlobAsync(profile, "synthetic", protect: false);
+        await profile.StoreBodyAsync(messages[1].Account, messages[1].Id, body, new string('x', 500), CancellationToken.None);
+        SearchRequest filtered = all with
+        {
+            Limit = 1,
+            KnownAttachmentsOnly = true
+        };
+
+        // Act
+        SearchPage first = (await profile.SearchAsync(filtered, CancellationToken.None)).Value!;
+        SearchPage second = (await profile.SearchAsync(filtered with
+        {
+            Continuation = first.Continuation
+        }, CancellationToken.None)).Value!;
+        Outcome<SearchPage> wrongFilter = await profile.SearchAsync(filtered with
+        {
+            KnownAttachmentsOnly = false,
+            Continuation = first.Continuation
+        }, CancellationToken.None);
+
+        // Assert
+        Assert.That(first.Messages.Single().Id, Is.EqualTo(messages[1].Id));
+        Assert.That(first.Messages.Single().HasKnownAttachments, Is.True);
+        Assert.That(first.Messages.Single().CachedPreview, Has.Length.EqualTo(200));
+        Assert.That(second.Messages.Single().Id, Is.EqualTo(messages[2].Id));
+        Assert.That(second.Continuation, Is.Null);
+        Assert.That(wrongFilter.Failure, Is.EqualTo(Failure.Validation));
+    }
+
+    [Test]
     public async Task SaveAsync_WhenNewLocalRevisionAndRemoteConflictArrive_PreservesAllVersions()
     {
         // Arrange

@@ -3,6 +3,7 @@ using Postfold.Core.Models;
 using Postfold.Core.Models.Mime;
 using Postfold.Protocols.Services;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,6 +12,26 @@ namespace Postfold.Foundation.Tests.Tests.Mime;
 
 public sealed class ReplyAddressTests
 {
+    [Test]
+    public async Task ParseAsync_WhenRecipientHeadersExceedDisplayBound_PreservesBodyAndReportsIncompleteHeaders()
+    {
+        // Arrange
+        string text = "From: sender@synthetic.invalid\r\nTo: " + string.Join(",", Enumerable.Range(0, 101)
+            .Select(index => "recipient" + index + "@synthetic.invalid")) +
+            "\r\nSubject: Large recipient list\r\nContent-Type: text/plain\r\n\r\nReadable body\r\n";
+        using MemoryStream source = new MemoryStream(Encoding.UTF8.GetBytes(text));
+        MimePipeline mime = new MimePipeline(1048576, 100);
+
+        // Act
+        Outcome<MimeSnapshot> result = await mime.ParseAsync(source, CancellationToken.None);
+
+        // Assert
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.That(result.Value!.PlainText, Does.Contain("Readable body"));
+        Assert.That(result.Value.RecipientHeadersComplete, Is.False);
+        Assert.That(result.Value.ToRecipients, Has.Length.EqualTo(100));
+    }
+
     [Test]
     [TestCase("Reply-To: Reply target <reply@synthetic.invalid>\r\n", "reply@synthetic.invalid")]
     [TestCase("", "sender@synthetic.invalid")]
@@ -21,6 +42,8 @@ public sealed class ReplyAddressTests
     {
         // Arrange
         string text = "From: Displayed sender <sender@synthetic.invalid>\r\n" + replyHeader +
+            "To: Recipient <to@synthetic.invalid>\r\nCc: Copy <cc@synthetic.invalid>\r\n" +
+            "Bcc: Hidden <hidden@synthetic.invalid>\r\n" +
             "Subject: Reply fixture\r\nContent-Type: text/plain\r\n\r\nQuoted text\r\n";
         using MemoryStream source = new MemoryStream(Encoding.UTF8.GetBytes(text));
         MimePipeline mime = new MimePipeline(1048576, 100);
@@ -32,5 +55,7 @@ public sealed class ReplyAddressTests
         Assert.That(result.IsSuccess, Is.True);
         Assert.That(result.Value!.ReplyRecipients, Is.EqualTo(new[] { expected }));
         Assert.That(result.Value.Participants, Does.Contain("Displayed sender"));
+        Assert.That(result.Value.ToRecipients, Is.EqualTo(new[] { "to@synthetic.invalid" }));
+        Assert.That(result.Value.CcRecipients, Is.EqualTo(new[] { "cc@synthetic.invalid" }));
     }
 }
