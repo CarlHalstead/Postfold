@@ -21,6 +21,9 @@ public interface IClientCatalog
 
     Task<ImmutableArray<MailboxSnapshot>> MailboxesAsync(CancellationToken cancellationToken);
 
+    /// <summary>Counts unread locally cached memberships in the current mailbox generation, never server totals.</summary>
+    Task<ImmutableArray<MailboxUnreadCount>> MailboxUnreadCountsAsync(AccountId account, CancellationToken cancellationToken);
+
     Task<ImmutableArray<DraftSnapshot>> DraftsAsync(AccountId account, CancellationToken cancellationToken);
 
     Task<ImmutableArray<OutboxEntry>> OutboxAsync(AccountId account, CancellationToken cancellationToken);

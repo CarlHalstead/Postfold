@@ -18,6 +18,7 @@ using Postfold.Sync.Services;
 using Postfold.UI.Views;
 using System;
 using System.Collections.Immutable;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -26,12 +27,14 @@ namespace Postfold.Foundation.Tests.Tests.Protocols;
 public sealed class ClientProtocolFlowTests
 {
     [AvaloniaTest]
-    [TestCase(false, false, SubmissionState.Accepted)]
-    [TestCase(true, false, SubmissionState.PartiallyAccepted)]
-    [TestCase(false, true, SubmissionState.Uncertain)]
+    [TestCase(false, false, false, SubmissionState.Completed)]
+    [TestCase(false, false, true, SubmissionState.SentCopyPending)]
+    [TestCase(true, false, false, SubmissionState.PartiallyAccepted)]
+    [TestCase(false, true, false, SubmissionState.Uncertain)]
     public async Task QueueAsync_WhenClientUsesLocalTlsServers_PreservesDeliveryEvidenceAcrossRestart(
         bool partial,
         bool lostAcknowledgement,
+        bool sentCopyFailure,
         SubmissionState expected
     )
     {
@@ -63,12 +66,15 @@ public sealed class ClientProtocolFlowTests
         RetryDelayPolicy retry = new RetryDelayPolicy(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
         await using AccountScheduler scheduler = new AccountScheduler(2, 8, 1, TimeProvider.System, policy, retry);
         MimePipeline mime = new MimePipeline(1048576, 100, profile.Blobs);
+        ISentCopyStore sentCopy = Substitute.For<ISentCopyStore>();
+        sentCopy.SaveAsync(Arg.Any<FrozenSubmission>(), Arg.Any<Stream>(), Arg.Any<CancellationToken>())
+            .Returns(sentCopyFailure ? Failure.NeedsReview : Failure.None);
         await using MailAccountEngine engine = new MailAccountEngine(
             adapter,
             adapter,
             adapter,
             null,
-            null,
+            sentCopy,
             smtp,
             profile,
             profile,
@@ -115,10 +121,8 @@ public sealed class ClientProtocolFlowTests
         {
             // Act
             await compose.QueueAsync();
-            await application.ProcessOutboxAsync(EngineFixture.Account, CancellationToken.None);
-            await application.ProcessOutboxAsync(EngineFixture.Account, CancellationToken.None);
             OutboxEntry entry = (await profile.OutboxAsync(EngineFixture.Account, CancellationToken.None))[0];
-            await application.StoreSentCopyAsync(entry, CancellationToken.None);
+            await application.SubmitAsync(EngineFixture.Account, entry.Submission.Id, CancellationToken.None);
             await using SqliteProfile restarted = (await SqliteProfile.OpenAsync(
                 System.IO.Path.Combine(directory, "profile.db"),
                 TimeProvider.System,
@@ -128,13 +132,15 @@ public sealed class ClientProtocolFlowTests
             OutboxEntry preserved = (await restarted.OutboxAsync(EngineFixture.Account, CancellationToken.None))[0];
 
             // Assert
-            Assert.That(compose.IsVisible, Is.False);
+            Assert.That(compose.IsVisible, Is.EqualTo(expected != SubmissionState.Completed));
             Assert.That(entry.State, Is.EqualTo(expected));
             Assert.That(preserved.State, Is.EqualTo(expected));
             Assert.That(preserved.Evidence!.Recipients, Has.Length.EqualTo(2));
             Assert.That(outgoing.SubmissionCount, Is.EqualTo(1));
             Assert.That(outgoing.SubmittedMime, Does.Contain("Preserved client text"));
             Assert.That(outgoing.SubmittedMime, Does.Contain("Synthetic signature"));
+            await sentCopy.Received(partial || lostAcknowledgement ? 0 : 1)
+                .SaveAsync(Arg.Any<FrozenSubmission>(), Arg.Any<Stream>(), Arg.Any<CancellationToken>());
         }
         finally
         {

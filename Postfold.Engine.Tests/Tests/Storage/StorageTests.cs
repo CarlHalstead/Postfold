@@ -303,7 +303,7 @@ public sealed class StorageTests
     }
 
     [Test]
-    public async Task SearchAsync_WhenKnownAttachmentsAreFiltered_AppliesBeforePagingAndBoundsCachedPreview()
+    public async Task SearchAsync_WhenCachedMetadataIsAvailable_PreservesPagingAndBoundsPreviewWithoutFilteringAttachments()
     {
         // Arrange
         await using SqliteProfile profile = await EngineFixture.OpenAsync(EngineFixture.DirectoryPath());
@@ -318,30 +318,35 @@ public sealed class StorageTests
         }
         BlobReference body = await EngineFixture.BlobAsync(profile, "synthetic", protect: false);
         await profile.StoreBodyAsync(messages[1].Account, messages[1].Id, body, new string('x', 500), CancellationToken.None);
-        SearchRequest filtered = all with
+        SearchRequest paged = all with
         {
-            Limit = 1,
-            KnownAttachmentsOnly = true
+            Limit = 1
         };
 
         // Act
-        SearchPage first = (await profile.SearchAsync(filtered, CancellationToken.None)).Value!;
-        SearchPage second = (await profile.SearchAsync(filtered with
+        SearchPage first = (await profile.SearchAsync(paged, CancellationToken.None)).Value!;
+        SearchPage second = (await profile.SearchAsync(paged with
         {
             Continuation = first.Continuation
         }, CancellationToken.None)).Value!;
-        Outcome<SearchPage> wrongFilter = await profile.SearchAsync(filtered with
+        SearchPage third = (await profile.SearchAsync(paged with
         {
-            KnownAttachmentsOnly = false,
+            Continuation = second.Continuation
+        }, CancellationToken.None)).Value!;
+        Outcome<SearchPage> wrongFilter = await profile.SearchAsync(paged with
+        {
+            UnreadOnly = true,
             Continuation = first.Continuation
         }, CancellationToken.None);
 
         // Assert
-        Assert.That(first.Messages.Single().Id, Is.EqualTo(messages[1].Id));
-        Assert.That(first.Messages.Single().HasKnownAttachments, Is.True);
-        Assert.That(first.Messages.Single().CachedPreview, Has.Length.EqualTo(200));
-        Assert.That(second.Messages.Single().Id, Is.EqualTo(messages[2].Id));
-        Assert.That(second.Continuation, Is.Null);
+        Assert.That(first.Messages.Single().Id, Is.EqualTo(messages[0].Id));
+        Assert.That(first.Messages.Single().HasKnownAttachments, Is.False);
+        Assert.That(second.Messages.Single().Id, Is.EqualTo(messages[1].Id));
+        Assert.That(second.Messages.Single().HasKnownAttachments, Is.True);
+        Assert.That(second.Messages.Single().CachedPreview, Has.Length.EqualTo(200));
+        Assert.That(third.Messages.Single().Id, Is.EqualTo(messages[2].Id));
+        Assert.That(third.Continuation, Is.Null);
         Assert.That(wrongFilter.Failure, Is.EqualTo(Failure.Validation));
     }
 

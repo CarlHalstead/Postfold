@@ -160,7 +160,7 @@ internal sealed class SyntheticProfileSeeder
         {
             Subject = subjects[index],
             Participants = senders[index] + " <sender" + index + "@synthetic.invalid>",
-            Date = now.AddDays(index < 3 ? 0 : index < 6 ? -1 : -7).AddMinutes(-index * 30),
+            Date = now.AddDays(index < 3 ? 0 : index < 6 ? -1 : -2).AddMinutes(-index * 30),
             Read = index is not 0 and not 1,
             Flagged = false
         }).ToImmutableArray();
@@ -186,6 +186,17 @@ internal sealed class SyntheticProfileSeeder
                 mime = "From: " + message.Participants + "\r\nTo: colleague@synthetic.invalid\r\n" +
                     "Subject: " + message.Subject + "\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" +
                     "Hi,\n\nWould you like to meet for lunch next week?\n\nThanks,\nAlex";
+            }
+            else if (message.Subject == "Development update")
+            {
+                string longBody = string.Join("\n\n", Enumerable.Range(1, 20).Select(index =>
+                    "Synthetic review paragraph " + index + ": the reader keeps long received text selectable and scrolls attachments after the complete body."));
+                string attachments = string.Concat(Enumerable.Range(1, 8).Select(index =>
+                    "--pf049\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=Review-notes-" + index +
+                    ".txt\r\n\r\nAuthored synthetic review notes " + index + "\r\n"));
+                mime = "From: " + message.Participants + "\r\nTo: sender1@example.invalid\r\n" +
+                    "Subject: " + message.Subject + "\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=pf049\r\n\r\n" +
+                    "--pf049\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + longBody + "\r\n" + attachments + "--pf049--\r\n";
             }
             using MemoryStream source = new MemoryStream(Encoding.UTF8.GetBytes(mime));
             BlobReference blob = await _profile.Blobs.WriteAsync(account, source, _limits.MaximumMimeBytes, false, cancellationToken)

@@ -495,7 +495,7 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
         string family = _window.FontFamily == FontFamily.Default ? "system-ui" : _window.FontFamily.Name;
         return _isolation!.ApplyAppearanceAsync(
             family,
-            _window.FontSize,
+            _window.FontSize * 18 / 16,
             $"#{foreground.R:X2}{foreground.G:X2}{foreground.B:X2}",
             $"#{background.R:X2}{background.G:X2}{background.B:X2}",
             cancellationToken

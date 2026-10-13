@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -25,6 +24,7 @@ using Postfold.UI.ViewModels;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -43,6 +43,17 @@ public sealed partial class MainWindow : Window
     private IMailApplication? _application;
     private IAccountSetup? _setup;
     private IAccountManagement? _management;
+    private IClientIdentity? _identity;
+    private IDesktopIntegration? _desktop;
+    private SettingsWindow? _settingsDialog;
+    private GridLength _listWidth = new GridLength(0.36, GridUnitType.Star);
+    private GridLength _readerWidth = new GridLength(0.45, GridUnitType.Star);
+    private GridLength _listHeight = new GridLength(0.45, GridUnitType.Star);
+    private GridLength _readerHeight = new GridLength(0.55, GridUnitType.Star);
+    private GridLength _navigationWidth = new GridLength(0.19, GridUnitType.Star);
+    private bool _changingFilter;
+    private ScrollViewer? _pageScroll;
+    private MainWindowViewModel? _pageModel;
     private readonly DispatcherTimer _dates = new DispatcherTimer
     {
         Interval = TimeSpan.FromMinutes(1)
@@ -53,9 +64,50 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         AvaloniaXamlLoader.Load(this);
+        this.FindControl<ListBox>("MessageList")!.TemplateApplied += (_, args) =>
+        {
+            if (_pageScroll is not null)
+            {
+                _pageScroll.PropertyChanged -= PageScrollChanged;
+            }
+            _pageScroll = args.NameScope.Find<ScrollViewer>("PART_ScrollViewer");
+            if (_pageScroll is not null)
+            {
+                _pageScroll.PropertyChanged += PageScrollChanged;
+            }
+            UpdatePagination();
+        };
+        DataContextChanged += (_, _) =>
+        {
+            if (_pageModel is not null)
+            {
+                _pageModel.PropertyChanged -= PagingStateChanged;
+            }
+            _pageModel = DataContext as MainWindowViewModel;
+            if (_pageModel is not null)
+            {
+                _pageModel.PropertyChanged += PagingStateChanged;
+            }
+            UpdatePagination();
+        };
+        Closed += (_, _) =>
+        {
+            if (_pageModel is not null)
+            {
+                _pageModel.PropertyChanged -= PagingStateChanged;
+            }
+        };
         this.FindControl<DockPanel>("PreviewPane")!.SizeChanged += (_, _) => AdjustReaderViewport();
         this.FindControl<DockPanel>("NavigationPane")!.SizeChanged += (_, _) => AdjustPaneToolbars();
         this.FindControl<DockPanel>("MessagePane")!.SizeChanged += (_, _) => AdjustPaneToolbars();
+        TextBlock readLabel = ((StackPanel)this.FindControl<Button>("ReadButton")!.Content!).Children.OfType<TextBlock>().Single();
+        readLabel.PropertyChanged += (_, args) =>
+        {
+            if (args.Property == TextBlock.TextProperty)
+            {
+                AdjustReaderViewport();
+            }
+        };
         _dates.Tick += (_, _) => (DataContext as MainWindowViewModel)?.RegroupMessages();
         Opened += (_, _) => _dates.Start();
         Closed += (_, _) => _dates.Stop();
@@ -75,7 +127,7 @@ public sealed partial class MainWindow : Window
         };
         SizeChanged += (_, _) =>
         {
-            string preview = Bounds.Width < 1050 && _settings.Preview == "Right" ? "Bottom" : _settings.Preview;
+            string preview = ResolvePreview();
             if (_layoutPreview != preview)
             {
                 ReflowPreview(preview);
@@ -86,12 +138,38 @@ public sealed partial class MainWindow : Window
     public void SetHtmlSurface(Control? surface)
     {
         ContentControl html = this.FindControl<ContentControl>("HtmlSurface")!;
-        if (surface is not null)
+        StackPanel content = this.FindControl<StackPanel>("ReaderContent")!;
+        StackPanel header = this.FindControl<StackPanel>("ReaderHeader")!;
+        StackPanel attachments = this.FindControl<StackPanel>("ReaderAttachmentPanel")!;
+        ScrollViewer htmlHeader = this.FindControl<ScrollViewer>("HtmlHeaderScroll")!;
+        StackPanel footer = this.FindControl<StackPanel>("HtmlFooter")!;
+        bool showing = surface is not null;
+        if (showing)
         {
             html.Content = surface;
+            content.Children.Remove(header);
+            content.Children.Remove(attachments);
+            htmlHeader.Content = header;
+            if (!footer.Children.Contains(attachments))
+            {
+                footer.Children.Add(attachments);
+            }
         }
-        html.IsVisible = surface is not null;
-        this.FindControl<ScrollViewer>("PlainPreviewScroll")!.IsVisible = surface is null;
+        else
+        {
+            htmlHeader.Content = null;
+            footer.Children.Remove(attachments);
+            if (!content.Children.Contains(header))
+            {
+                content.Children.Insert(0, header);
+                content.Children.Add(attachments);
+            }
+        }
+
+        html.IsVisible = showing;
+        this.FindControl<Grid>("HtmlReaderGrid")!.IsVisible = showing;
+        this.FindControl<ScrollViewer>("PlainPreviewScroll")!.IsVisible = !showing;
+        AdjustReaderViewport();
     }
 
     public void ReleaseHtmlSurface()
@@ -102,95 +180,13 @@ public sealed partial class MainWindow : Window
 
     public void ConfigureIdentity(IClientIdentity identity)
     {
-        this.FindControl<Button>("IdentityButton")!.IsEnabled = true;
-        Wire("IdentityButton", () =>
-        {
-            if (DataContext is not MainWindowViewModel model || model.Accounts.Count == 0)
-            {
-                return Task.CompletedTask;
-            }
-
-            StackPanel panel = new StackPanel
-            {
-                Margin = new Thickness(16),
-                Spacing = 8
-            };
-            ComboBox accounts = new ComboBox
-            {
-                ItemsSource = model.Accounts,
-                ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => new TextBlock
-                {
-                    Text = account!.Name
-                }),
-                SelectedItem = model.Accounts.FirstOrDefault(account => account.Id == (model.Scope?.Account ?? model.Selected?.Account)) ??
-                    model.Accounts[0]
-            };
-            Avalonia.Automation.AutomationProperties.SetName(accounts, Strings.Get("IdentityAccount"));
-            panel.Children.Add(accounts);
-            TextBox sender = FormControls.AddField(panel, "Sender");
-            sender.MaxLength = 320;
-            TextBox signature = FormControls.AddField(panel, "Signature");
-            signature.MaxLength = 8192;
-            signature.AcceptsReturn = true;
-            signature.MinHeight = 120;
-            void Load()
-            {
-                if (accounts.SelectedItem is AccountConfiguration account)
-                {
-                    sender.Text = account.Identity?.Sender ?? account.Outgoing.Username;
-                    signature.Text = account.Identity?.Signature ?? "";
-                }
-            }
-
-            accounts.SelectionChanged += (_, _) => Load();
-            Load();
-            panel.Children.Add(new TextBlock
-            {
-                Text = Strings.Get("IdentityHint"),
-                TextWrapping = TextWrapping.Wrap
-            });
-            TextBlock status = new TextBlock
-            {
-                TextWrapping = TextWrapping.Wrap
-            };
-            FormControls.AddActionButton(panel, "Save", async () =>
-            {
-                if (accounts.SelectedItem is AccountConfiguration account)
-                {
-                    Failure result = await identity.SaveAsync(account.Id, new ComposeIdentity(
-                        sender.Text ?? "",
-                        signature.Text ?? ""
-                    ), _lifetime.Token);
-                    if (result == Failure.None)
-                    {
-                        await model.InitialiseAsync();
-                        accounts.SelectedItem = model.Accounts.FirstOrDefault(item => item.Id == account.Id);
-                    }
-
-                    status.Text = Strings.Describe(result);
-                }
-            }, status);
-            panel.Children.Add(status);
-            ShowWindow(new Window
-            {
-                Title = Strings.IdentitySettings,
-                Width = 620,
-                Height = 500,
-                FontFamily = FontFamily,
-                FontSize = FontSize,
-                Content = new ScrollViewer
-                {
-                    Content = panel
-                }
-            });
-            return Task.CompletedTask;
-        });
+        _identity = identity;
     }
 
     public void ConfigureHtml(IHtmlReadingService reader)
     {
-        this.FindControl<Button>("HtmlButton")!.IsEnabled = reader.IsQualified;
-        this.FindControl<Button>("ImagesButton")!.IsEnabled = reader.IsQualified;
+        this.FindControl<MenuItem>("HtmlButton")!.IsEnabled = reader.IsQualified;
+        this.FindControl<MenuItem>("ImagesButton")!.IsEnabled = reader.IsQualified;
         Wire("HtmlButton", async () =>
         {
             if (DataContext is MainWindowViewModel model && model.Selected is MessageSnapshot message)
@@ -246,71 +242,48 @@ public sealed partial class MainWindow : Window
         IAccountManagement? management = null
     )
     {
-        this.FindControl<Button>("RenameAccountButton")!.IsEnabled = management is not null;
-        Wire("RenameAccountButton", () =>
-        {
-            if (management is not null)
-            {
-                RenameAccount(management);
-            }
-            return Task.CompletedTask;
-        });
         _management = management;
         _application = application;
         _setup = setup;
-        this.FindControl<Button>("RemoveAccountButton")!.IsEnabled = management is not null;
-        Wire("RemoveAccountButton", () =>
-        {
-            if (management is not null)
-            {
-                RemoveAccount(management);
-            }
-            return Task.CompletedTask;
-        });
-        this.FindControl<Button>("DesktopButton")!.IsEnabled = desktop is not null;
-        Wire("DesktopButton", async () =>
-        {
-            if (desktop is not null)
-            {
-                await DesktopSettingsAsync(desktop);
-            }
-        });
+        _desktop = desktop;
         Wire("ComposeButton", () => { OpenCompose(); return Task.CompletedTask; });
-        Wire("ReplyButton", () => { OpenCompose("Reply"); return Task.CompletedTask; });
-        Wire("ReplyAllButton", () => { OpenCompose("ReplyAll"); return Task.CompletedTask; });
-        Wire("ForwardButton", () => { OpenCompose("Forward"); return Task.CompletedTask; });
-        Wire("BottomReplyButton", () => { OpenCompose("Reply"); return Task.CompletedTask; });
-        Wire("BottomReplyAllButton", () => { OpenCompose("ReplyAll"); return Task.CompletedTask; });
-        Wire("BottomForwardButton", () => { OpenCompose("Forward"); return Task.CompletedTask; });
-        Wire("AllFilterButton", async () =>
+        foreach ((string name, string kind) in new[]
         {
-            if (DataContext is MainWindowViewModel model)
-            {
-                model.UnreadOnly = false;
-                model.KnownAttachmentsOnly = false;
-                await model.RefreshAsync(false);
-            }
-        });
-        foreach (string filter in new[] { "UnreadFilter", "AttachmentFilter" })
+            ("ReplyButton", "Reply"), ("ReplyAllButton", "ReplyAll"), ("ForwardButton", "Forward"),
+            ("OverflowReplyAllButton", "ReplyAll"), ("OverflowForwardButton", "Forward")
+        })
         {
-            this.FindControl<CheckBox>(filter)!.IsCheckedChanged += (_, _) => Track(RefreshFromControlsAsync);
+            Wire(name, () => { OpenCompose(kind); return Task.CompletedTask; });
         }
-        Wire("SetupButton", () =>
+
+        this.FindControl<RadioButton>("AllFilterButton")!.IsCheckedChanged += (_, _) =>
         {
-            OpenAccountSetup();
-            return Task.CompletedTask;
-        });
-        this.FindControl<Button>("SetupButton")!.IsEnabled = setup is not null;
-        this.FindControl<Button>("CredentialsButton")!.IsEnabled = setup is not null;
-        Wire("CredentialsButton", async () =>
-        {
-            if (setup is not null)
+            if (!_changingFilter && this.FindControl<RadioButton>("AllFilterButton")!.IsChecked == true)
             {
-                await CredentialsAsync(setup);
+                Track(() => SelectFilterAsync(false));
             }
-        });
-        Wire("DraftsButton", DraftsAsync);
-        Wire("OutboxButton", OutboxAsync);
+        };
+        this.FindControl<RadioButton>("UnreadFilter")!.IsCheckedChanged += (_, _) =>
+        {
+            if (!_changingFilter && this.FindControl<RadioButton>("UnreadFilter")!.IsChecked == true)
+            {
+                Track(() => SelectFilterAsync(true));
+            }
+        };
+        this.FindControl<TextBox>("SearchBox")!.KeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Enter)
+            {
+                args.Handled = true;
+                Track(RefreshFromControlsAsync);
+            }
+        };
+        Wire("SetupButton", () => { OpenAccountSetup(); return Task.CompletedTask; });
+        this.FindControl<Button>("SetupButton")!.IsEnabled = setup is not null;
+        Wire("SettingsButton", () => { OpenSettings(); return Task.CompletedTask; });
+        Wire("WorkButton", () => { OpenWorkMenu(); return Task.CompletedTask; });
+        Wire("DetailsButton", () => { ShowMessageDetails(); return Task.CompletedTask; });
+        Wire("PlainButton", () => { SetHtmlSurface(null); return Task.CompletedTask; });
         Wire("CheckEmptyAttachmentsButton", async () =>
         {
             if (DataContext is MainWindowViewModel model)
@@ -325,10 +298,14 @@ public sealed partial class MainWindow : Window
                 await model.CheckAttachmentsAsync();
             }
         });
-        Wire("CommandsButton", CommandsAsync);
         Wire("MoveButton", () => { Move(); return Task.CompletedTask; });
         Wire("SaveAttachmentButton", SaveAttachmentAsync);
-        Wire("AppearanceButton", () => { Appearance(); return Task.CompletedTask; });
+        this.FindControl<Button>("SaveAttachmentButton")!.IsEnabled = false;
+        this.FindControl<ListBox>("AttachmentList")!.SelectionChanged += (_, _) =>
+        {
+            this.FindControl<Button>("SaveAttachmentButton")!.IsEnabled =
+                this.FindControl<ListBox>("AttachmentList")!.SelectedItem is AttachmentSnapshot;
+        };
         this.FindControl<ListBox>("AttachmentList")!.DoubleTapped += (_, _) => Track(SaveAttachmentAsync);
         this.FindControl<ListBox>("AttachmentList")!.KeyDown += (_, args) =>
         {
@@ -449,16 +426,22 @@ public sealed partial class MainWindow : Window
         }
 
         FontSize = settings.FontSize;
-        Resources["SubjectFontSize"] = settings.FontSize * 1.5;
+        Resources["SubjectFontSize"] = settings.FontSize * 26 / 16;
+        Resources["BodyFontSize"] = settings.FontSize * 18 / 16;
+        Resources["BodyLineHeight"] = settings.FontSize * 27 / 16;
+        Resources["MetadataFontSize"] = settings.FontSize * 14 / 16;
+        Resources["AvatarSize"] = settings.Density == "Compact" ? 36d : 44d;
+        Resources["MessageMinimumHeight"] = settings.Density == "Compact" ? 76d : 96d;
         FontFamily = string.IsNullOrWhiteSpace(settings.Font) ? FontFamily.Default : new FontFamily(settings.Font);
         Resources["MessagePadding"] = settings.Density == "Compact" ? new Thickness(8, 4) : new Thickness(12, 10);
         foreach (Window child in OwnedWindows)
         {
-            child.FontSize = FontSize;
-            child.FontFamily = FontFamily;
+            FormControls.ApplyTypography(child, FontSize, FontFamily);
         }
 
-        ReflowPreview(Bounds.Width > 0 && Bounds.Width < 1050 && settings.Preview == "Right" ? "Bottom" : settings.Preview);
+        ReflowPreview(ResolvePreview());
+        AdjustReaderViewport();
+        AdjustPaneToolbars();
     }
 
     public void OpenCompose(
@@ -496,8 +479,8 @@ public sealed partial class MainWindow : Window
         }
 
         Guid? source = predecessor ?? activation?.Predecessor;
-        ComposeWindow? existing = source is Guid parent ?
-            _compose.FirstOrDefault(window => window.Account == account.Id && window.SourceSubmission == parent) : null;
+        ComposeWindow? existing = _compose.FirstOrDefault(window => window.Account == account.Id &&
+            (source is Guid parent && window.SourceSubmission == parent || id is Guid draftId && window.DraftId == draftId));
         if (existing is not null)
         {
             existing.Activate();
@@ -562,6 +545,7 @@ public sealed partial class MainWindow : Window
         window.FontFamily = FontFamily;
         window.FontSize = FontSize;
         _compose.Add(window);
+        window.SendStatusChanged += status => model?.ReportSendStatus(account.Name + " — " + status);
         window.Closed += (_, _) => { _compose.Remove(window); this.FindControl<Button>("ComposeButton")!.Focus(); };
         ShowWindow(window);
     }
@@ -714,7 +698,347 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task CredentialsAsync(IAccountSetup setup)
+    public async Task CommandsAsync(AccountId account)
+    {
+        if (_application is null || DataContext is not MainWindowViewModel model ||
+            !model.Accounts.Any(item => item.Id == account))
+        {
+            return;
+        }
+
+        ListBox list = new ListBox
+        {
+            ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token),
+            Name = "PendingCommands",
+            MaxHeight = 280,
+            ItemTemplate = new FuncDataTemplate<CommandSnapshot>((command, _) => command is null ? null : new TextBlock
+            {
+                Text = command.Subject + "\n" + Strings.Describe(command.Entry.Intent.Kind) + " — " +
+                                            Strings.Describe(command.Entry.State) + "\n" + Strings.Describe(command.Entry.Evidence),
+                TextWrapping = TextWrapping.Wrap
+            })
+        };
+        Avalonia.Automation.AutomationProperties.SetName(list, Strings.Commands);
+        StackPanel panel = new StackPanel
+        {
+            Margin = new Thickness(12),
+            Spacing = 8
+        };
+        panel.Children.Add(new TextBlock
+        {
+            Text = Strings.Get("CommandReviewHint"),
+            TextWrapping = TextWrapping.Wrap
+        });
+        panel.Children.Add(list);
+        CheckBox consent = new CheckBox
+        {
+            Content = Strings.Get("CommandRetryConsent"),
+            IsChecked = false
+        };
+        list.SelectionChanged += (_, _) => consent.IsChecked = false;
+        panel.Children.Add(consent);
+        StackPanel footer = new StackPanel { Spacing = 8 };
+        WrapPanel actions = new WrapPanel();
+        footer.Children.Add(actions);
+        TextBlock status = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap
+        };
+        FormControls.AddActionButton(actions, "RetryCommand", async () =>
+        {
+            if (list.SelectedItem is CommandSnapshot command && consent.IsChecked == true)
+            {
+                status.Text = Strings.Describe(await _application.ResolveCommandAsync(command.Entry, true, _lifetime.Token));
+                consent.IsChecked = false;
+                list.ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token);
+            }
+            else
+            {
+                status.Text = Strings.Get("CommandDecisionRequired");
+            }
+        }, status);
+        FormControls.AddActionButton(actions, "DismissCommand", async () =>
+        {
+            if (list.SelectedItem is CommandSnapshot command)
+            {
+                status.Text = Strings.Describe(await _application.ResolveCommandAsync(command.Entry, false, _lifetime.Token));
+                list.ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token);
+            }
+        }, status);
+        FormControls.AddActionButton(actions, "Refresh", async () =>
+        {
+            list.ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token);
+        }, status);
+        footer.Children.Add(status);
+        Control sends = await SendIssuesAsync(account);
+        ListBox sendList = ((StackPanel)sends).Children.OfType<ListBox>().Single();
+        TabControl tabs = new TabControl
+        {
+            Margin = new Thickness(24, 0, 24, 16),
+            ItemsPanel = new FuncTemplate<Panel?>(() => new WrapPanel()),
+            ItemsSource = new[]
+            {
+                new TabItem
+                {
+                    Header = Strings.Get("MailNeedingAttention"),
+                    Content = FormControls.Page("", sends)
+                },
+                new TabItem
+                {
+                    Header = Strings.Get("FolderChanges"),
+                    Content = FormControls.Page("", panel, footer)
+                }
+            },
+            SelectedIndex = sendList.ItemCount > 0 ? 0 : 1
+        };
+        DockPanel page = new DockPanel();
+        TextBlock heading = new TextBlock
+        {
+            Text = Strings.Commands,
+            FontWeight = FontWeight.SemiBold,
+            Margin = new Thickness(24, 24, 24, 16)
+        };
+        heading.Bind(TextBlock.FontSizeProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("SubjectFontSize"));
+        DockPanel.SetDock(heading, Dock.Top);
+        page.Children.Add(heading);
+        page.Children.Add(tabs);
+        ShowWindow(new Window
+        {
+            Title = Strings.Commands,
+            Width = 760,
+            Height = 520,
+            MinWidth = 480,
+            MinHeight = 480,
+            FontFamily = FontFamily,
+            FontSize = FontSize,
+            Content = page
+        });
+    }
+
+    public async Task DraftsAsync(AccountId account)
+    {
+        if (_application is null || DataContext is not MainWindowViewModel model || !model.Accounts.Any(item => item.Id == account))
+        {
+            return;
+        }
+
+        ImmutableArray<DraftSnapshot> drafts = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
+        ListBox list = new ListBox
+        {
+            ItemsSource = drafts,
+            ItemTemplate = new FuncDataTemplate<DraftSnapshot>((draft, _) => draft is null ? null : new TextBlock
+            {
+                Text = Strings.Get("DraftRevision") + " " + draft.Revision + " — " +
+                                            Strings.Get(draft.Conflict || draft.Held ? "Conflict" : "Saved"),
+                TextWrapping = TextWrapping.Wrap
+            })
+        };
+        StackPanel panel = new StackPanel
+        {
+            Margin = new Thickness(12),
+            Spacing = 8
+        };
+        panel.Children.Add(list);
+        StackPanel footer = new StackPanel { Spacing = 8 };
+        WrapPanel actions = new WrapPanel();
+        footer.Children.Add(actions);
+        TextBlock status = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap
+        };
+        FormControls.AddActionButton(actions, "OpenDraft", async () =>
+        {
+            if (list.SelectedItem is DraftSnapshot draft)
+            {
+                ImmutableArray<DraftSnapshot> current = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
+                list.ItemsSource = current;
+                if (!current.Any(item => item.Id == draft.Id))
+                {
+                    status.Text = Strings.Get("FrozenDraft");
+                    return;
+                }
+                Outcome<ComposeContent> content = await _application.ReadDraftAsync(draft, _lifetime.Token);
+                if (content.IsSuccess)
+                {
+                    OpenCompose(
+                        activation: content.Value,
+                        id: draft.Id,
+                        conflict: draft.Conflict || draft.Held,
+                        targetAccount: draft.Account
+                    );
+                }
+            }
+        }, status);
+        FormControls.AddActionButton(actions, "PushDraft", async () =>
+        {
+            if (list.SelectedItem is DraftSnapshot draft)
+            {
+                status.Text = Strings.Describe(await _application.PushDraftAsync(draft.Account, draft.Id, _lifetime.Token));
+                list.ItemsSource = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
+            }
+        }, status);
+        FormControls.AddActionButton(actions, "ReviewVersions", async () =>
+        {
+            if (list.SelectedItem is DraftSnapshot draft)
+            {
+                await ReviewVersionsAsync(draft);
+            }
+        }, status);
+        footer.Children.Add(status);
+        Window window = new Window
+        {
+            Title = Strings.Drafts,
+            Width = 760,
+            Height = 480,
+            Content = FormControls.Page(Strings.Drafts, panel, footer)
+        };
+        ShowWindow(window);
+    }
+
+    private async Task<Control> SendIssuesAsync(AccountId account)
+    {
+        IMailApplication application = _application!;
+        StackPanel panel = new StackPanel
+        {
+            Spacing = 12
+        };
+        ListBox list = new ListBox
+        {
+            Name = "SendIssues",
+            MaxHeight = 240,
+            ItemTemplate = new FuncDataTemplate<OutboxEntry>((entry, _) => entry is null ? null : new TextBlock
+            {
+                Text = (string.IsNullOrWhiteSpace(entry.Submission.Subject) ? Strings.Get("NoSubject") : entry.Submission.Subject) +
+                    "\n" + string.Join("; ", entry.Submission.Recipients) + "\n" + Strings.Get("SendStatus." + entry.State) +
+                    (entry.Evidence is { Failure: not (Failure.None or Failure.NeedsReview) } evidence
+                        ? "\n" + Strings.Describe(evidence.Failure) : ""),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(8)
+            })
+        };
+        Avalonia.Automation.AutomationProperties.SetName(list, Strings.Get("MailNeedingAttention"));
+        list.Classes.Add("mail");
+        TextBlock status = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap
+        };
+        StackPanel details = new StackPanel
+        {
+            Spacing = 8
+        };
+        TextBlock empty = new TextBlock
+        {
+            Text = Strings.Get("NoSendIssues"),
+            TextWrapping = TextWrapping.Wrap
+        };
+        async Task RefreshAsync()
+        {
+            ImmutableArray<OutboxEntry> entries = await application.Catalog.OutboxAsync(account, _lifetime.Token);
+            list.ItemsSource = entries.IsDefault ? ImmutableArray<OutboxEntry>.Empty
+                : entries.Where(entry => entry.State != SubmissionState.Completed).ToImmutableArray();
+            empty.IsVisible = list.ItemCount == 0;
+            details.Children.Clear();
+        }
+        list.SelectionChanged += (_, _) =>
+        {
+            details.Children.Clear();
+            if (list.SelectedItem is not OutboxEntry entry)
+            {
+                return;
+            }
+
+            WrapPanel actions = new WrapPanel();
+            details.Children.Add(actions);
+            if (entry.State == SubmissionState.Queued)
+            {
+                FormControls.AddActionButton(actions, "Send", async () =>
+                {
+                    status.Text = Strings.Get("Sending");
+                    status.Text = Strings.Describe(await application.SubmitAsync(account, entry.Submission.Id, _lifetime.Token));
+                    await RefreshAsync();
+                }, status);
+                FormControls.AddActionButton(actions, "CancelSend", async () =>
+                {
+                    status.Text = Strings.Describe(await application.CancelQueuedAsync(entry, _lifetime.Token));
+                    await RefreshAsync();
+                }, status);
+            }
+            else if (entry.State is SubmissionState.Accepted or SubmissionState.SentCopyPending)
+            {
+                CheckBox consent = new CheckBox
+                {
+                    Content = Strings.Get("SentCopyConsent")
+                };
+                consent.IsVisible = entry.State == SubmissionState.SentCopyPending;
+                details.Children.Add(consent);
+                FormControls.AddActionButton(actions, "SaveSentCopy", async () =>
+                {
+                    if (entry.State == SubmissionState.SentCopyPending && consent.IsChecked != true)
+                    {
+                        status.Text = Strings.Describe(Failure.NeedsReview);
+                        return;
+                    }
+
+                    status.Text = Strings.Describe(entry.State == SubmissionState.Accepted
+                        ? await application.StoreSentCopyAsync(entry, _lifetime.Token)
+                        : await application.RetrySentCopyAsync(entry, _lifetime.Token));
+                    await RefreshAsync();
+                }, status);
+            }
+            else if (entry.State is SubmissionState.Uncertain or SubmissionState.PartiallyAccepted or
+                SubmissionState.Rejected or SubmissionState.Cancelled)
+            {
+                bool uncertain = entry.State is SubmissionState.Uncertain or SubmissionState.PartiallyAccepted;
+                if (entry.Evidence is not null)
+                {
+                    details.Children.Add(new TextBlock
+                    {
+                        Text = string.Join("\n", entry.Evidence.Recipients.Select(recipient =>
+                            recipient.Address + " — " + Strings.Describe(recipient.State))),
+                        TextWrapping = TextWrapping.Wrap
+                    });
+                }
+                CheckBox consent = new CheckBox
+                {
+                    Content = Strings.Get("ResendConsent"),
+                    IsVisible = uncertain
+                };
+                details.Children.Add(consent);
+                FormControls.AddActionButton(actions, "ReviewMessage", async () =>
+                {
+                    if (uncertain && consent.IsChecked != true)
+                    {
+                        status.Text = Strings.Describe(Failure.NeedsReview);
+                        return;
+                    }
+
+                    Outcome<ComposeContent> content = await application.PrepareResendAsync(entry, _lifetime.Token);
+                    if (content.IsSuccess)
+                    {
+                        OpenCompose(
+                            activation: content.Value,
+                            predecessor: entry.Submission.Id,
+                            targetAccount: account
+                        );
+                        consent.IsChecked = false;
+                    }
+                    else
+                    {
+                        status.Text = Strings.Describe(content.Failure);
+                    }
+                }, status);
+            }
+        };
+        panel.Children.Add(list);
+        panel.Children.Add(empty);
+        panel.Children.Add(details);
+        FormControls.AddActionButton(panel, "RefreshSends", RefreshAsync, status);
+        panel.Children.Add(status);
+        await RefreshAsync();
+        return panel;
+    }
+
+    private async Task CredentialsAsync(IAccountSetup setup, AccountId selectedAccount)
     {
         if (_application is null)
         {
@@ -744,10 +1068,10 @@ public sealed partial class MainWindow : Window
         ComboBox account = new ComboBox
         {
             ItemsSource = accounts,
-            SelectedIndex = accounts.IsEmpty ? -1 : 0,
-            ItemTemplate = new FuncDataTemplate<AccountConfiguration>((item, _) => new TextBlock
+            SelectedItem = accounts.FirstOrDefault(item => item.Id == selectedAccount),
+            ItemTemplate = new FuncDataTemplate<AccountConfiguration>((item, _) => item is null ? null : new TextBlock
             {
-                Text = item!.Name
+                Text = item.Name
             })
         };
         Avalonia.Automation.AutomationProperties.SetName(account, Strings.Get("Account"));
@@ -826,21 +1150,196 @@ public sealed partial class MainWindow : Window
         ShowWindow(window);
     }
 
+    public void OpenSettings(string section = "Appearance", AccountId? account = null)
+    {
+        if (DataContext is not MainWindowViewModel model)
+        {
+            return;
+        }
+        if (_settingsDialog is null)
+        {
+            SettingsWindow window = new SettingsWindow(
+                model,
+                _settings,
+                _appearance,
+                _identity,
+                _desktop,
+                ApplyAppearance,
+                selected => _setup is null ? Task.CompletedTask : CredentialsAsync(_setup, selected),
+                selected => { if (_management is not null) { RenameAccount(_management, selected); } },
+                selected => { if (_management is not null) { RemoveAccount(_management, selected); } },
+                _management is not null,
+                _setup is not null
+            );
+            _settingsDialog = window;
+            window.Closed += (_, _) => _settingsDialog = null;
+            window.SelectSection(section, account ?? model.Scope?.Account);
+            ShowWindow(window);
+        }
+        else
+        {
+            if (account is not null || section != "Appearance")
+            {
+                _settingsDialog.SelectSection(section, account);
+            }
+            _settingsDialog.Activate();
+        }
+    }
+
+    private void OpenWorkMenu()
+    {
+        if (DataContext is not MainWindowViewModel model)
+        {
+            return;
+        }
+        Button button = this.FindControl<Button>("WorkButton")!;
+        ContextMenu menu = new ContextMenu();
+        List<MenuItem> accounts = [];
+        foreach (AccountConfiguration account in model.Accounts)
+        {
+            MenuItem drafts = new MenuItem { Header = Strings.Drafts };
+            MenuItem pending = new MenuItem { Header = Strings.Commands };
+            drafts.Click += (_, _) => Track(() => DraftsAsync(account.Id));
+            pending.Click += (_, _) => Track(() => CommandsAsync(account.Id));
+            accounts.Add(new MenuItem { Header = account.Name, ItemsSource = new[] { drafts, pending } });
+        }
+        menu.ItemsSource = accounts;
+        button.ContextMenu = menu;
+        menu.Open(button);
+    }
+
+    private void ShowMessageDetails()
+    {
+        if (DataContext is not MainWindowViewModel model || model.Selected is null)
+        {
+            return;
+        }
+        StackPanel content = new StackPanel { Margin = new Thickness(24), Spacing = 12 };
+        content.Children.Add(new SelectableTextBlock
+        {
+            Text = model.ReaderSender + "\n" + model.ReaderAddress + "\n" + model.ReaderDate + "\n" +
+                model.ReaderAccount + "\n\n" + model.ReaderRecipients,
+            TextWrapping = TextWrapping.Wrap,
+            Focusable = true
+        });
+        ShowWindow(new Window
+        {
+            Title = Strings.MessageDetails,
+            Width = 560,
+            Height = 420,
+            MinWidth = 360,
+            MinHeight = 280,
+            Content = content
+        });
+    }
+
+    private void OpenMenuClicked(object? sender, RoutedEventArgs args)
+    {
+        if (sender is Button button)
+        {
+            button.ContextMenu?.Open(button);
+        }
+    }
+
+    private void SearchHelpClicked(object? sender, RoutedEventArgs args)
+    {
+        StackPanel content = new StackPanel { Margin = new Thickness(24), Spacing = 12 };
+        content.Children.Add(new TextBlock { Text = Strings.SearchHint, TextWrapping = TextWrapping.Wrap });
+        ShowWindow(new Window { Title = Strings.SearchScopeHint, Width = 480, Height = 280, Content = content });
+    }
+
+    private void AccountSettingsClicked(object? sender, RoutedEventArgs args)
+    {
+        if (sender is MenuItem { DataContext: NavigationItemViewModel item } && item.IsAccount)
+        {
+            OpenSettings("Accounts", item.Scope.Account);
+        }
+    }
+
+    private void AllFilterClicked(object? sender, RoutedEventArgs args)
+    {
+        Track(() => SelectFilterAsync(false));
+    }
+
+    private void UnreadFilterClicked(object? sender, RoutedEventArgs args)
+    {
+        Track(() => SelectFilterAsync(!(DataContext as MainWindowViewModel)?.UnreadOnly ?? true));
+    }
+
+    private Task SelectFilterAsync(bool unread)
+    {
+        if (DataContext is not MainWindowViewModel model || model.UpdatingNavigation)
+        {
+            return Task.CompletedTask;
+        }
+        _changingFilter = true;
+        try
+        {
+            model.UnreadOnly = unread;
+            this.FindControl<RadioButton>("UnreadFilter")!.IsChecked = unread;
+            this.FindControl<RadioButton>("AllFilterButton")!.IsChecked = !unread;
+        }
+        finally
+        {
+            _changingFilter = false;
+        }
+        return RefreshFromControlsAsync();
+    }
+
+    private string ResolvePreview()
+    {
+        double navigation = Math.Clamp(this.FindControl<DockPanel>("NavigationPane")!.Bounds.Width, 220, 320);
+        double minimum = Math.Max(1050, navigation + 10 + 820 * _settings.FontSize / 16);
+        return _settings.Preview == "Right" && Bounds.Width > 0 && Bounds.Width < minimum ? "Bottom" : _settings.Preview;
+    }
+
     private void ReflowPreview(string position)
     {
-        _layoutPreview = position;
+        if (_layoutPreview == position)
+        {
+            return;
+        }
+
         Grid panes = this.FindControl<Grid>("Panes")!;
-        Control navigation = this.FindControl<DockPanel>("NavigationPane")!;
+        if (_layoutPreview == "Right")
+        {
+            _navigationWidth = panes.ColumnDefinitions[0].Width;
+            _listWidth = panes.ColumnDefinitions[2].Width;
+            _readerWidth = panes.ColumnDefinitions[4].Width;
+        }
+        else if (_layoutPreview == "Bottom")
+        {
+            _navigationWidth = panes.ColumnDefinitions[0].Width;
+            _listHeight = panes.RowDefinitions[0].Height;
+            _readerHeight = panes.RowDefinitions[2].Height;
+        }
+        double navigation = Math.Clamp(this.FindControl<DockPanel>("NavigationPane")!.Bounds.Width > 0 ?
+            this.FindControl<DockPanel>("NavigationPane")!.Bounds.Width : 260, 220, 320);
+        _layoutPreview = position;
+        bool bottom = position == "Bottom";
+        bool hidden = position == "Hidden";
+        panes.ColumnDefinitions = new ColumnDefinitions(bottom || hidden ? "260,5,*" : "0.19*,5,0.36*,5,0.45*");
+        panes.ColumnDefinitions[0].MinWidth = 220;
+        panes.ColumnDefinitions[0].MaxWidth = 320;
+        panes.ColumnDefinitions[0].Width = bottom || hidden ? new GridLength(navigation) : _navigationWidth;
+        if (!bottom && !hidden)
+        {
+            panes.ColumnDefinitions[2].Width = _listWidth;
+            panes.ColumnDefinitions[4].Width = _readerWidth;
+        }
+        panes.RowDefinitions = new RowDefinitions(bottom ? "0.45*,5,0.55*" : "*");
+        if (bottom)
+        {
+            panes.RowDefinitions[0].Height = _listHeight;
+            panes.RowDefinitions[2].Height = _readerHeight;
+        }
+
+        Control navigationPane = this.FindControl<DockPanel>("NavigationPane")!;
         Control navigationSplitter = this.FindControl<GridSplitter>("NavigationSplitter")!;
         Control messages = this.FindControl<DockPanel>("MessagePane")!;
         GridSplitter splitter = this.FindControl<GridSplitter>("PreviewSplitter")!;
         Control preview = this.FindControl<DockPanel>("PreviewPane")!;
-        bool bottom = position == "Bottom";
-        bool hidden = position == "Hidden";
-        this.FindControl<Expander>("ReaderAttachments")!.IsExpanded = !bottom;
-        panes.ColumnDefinitions = new ColumnDefinitions(bottom || hidden ? "250,5,*" : "250,5,*,5,1.3*");
-        panes.RowDefinitions = new RowDefinitions(bottom ? "*,5,*" : "*");
-        Grid.SetRowSpan(navigation, bottom ? 3 : 1);
+        Grid.SetRowSpan(navigationPane, bottom ? 3 : 1);
         Grid.SetRowSpan(navigationSplitter, bottom ? 3 : 1);
         Grid.SetRow(messages, 0);
         Grid.SetColumn(preview, bottom || hidden ? 2 : 4);
@@ -848,32 +1347,105 @@ public sealed partial class MainWindow : Window
         Grid.SetColumn(splitter, bottom || hidden ? 2 : 3);
         Grid.SetRow(splitter, bottom ? 1 : 0);
         splitter.ResizeDirection = bottom ? GridResizeDirection.Rows : GridResizeDirection.Columns;
-        splitter.IsVisible = !hidden;
+        if (bottom)
+        {
+            splitter.Classes.Add("horizontal");
+        }
+        else
+        {
+            splitter.Classes.Remove("horizontal");
+        }
         preview.IsVisible = !hidden;
-        preview.Margin = new Thickness(0);
-        AdjustReaderViewport();
+        splitter.IsVisible = !hidden;
     }
 
     private void AdjustReaderViewport()
     {
-        double height = this.FindControl<DockPanel>("PreviewPane")!.Bounds.Height;
-        if (height <= 0)
+        DockPanel pane = this.FindControl<DockPanel>("PreviewPane")!;
+        if (pane.Bounds.Width <= 0)
         {
             return;
         }
-        double width = this.FindControl<DockPanel>("PreviewPane")!.Bounds.Width;
-        this.FindControl<UniformGrid>("ReaderActions")!.Columns = Math.Clamp((int)(width / (FontSize * 8)), 1, 5);
-        this.FindControl<ScrollViewer>("ReaderHeaderScroll")!.MaxHeight = Math.Max(48, Math.Min(260, height * 0.32));
-        this.FindControl<ScrollViewer>("ReaderAttachmentScroll")!.MaxHeight = Math.Max(48, Math.Min(180, height * 0.24));
-        this.FindControl<WrapPanel>("ReaderReplyActions")!.IsVisible = height >= 320;
+
+        string[] names = ["ReplyButton", "ReplyAllButton", "ForwardButton", "ReadButton", "TrashButton"];
+        Button[] commands = names.Select(name => this.FindControl<Button>(name)!).ToArray();
+        foreach (Button command in commands)
+        {
+            command.IsVisible = true;
+            command.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        }
+        Button more = this.FindControl<Button>("ReaderMoreButton")!;
+        more.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double available = Math.Max(0, pane.Bounds.Width - 32 - more.DesiredSize.Width);
+        double required = commands.Sum(command => command.DesiredSize.Width) + 17;
+        foreach (int index in new[] { 4, 3, 2, 1 })
+        {
+            if (required <= available)
+            {
+                break;
+            }
+            required -= commands[index].DesiredSize.Width;
+            if (commands[index].IsKeyboardFocusWithin)
+            {
+                more.Focus();
+            }
+            commands[index].IsVisible = false;
+        }
+        this.FindControl<Border>("ReaderActionDivider")!.IsVisible = commands[3].IsVisible || commands[4].IsVisible;
+
+        foreach ((int index, string menu) in new[]
+        {
+            (1, "OverflowReplyAllButton"), (2, "OverflowForwardButton"),
+            (3, "OverflowReadButton"), (4, "OverflowTrashButton")
+        })
+        {
+            this.FindControl<MenuItem>(menu)!.IsVisible = !commands[index].IsVisible;
+        }
+        this.FindControl<ScrollViewer>("HtmlHeaderScroll")!.MaxHeight = Math.Max(64, Math.Min(240, pane.Bounds.Height * 0.3));
+        this.FindControl<ScrollViewer>("HtmlAttachmentScroll")!.MaxHeight = Math.Max(48, Math.Min(180, pane.Bounds.Height * 0.24));
+    }
+
+    private void PagingStateChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(MainWindowViewModel.HasMore))
+        {
+            UpdatePagination();
+        }
+    }
+
+    private void PageScrollChanged(object? sender, AvaloniaPropertyChangedEventArgs args)
+    {
+        if (args.Property == ScrollViewer.OffsetProperty || args.Property == ScrollViewer.ViewportProperty ||
+            args.Property == ScrollViewer.ExtentProperty)
+        {
+            UpdatePagination();
+        }
+    }
+
+    private void UpdatePagination()
+    {
+        bool nearEnd = _pageScroll is not null &&
+            _pageScroll.Offset.Y + _pageScroll.Viewport.Height + 64 * FontSize / 16 >= _pageScroll.Extent.Height;
+        this.FindControl<Button>("LoadMoreButton")!.IsVisible = _pageModel?.HasMore == true && nearEnd;
     }
 
     private void AdjustPaneToolbars()
     {
-        double navigation = this.FindControl<DockPanel>("NavigationPane")!.Bounds.Height;
-        double messages = this.FindControl<DockPanel>("MessagePane")!.Bounds.Height;
-        this.FindControl<ScrollViewer>("NavigationActionsScroll")!.MaxHeight = Math.Max(80, Math.Min(360, navigation * 0.4));
-        this.FindControl<ScrollViewer>("ListToolbarScroll")!.MaxHeight = Math.Max(48, Math.Min(240, messages * 0.4));
+        DockPanel pane = this.FindControl<DockPanel>("MessagePane")!;
+        this.FindControl<StackPanel>("ListFilters")!.IsVisible = pane.Bounds.Width >= 420 * FontSize / 16;
+    }
+
+    private void AccountHeaderPointerPressed(object? sender, PointerPressedEventArgs args)
+    {
+        if (sender is not Grid { TemplatedParent: TreeViewItem node, DataContext: NavigationItemViewModel { IsAccount: true } } header ||
+            !args.GetCurrentPoint(header).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        args.Handled = true;
+        node.Focus(NavigationMethod.Pointer);
+        node.SetCurrentValue(TreeViewItem.IsExpandedProperty, !node.IsExpanded);
     }
 
     private void RenameAccountClicked(object? sender, RoutedEventArgs args)
@@ -895,7 +1467,7 @@ public sealed partial class MainWindow : Window
         {
             Name = "RenameAccountSelection",
             ItemsSource = model.Accounts.ToArray(),
-            ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => new TextBlock { Text = account!.Name }),
+            ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => account is null ? null : new TextBlock { Text = account.Name }),
             SelectedItem = model.Accounts.FirstOrDefault(account => account.Id == (selected ?? model.Scope?.Account)) ?? model.Accounts[0]
         };
         Avalonia.Automation.AutomationProperties.SetName(accounts, Strings.Get("RenameAccount"));
@@ -945,7 +1517,7 @@ public sealed partial class MainWindow : Window
         name.SelectAll();
     }
 
-    private void RemoveAccount(IAccountManagement management)
+    private void RemoveAccount(IAccountManagement management, AccountId? selected = null)
     {
         if (DataContext is not MainWindowViewModel model || model.Accounts.Count == 0)
         {
@@ -959,11 +1531,11 @@ public sealed partial class MainWindow : Window
         {
             Name = "RemoveAccountSelection",
             ItemsSource = model.Accounts.ToArray(),
-            ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => new TextBlock
+            ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => account is null ? null : new TextBlock
             {
-                Text = account!.Name + " — " + account.Incoming.Host
+                Text = account.Name + " — " + account.Incoming.Host
             }),
-            SelectedItem = model.Accounts.FirstOrDefault(account => account.Id == model.Scope?.Account) ?? model.Accounts[0]
+            SelectedItem = model.Accounts.FirstOrDefault(account => account.Id == (selected ?? model.Scope?.Account))
         };
         Avalonia.Automation.AutomationProperties.SetName(accounts, Strings.RemoveAccount);
         panel.Children.Add(accounts);
@@ -1034,33 +1606,42 @@ public sealed partial class MainWindow : Window
 
     private void ShowWindow(Window window)
     {
-        window.FontFamily = FontFamily;
-        window.FontSize = FontSize;
-        bool wrap = window.Content is StackPanel;
-        StackPanel? panel = window.Content as StackPanel ?? (window.Content as ScrollViewer)?.Content as StackPanel;
-        if (panel is not null)
+        FormControls.ApplyTypography(window, FontSize, FontFamily);
+        StackPanel? form = window.Content as StackPanel ?? (window.Content as ScrollViewer)?.Content as StackPanel;
+        if (form is not null)
         {
-            if (wrap)
+            if (window.Content is ScrollViewer scroll)
             {
-                window.Content = null;
+                scroll.Content = null;
             }
-            panel.Margin = new Thickness(24);
-            panel.Spacing = 12;
-            panel.Children.Insert(0, new TextBlock
+            window.Content = null;
+            form.Margin = new Thickness(24, 12);
+            form.Spacing = 12;
+            Button[] buttons = form.Children.OfType<Button>().ToArray();
+            StackPanel? footer = null;
+            if (buttons.Length is > 0 and <= 3)
             {
-                Text = window.Title,
-                FontWeight = FontWeight.SemiBold,
-                FontSize = FontSize * 1.4,
-                TextWrapping = TextWrapping.Wrap
-            });
-            if (wrap)
-            {
-                window.Content = new ScrollViewer
+                footer = new StackPanel { Spacing = 8 };
+                WrapPanel actions = new WrapPanel();
+                foreach (Button button in buttons)
                 {
-                    Content = panel
-                };
+                    form.Children.Remove(button);
+                    button.Margin = new Thickness(0, 0, 8, 8);
+                    actions.Children.Add(button);
+                }
+                footer.Children.Add(actions);
+                TextBlock? status = form.Children.OfType<TextBlock>().LastOrDefault(block =>
+                    block.Name?.EndsWith("Status", StringComparison.Ordinal) == true);
+                if (status is not null)
+                {
+                    form.Children.Remove(status);
+                    footer.Children.Add(status);
+                }
             }
+            window.Content = FormControls.Page(window.Title ?? "", form, footer);
         }
+        IInputElement? previous = FocusManager?.GetFocusedElement();
+        window.Closed += (_, _) => previous?.Focus();
         window.Show(this);
     }
 
@@ -1075,16 +1656,28 @@ public sealed partial class MainWindow : Window
         {
             return Task.CompletedTask;
         }
-        // Avalonia raises control events before its two-way bindings update the source.
-        model.Scope = (this.FindControl<TreeView>("ScopeList")!.SelectedItem as NavigationItemViewModel)?.Scope;
-        model.UnreadOnly = this.FindControl<CheckBox>("UnreadFilter")!.IsChecked == true;
-        model.KnownAttachmentsOnly = this.FindControl<CheckBox>("AttachmentFilter")!.IsChecked == true;
+
+        model.Scope = (this.FindControl<TreeView>("ScopeList")!.SelectedItem as NavigationItemViewModel)?.Scope ?? model.Scope;
+        model.Terms = this.FindControl<TextBox>("SearchBox")!.Text ?? "";
         return model.RefreshAsync(false);
     }
 
     private void Wire(string name, Func<Task> action)
     {
-        this.FindControl<Button>(name)!.Click += (_, _) => Track(action);
+        EventHandler<RoutedEventArgs> handler = (_, _) => Track(action);
+        Control? control = this.FindControl<Control>(name);
+        if (control is Button button)
+        {
+            button.Click += handler;
+        }
+        else if (control is MenuItem item)
+        {
+            item.Click += handler;
+        }
+        else
+        {
+            throw new InvalidOperationException("Missing action control: " + name);
+        }
     }
 
     private void Track(Func<Task> action)
@@ -1143,9 +1736,9 @@ public sealed partial class MainWindow : Window
         {
             ItemsSource = destinations,
             SelectedIndex = -1,
-            ItemTemplate = new FuncDataTemplate<MailboxSnapshot>((item, _) => new TextBlock
+            ItemTemplate = new FuncDataTemplate<MailboxSnapshot>((item, _) => item is null ? null : new TextBlock
             {
-                Text = item!.Name
+                Text = item.Name
             })
         };
         Avalonia.Automation.AutomationProperties.SetName(folders, Strings.Get("Folder"));
@@ -1167,214 +1760,6 @@ public sealed partial class MainWindow : Window
             Height = 240,
             Content = panel
         });
-    }
-
-    private async Task DesktopSettingsAsync(IDesktopIntegration desktop)
-    {
-        DesktopPreferences current = await desktop.ReadPreferencesAsync(_lifetime.Token);
-        StackPanel panel = new StackPanel
-        {
-            Margin = new Thickness(16),
-            Spacing = 8
-        };
-        CheckBox tray = new CheckBox
-        {
-            Content = Strings.Get("TrayOptIn"),
-            IsChecked = current.TrayEnabled
-        };
-        CheckBox notifications = new CheckBox
-        {
-            Content = Strings.Get("PrivateNotifications"),
-            IsChecked = current.NotificationsEnabled
-        };
-        panel.Children.Add(tray);
-        panel.Children.Add(notifications);
-        panel.Children.Add(new TextBlock
-        {
-            Text = Strings.Get("DesktopIntegrationHint"),
-            TextWrapping = TextWrapping.Wrap
-        });
-        TextBlock status = new TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap
-        };
-        FormControls.AddActionButton(panel, "Save", async () =>
-        {
-            status.Text = Strings.Describe(await desktop.ConfigureAsync(new DesktopPreferences(
-                tray.IsChecked == true,
-                notifications.IsChecked == true
-            ), _lifetime.Token));
-        }, status);
-        FormControls.AddActionButton(panel, "TestGenericNotification", () =>
-        {
-            status.Text = Strings.Describe(desktop.NotifyNewMail());
-            return Task.CompletedTask;
-        }, status);
-        panel.Children.Add(status);
-        ShowWindow(new Window
-        {
-            Title = Strings.DesktopSettings,
-            Width = 620,
-            Height = 360,
-            FontFamily = FontFamily,
-            FontSize = FontSize,
-            Content = new ScrollViewer
-            {
-                Content = panel
-            }
-        });
-    }
-
-    private async Task CommandsAsync()
-    {
-        if (_application is null || DataContext is not MainWindowViewModel model ||
-            (model.Scope?.Account ?? model.Selected?.Account) is not AccountId account)
-        {
-            return;
-        }
-
-        ListBox list = new ListBox
-        {
-            ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token),
-            MaxHeight = 280,
-            ItemTemplate = new FuncDataTemplate<CommandSnapshot>((command, _) => new TextBlock
-            {
-                Text = command!.Subject + "\n" + Strings.Describe(command.Entry.Intent.Kind) + " — " +
-                                            Strings.Describe(command.Entry.State) + "\n" + Strings.Describe(command.Entry.Evidence),
-                TextWrapping = TextWrapping.Wrap
-            })
-        };
-        Avalonia.Automation.AutomationProperties.SetName(list, Strings.Commands);
-        StackPanel panel = new StackPanel
-        {
-            Margin = new Thickness(12),
-            Spacing = 8
-        };
-        panel.Children.Add(new TextBlock
-        {
-            Text = Strings.Get("CommandReviewHint"),
-            TextWrapping = TextWrapping.Wrap
-        });
-        panel.Children.Add(list);
-        CheckBox consent = new CheckBox
-        {
-            Content = Strings.Get("CommandRetryConsent"),
-            IsChecked = false
-        };
-        list.SelectionChanged += (_, _) => consent.IsChecked = false;
-        panel.Children.Add(consent);
-        TextBlock status = new TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap
-        };
-        FormControls.AddActionButton(panel, "RetryCommand", async () =>
-        {
-            if (list.SelectedItem is CommandSnapshot command && consent.IsChecked == true)
-            {
-                status.Text = Strings.Describe(await _application.ResolveCommandAsync(command.Entry, true, _lifetime.Token));
-                consent.IsChecked = false;
-                list.ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token);
-            }
-            else
-            {
-                status.Text = Strings.Get("CommandDecisionRequired");
-            }
-        }, status);
-        FormControls.AddActionButton(panel, "DismissCommand", async () =>
-        {
-            if (list.SelectedItem is CommandSnapshot command)
-            {
-                status.Text = Strings.Describe(await _application.ResolveCommandAsync(command.Entry, false, _lifetime.Token));
-                list.ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token);
-            }
-        }, status);
-        FormControls.AddActionButton(panel, "Refresh", async () =>
-        {
-            list.ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token);
-        }, status);
-        panel.Children.Add(status);
-        ShowWindow(new Window
-        {
-            Title = Strings.Commands,
-            Width = 760,
-            Height = 520,
-            FontFamily = FontFamily,
-            FontSize = FontSize,
-            Content = new ScrollViewer
-            {
-                Content = panel
-            }
-        });
-    }
-
-    private async Task DraftsAsync()
-    {
-        if (_application is null || DataContext is not MainWindowViewModel model || model.Scope?.Account is not AccountId account)
-        {
-            return;
-        }
-
-        ImmutableArray<DraftSnapshot> drafts = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
-        ListBox list = new ListBox
-        {
-            ItemsSource = drafts,
-            ItemTemplate = new FuncDataTemplate<DraftSnapshot>((draft, _) => new TextBlock
-            {
-                Text = Strings.Get("DraftRevision") + " " + draft!.Revision + " — " +
-                                            Strings.Get(draft.Conflict || draft.Held ? "Conflict" : "Saved"),
-                TextWrapping = TextWrapping.Wrap
-            })
-        };
-        StackPanel panel = new StackPanel
-        {
-            Margin = new Thickness(12),
-            Spacing = 8
-        };
-        panel.Children.Add(list);
-        TextBlock status = new TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap
-        };
-        FormControls.AddActionButton(panel, "OpenDraft", async () =>
-        {
-            if (list.SelectedItem is DraftSnapshot draft)
-            {
-                Outcome<ComposeContent> content = await _application.ReadDraftAsync(draft, _lifetime.Token);
-                if (content.IsSuccess)
-                {
-                    OpenCompose(
-                        activation: content.Value,
-                        id: draft.Id,
-                        conflict: draft.Conflict || draft.Held,
-                        targetAccount: draft.Account
-                    );
-                }
-            }
-        }, status);
-        FormControls.AddActionButton(panel, "PushDraft", async () =>
-        {
-            if (list.SelectedItem is DraftSnapshot draft)
-            {
-                status.Text = Strings.Describe(await _application.PushDraftAsync(draft.Account, draft.Id, _lifetime.Token));
-                list.ItemsSource = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
-            }
-        }, status);
-        FormControls.AddActionButton(panel, "ReviewVersions", async () =>
-        {
-            if (list.SelectedItem is DraftSnapshot draft)
-            {
-                await ReviewVersionsAsync(draft);
-            }
-        }, status);
-        panel.Children.Add(status);
-        Window window = new Window
-        {
-            Title = Strings.Drafts,
-            Width = 760,
-            Height = 480,
-            Content = panel
-        };
-        ShowWindow(window);
     }
 
     private async Task ReviewVersionsAsync(DraftSnapshot draft)
@@ -1461,223 +1846,4 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    private async Task OutboxAsync()
-    {
-        if (_application is null || DataContext is not MainWindowViewModel model || model.Scope?.Account is not AccountId account)
-        {
-            return;
-        }
-
-        StackPanel panel = new StackPanel
-        {
-            Spacing = 8,
-            Margin = new Thickness(12)
-        };
-        TextBlock status = new TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap
-        };
-        ListBox list = new ListBox
-        {
-            ItemsSource = await _application.Catalog.OutboxAsync(account, _lifetime.Token),
-            ItemTemplate = new FuncDataTemplate<OutboxEntry>((entry, _) => new TextBlock
-            {
-                Text = Strings.Get(entry!.State.ToString()) + "\n" + string.Join("; ", entry.Submission.Recipients) +
-                                            "\n" + (entry.Evidence is null ? "" : string.Join("\n", entry.Evidence.Recipients.Select(item =>
-                                                item.Address + " — " + Strings.Describe(item.State) + " " + item.ReplyCode))),
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(4, 8)
-            })
-        };
-        FormControls.AddActionButton(panel, "Transmit", async () =>
-        {
-            status.Text = Strings.Describe(await _application.ProcessOutboxAsync(account, _lifetime.Token));
-            list.ItemsSource = await _application.Catalog.OutboxAsync(account, _lifetime.Token);
-        }, status);
-        CheckBox consent = new CheckBox
-        {
-            Content = Strings.Get("ResendConsent"),
-            IsChecked = false
-        };
-        panel.Children.Add(consent);
-        FormControls.AddActionButton(panel, "CancelQueued", async () =>
-        {
-            if (list.SelectedItem is OutboxEntry entry)
-            {
-                status.Text = Strings.Describe(await _application.CancelQueuedAsync(entry, _lifetime.Token));
-                list.ItemsSource = await _application.Catalog.OutboxAsync(account, _lifetime.Token);
-            }
-        }, status);
-        FormControls.AddActionButton(panel, "Resend", async () =>
-        {
-            if (consent.IsChecked != true || list.SelectedItem is not OutboxEntry entry)
-            {
-                status.Text = Strings.Describe(Failure.NeedsReview);
-                return;
-            }
-
-            Outcome<ComposeContent> content = await _application.PrepareResendAsync(entry, _lifetime.Token);
-            if (content.IsSuccess)
-            {
-                OpenCompose(
-                    activation: content.Value,
-                    predecessor: entry.Submission.Id,
-                    targetAccount: entry.Submission.Account
-                );
-                consent.IsChecked = false;
-            }
-            else
-            {
-                status.Text = Strings.Describe(content.Failure);
-            }
-        }, status);
-        FormControls.AddActionButton(panel, "EditCancelled", async () =>
-        {
-            if (list.SelectedItem is not OutboxEntry entry || entry.State != SubmissionState.Cancelled)
-            {
-                status.Text = Strings.Describe(Failure.NeedsReview);
-                return;
-            }
-
-            Outcome<ComposeContent> content = await _application.PrepareResendAsync(entry, _lifetime.Token);
-            if (content.IsSuccess)
-            {
-                OpenCompose(activation: content.Value, targetAccount: entry.Submission.Account);
-            }
-            else
-            {
-                status.Text = Strings.Describe(content.Failure);
-            }
-        }, status);
-        FormControls.AddActionButton(panel, "SentCopy", async () =>
-        {
-            if (list.SelectedItem is OutboxEntry entry)
-            {
-                status.Text = Strings.Describe(await _application.StoreSentCopyAsync(entry, _lifetime.Token));
-                list.ItemsSource = await _application.Catalog.OutboxAsync(account, _lifetime.Token);
-            }
-        }, status);
-        CheckBox copyConsent = new CheckBox
-        {
-            Content = Strings.Get("SentCopyConsent"),
-            IsChecked = false
-        };
-        list.SelectionChanged += (_, _) =>
-        {
-            consent.IsChecked = false;
-            copyConsent.IsChecked = false;
-        };
-        panel.Children.Add(copyConsent);
-        FormControls.AddActionButton(panel, "ReviewedSentCopy", async () =>
-        {
-            if (copyConsent.IsChecked != true || list.SelectedItem is not OutboxEntry entry)
-            {
-                status.Text = Strings.Describe(Failure.NeedsReview);
-                return;
-            }
-
-            status.Text = Strings.Describe(await _application.RetrySentCopyAsync(entry, _lifetime.Token));
-            copyConsent.IsChecked = false;
-            list.ItemsSource = await _application.Catalog.OutboxAsync(account, _lifetime.Token);
-        }, status);
-        panel.Children.Add(status);
-        panel.Children.Add(list);
-        ShowWindow(new Window
-        {
-            Title = Strings.Outbox,
-            Width = 900,
-            Height = 480,
-            Content = new ScrollViewer
-            {
-                Content = panel
-            }
-        });
-    }
-
-    private void Appearance()
-    {
-        StackPanel panel = new StackPanel
-        {
-            Spacing = 12,
-            Margin = new Thickness(16)
-        };
-        string[] themes = ["System", "Light", "Dark"];
-        string[] previews = ["Right", "Bottom", "Hidden"];
-        string[] densities = ["Comfortable", "Compact"];
-        ComboBox theme = Choice("Theme", themes, _settings.Theme);
-        ComboBox preview = Choice("PreviewLayout", previews, _settings.Preview);
-        ComboBox density = Choice("Density", densities, _settings.Density);
-        panel.Children.Add(new TextBlock
-        {
-            Text = Strings.Get("FontSize")
-        });
-        Slider size = new Slider
-        {
-            Minimum = 12,
-            Maximum = 28,
-            Value = _settings.FontSize
-        };
-        Avalonia.Automation.AutomationProperties.SetName(size, Strings.Get("FontSize"));
-        panel.Children.Add(size);
-        panel.Children.Add(new TextBlock
-        {
-            Text = Strings.Get("Font")
-        });
-        ComboBox fonts = new ComboBox
-        {
-            ItemsSource = FontManager.Current.SystemFonts,
-            SelectedItem = FontFamily
-        };
-        Avalonia.Automation.AutomationProperties.SetName(fonts, Strings.Get("Font"));
-        panel.Children.Add(fonts);
-        TextBlock status = new TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap
-        };
-        FormControls.AddActionButton(panel, "SaveAppearance", async () =>
-        {
-            AppearanceSettings settings = new AppearanceSettings(
-                themes[theme.SelectedIndex],
-                previews[preview.SelectedIndex],
-                densities[density.SelectedIndex],
-                fonts.SelectedItem is FontFamily family ? family.Name : "",
-                size.Value
-            );
-            ApplyAppearance(settings);
-            status.Text = _appearance is null ? Strings.Saved :
-                Strings.Describe(await _appearance.SaveAsync(settings, _lifetime.Token));
-        }, status);
-        panel.Children.Add(new TextBlock
-        {
-            Text = Strings.Get("ReducedMotion"),
-            TextWrapping = TextWrapping.Wrap
-        });
-        panel.Children.Add(status);
-        ShowWindow(new Window
-        {
-            Title = Strings.Settings,
-            Width = 500,
-            Height = 620,
-            Content = new ScrollViewer
-            {
-                Content = panel
-            }
-        });
-
-        ComboBox Choice(string label, string[] values, string selected)
-        {
-            panel.Children.Add(new TextBlock
-            {
-                Text = Strings.Get(label)
-            });
-            ComboBox choice = new ComboBox
-            {
-                ItemsSource = values.Select(Strings.Get).ToArray(),
-                SelectedIndex = Array.IndexOf(values, selected)
-            };
-            Avalonia.Automation.AutomationProperties.SetName(choice, Strings.Get(label));
-            panel.Children.Add(choice);
-            return choice;
-        }
-    }
 }

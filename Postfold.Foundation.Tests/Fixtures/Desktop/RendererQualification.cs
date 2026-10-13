@@ -112,6 +112,7 @@ public static class RendererQualification
                 {
                     CapturedUtc = DateTimeOffset.UtcNow,
                     Runtime = RuntimeInformation.FrameworkDescription,
+                    ExecutablePath = Environment.ProcessPath,
                     OperatingSystem = RuntimeInformation.OSDescription,
                     Architecture = RuntimeInformation.ProcessArchitecture.ToString(),
                     LogicalProcessors = Environment.ProcessorCount,

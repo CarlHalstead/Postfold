@@ -342,10 +342,11 @@ public sealed class MailAccountEngine : IMailAccountEngine
                 content.Sender,
                 content.Recipients,
                 predecessor,
-                sourceDraft
+                sourceDraft,
+                content.Subject
             );
-            await _outbox.QueueAsync(submission, cancellationToken).ConfigureAwait(false);
-            return Outcome<FrozenSubmission>.Success(submission);
+            bool queued = await _outbox.QueueAsync(submission, cancellationToken).ConfigureAwait(false);
+            return queued ? Outcome<FrozenSubmission>.Success(submission) : Outcome<FrozenSubmission>.Fail(Failure.NeedsReview);
         }
         catch (InvalidDataException)
         {
@@ -384,6 +385,29 @@ public sealed class MailAccountEngine : IMailAccountEngine
             WorkPriority.Interactive,
             cancellationToken
         );
+    }
+
+    public async Task<Failure> SubmitAsync(Guid submission, CancellationToken cancellationToken)
+    {
+        if (_stopping || !_policy.AllowNetwork)
+        {
+            return Failure.Unavailable;
+        }
+
+        Failure result = await _scheduler.EnqueueAsync(
+            Account,
+            new OutboxWork(Account, _outbox, _blobs, _submitter, submission),
+            WorkPriority.Interactive,
+            cancellationToken
+        ).ConfigureAwait(false);
+        OutboxEntry? entry = await _outbox.ReadAsync(submission, Account, CancellationToken.None).ConfigureAwait(false);
+        if (entry?.State == SubmissionState.Accepted)
+        {
+            return await StoreSentCopyAsync(submission, cancellationToken).ConfigureAwait(false);
+        }
+
+        return entry?.State == SubmissionState.Completed ? Failure.None
+            : result != Failure.None ? result : Failure.NeedsReview;
     }
 
     public Task<Failure> StoreSentCopyAsync(Guid submission, CancellationToken cancellationToken)

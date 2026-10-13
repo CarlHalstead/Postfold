@@ -1,5 +1,8 @@
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Markup.Xaml.MarkupExtensions;
+using Avalonia.Media;
 using Postfold.UI.Resources;
 using System;
 using System.Collections.Generic;
@@ -11,6 +14,85 @@ namespace Postfold.UI.Controls;
 internal static class FormControls
 {
     private static readonly ConditionalWeakTable<Window, List<Task>> Work = new ConditionalWeakTable<Window, List<Task>>();
+
+    internal static DockPanel Page(string title, Control content, Panel? footer = null)
+    {
+        DockPanel page = new DockPanel();
+        if (title.Length > 0)
+        {
+            TextBlock heading = new TextBlock
+            {
+                Text = title,
+                FontWeight = FontWeight.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Avalonia.Thickness(24, 24, 24, 16)
+            };
+            heading.Bind(TextBlock.FontSizeProperty, new DynamicResourceExtension("SubjectFontSize"));
+            DockPanel.SetDock(heading, Dock.Top);
+            page.Children.Add(heading);
+        }
+        if (footer is not null)
+        {
+            footer.Margin = new Avalonia.Thickness(24, 12);
+            DockPanel.SetDock(footer, Dock.Bottom);
+            page.Children.Add(footer);
+        }
+        page.Children.Add(new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            Content = content
+        });
+        return page;
+    }
+
+    internal static void ApplyTypography(Window window, double fontSize, FontFamily fontFamily)
+    {
+        window.FontSize = fontSize;
+        window.FontFamily = fontFamily;
+        window.Resources["SubjectFontSize"] = fontSize * 26 / 16;
+        window.Resources["BodyFontSize"] = fontSize * 18 / 16;
+        window.Resources["BodyLineHeight"] = fontSize * 27 / 16;
+        window.Resources["MetadataFontSize"] = fontSize * 14 / 16;
+    }
+
+    internal static Grid Pair(Control first, Control second)
+    {
+        Grid pair = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("150,16,*")
+        };
+        pair.Children.Add(first);
+        pair.Children.Add(second);
+        Grid.SetColumn(second, 2);
+        bool stacked = false;
+        pair.SizeChanged += (_, _) =>
+        {
+            bool next = pair.Bounds.Width < 460 * pair.GetValue(TemplatedControl.FontSizeProperty) / 16;
+            if (next == stacked)
+            {
+                return;
+            }
+            stacked = next;
+            pair.ColumnDefinitions = new ColumnDefinitions(stacked ? "*" : "150,16,*");
+            pair.RowDefinitions = new RowDefinitions(stacked ? "Auto,Auto" : "*");
+            Grid.SetColumn(second, stacked ? 0 : 2);
+            Grid.SetRow(second, stacked ? 1 : 0);
+            second.Margin = stacked ? new Avalonia.Thickness(0, 12, 0, 0) : default;
+        };
+        return pair;
+    }
+
+    internal static void Track(Window window, Task task)
+    {
+        while (window.Owner is Window owner)
+        {
+            window = owner;
+        }
+
+        List<Task> tasks = Work.GetOrCreateValue(window);
+        tasks.RemoveAll(item => item.IsCompleted);
+        tasks.Add(task);
+    }
 
     internal static async Task DrainAsync(Window window)
     {
@@ -39,22 +121,30 @@ internal static class FormControls
             PasswordChar = password ? '●' : '\0'
         };
         AutomationProperties.SetName(field, label);
-        panel.Children.Add(new TextBlock
+        StackPanel group = new StackPanel { Spacing = 4 };
+        TextBlock caption = new TextBlock
         {
-            Text = label
-        });
-        panel.Children.Add(field);
+            Text = label,
+            TextWrapping = TextWrapping.Wrap
+        };
+        caption.Classes.Add("caption");
+        group.Children.Add(caption);
+        group.Children.Add(field);
+        panel.Children.Add(group);
         return field;
     }
 
-    internal static Button AddActionButton(StackPanel panel, string key, Func<Task> action, TextBlock status)
+    internal static Button AddActionButton(Panel panel, string key, Func<Task> action, TextBlock status)
     {
         Button button = new Button
         {
             Name = key,
-            Content = Strings.Get(key)
+            Content = new TextBlock { Text = Strings.Get(key), TextWrapping = TextWrapping.Wrap },
+            Margin = new Avalonia.Thickness(0, 0, 8, 8)
         };
-        if (key is "Send" or "Save" or "SaveCredentials" or "SaveRoles")
+        AutomationProperties.SetName(button, Strings.Get(key));
+        AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
+        if (key is "Send" or "Save" or "SaveSettings" or "SaveCredentials" or "SaveRoles")
         {
             button.Classes.Add("primary");
         }
@@ -66,14 +156,7 @@ internal static class FormControls
                 Task task = action();
                 if (TopLevel.GetTopLevel(button) is Window window)
                 {
-                    while (window.Owner is Window owner)
-                    {
-                        window = owner;
-                    }
-
-                    List<Task> tasks = Work.GetOrCreateValue(window);
-                    tasks.RemoveAll(item => item.IsCompleted);
-                    tasks.Add(task);
+                    Track(window, task);
                 }
 
                 await task;

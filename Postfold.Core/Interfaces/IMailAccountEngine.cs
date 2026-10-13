@@ -52,6 +52,9 @@ public interface IMailAccountEngine : IAsyncDisposable
 
     Task<Failure> ProcessOutboxAsync(CancellationToken cancellationToken);
 
+    /// <summary>Immediately attempts the specified frozen message, then stores its sent copy after acceptance.</summary>
+    Task<Failure> SubmitAsync(Guid submission, CancellationToken cancellationToken);
+
     Task<Failure> StoreSentCopyAsync(Guid submission, CancellationToken cancellationToken);
 
     Task<Failure> FetchBodyAsync(MessageSnapshot message, CancellationToken cancellationToken);

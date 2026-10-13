@@ -52,13 +52,17 @@ public sealed class AccountRemovalTests
         try
         {
             // Act
-            main.FindControl<Button>("RemoveAccountButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            main.OpenSettings("Accounts", EngineFixture.Account);
+            SettingsWindow settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
+            settings.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "RemoveAccount")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await main.WaitForActionsAsync();
-            Window dialog = main.OwnedWindows.Single();
+            Window dialog = main.OwnedWindows.Single(window => window is not SettingsWindow);
             Assert.That(model.Accounts, Has.Count.EqualTo(3));
             dialog.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "ConfirmRemoveAccount")
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await main.WaitForActionsAsync();
+            settings.Close();
 
             // Assert
             Assert.That(model.Accounts.Count, Is.EqualTo(draftExists ? 3 : 2));

@@ -114,6 +114,11 @@ internal sealed class QualificationMailApplication(IMailApplication application)
         return application.ProcessOutboxAsync(account, cancellationToken);
     }
 
+    public Task<Failure> SubmitAsync(AccountId account, Guid submission, CancellationToken cancellationToken)
+    {
+        return application.SubmitAsync(account, submission, cancellationToken);
+    }
+
     public Task<Outcome<ComposeContent>> PrepareResendAsync(OutboxEntry entry, CancellationToken cancellationToken)
     {
         return application.PrepareResendAsync(entry, cancellationToken);

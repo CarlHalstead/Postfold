@@ -58,12 +58,16 @@ public sealed class ClientTests
             model.Navigation.First(item => item.Scope.IsAccount).IsExpanded = false;
 
             // Act
-            main.FindControl<Button>("RenameAccountButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            main.OpenSettings("Accounts", original.Id);
+            SettingsWindow settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
+            settings.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "RenameAccount")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await main.WaitForActionsAsync();
-            Window dialog = main.OwnedWindows.Single();
+            Window dialog = main.OwnedWindows.Single(window => window is not SettingsWindow);
             dialog.GetVisualDescendants().OfType<TextBox>().Single(field => field.Name == "RenameName").Text = "Personal";
             dialog.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "SaveAccountName").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await main.WaitForActionsAsync();
+            settings.Close();
 
             // Assert
             Assert.That(model.Accounts[0].Name, Is.EqualTo("Personal"));
@@ -185,13 +189,23 @@ public sealed class ClientTests
     {
         // Arrange
         IMailApplication application = Application();
-        application.Catalog.OutboxAsync(Arg.Any<AccountId>(), Arg.Any<CancellationToken>())
-            .Returns(ImmutableArray<OutboxEntry>.Empty);
+        AccountId account = new AccountId(1);
+        FrozenSubmission frozen = new FrozenSubmission(
+            Guid.NewGuid(),
+            account,
+            new BlobReference(Guid.NewGuid(), account, 10, "synthetic", true),
+            "sender@synthetic.invalid",
+            ["recipient@synthetic.invalid"]
+        );
+        application.Catalog.CommandsAsync(account, Arg.Any<CancellationToken>())
+            .Returns(ImmutableArray<Postfold.Core.Models.Operations.CommandSnapshot>.Empty);
+        application.Catalog.OutboxAsync(account, Arg.Any<CancellationToken>())
+            .Returns(ImmutableArray.Create(new OutboxEntry(frozen, SubmissionState.Queued, 1, null)));
         TaskCompletionSource<Failure> pending = new TaskCompletionSource<Failure>(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
         CancellationToken submission = default;
-        application.ProcessOutboxAsync(Arg.Any<AccountId>(), Arg.Any<CancellationToken>()).Returns(call =>
+        application.SubmitAsync(account, frozen.Id, Arg.Any<CancellationToken>()).Returns(call =>
         {
             submission = call.Arg<CancellationToken>();
             return pending.Task;
@@ -206,9 +220,12 @@ public sealed class ClientTests
         main.Show();
         try
         {
-            main.FindControl<Button>("OutboxButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await main.CommandsAsync(account);
             Window outbox = main.OwnedWindows.Single();
-            Button transmit = outbox.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "Transmit");
+            ListBox sends = outbox.GetVisualDescendants().OfType<ListBox>().Single(control => control.Name == "SendIssues");
+            sends.SelectedIndex = 0;
+            outbox.UpdateLayout();
+            Button transmit = outbox.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "Send");
             transmit.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
             // Act
@@ -729,7 +746,6 @@ public sealed class ClientTests
         // Act
         await model.RefreshAsync(false);
         model.UnreadOnly = true;
-        model.KnownAttachmentsOnly = true;
         bool canContinueOldFilter = model.MoreCommand.CanExecute(null);
         await model.RefreshAsync(false);
 
@@ -738,18 +754,17 @@ public sealed class ClientTests
         Assert.That(model.Rows.Single(), Is.SameAs(row));
         Assert.That(canContinueOldFilter, Is.False);
         await application.Received().SearchAsync(
-            Arg.Is<SearchRequest>(request => request.UnreadOnly && request.KnownAttachmentsOnly && request.Continuation == null),
+            Arg.Is<SearchRequest>(request => request.UnreadOnly && request.Continuation == null),
             Arg.Any<CancellationToken>()
         );
     }
 
     [AvaloniaTest]
-    [TestCase("UnreadFilter", true, false)]
-    [TestCase("AttachmentFilter", false, true)]
+    [TestCase("UnreadFilter", true)]
+    [TestCase("AllFilterButton", false)]
     public async Task Filter_WhenControlChanges_SubmitsCurrentFilterToTheApplication(
         string control,
-        bool unread,
-        bool attachments
+        bool unread
     )
     {
         // Arrange
@@ -767,14 +782,16 @@ public sealed class ClientTests
             application.ClearReceivedCalls();
 
             // Act
-            main.FindControl<CheckBox>(control)!.IsChecked = true;
+            main.FindControl<RadioButton>("UnreadFilter")!.IsChecked = !unread;
+            await main.WaitForActionsAsync();
+            application.ClearReceivedCalls();
+            main.FindControl<RadioButton>(control)!.IsChecked = true;
             await main.WaitForActionsAsync();
 
             // Assert
             Assert.That(model.UnreadOnly, Is.EqualTo(unread));
-            Assert.That(model.KnownAttachmentsOnly, Is.EqualTo(attachments));
             await application.Received().SearchAsync(
-                Arg.Is<SearchRequest>(request => request.UnreadOnly == unread && request.KnownAttachmentsOnly == attachments),
+                Arg.Is<SearchRequest>(request => request.UnreadOnly == unread),
                 Arg.Any<CancellationToken>()
             );
         }

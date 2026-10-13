@@ -68,7 +68,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 return Failure.NotFound;
             }
             long protectedWork = Convert.ToInt64(Scalar(connection, transaction, """
-                SELECT (SELECT COUNT(*) FROM Drafts WHERE AccountId=$a)
+                SELECT (SELECT COUNT(*) FROM Drafts d WHERE d.AccountId=$a AND NOT EXISTS
+                    (SELECT 1 FROM OutboxSubmissions o WHERE o.AccountId=d.AccountId
+                    AND o.SourceDraftId=d.DraftId AND o.State<>$cancelled))
                     + (SELECT COUNT(*) FROM OutboxSubmissions WHERE AccountId=$a AND State NOT IN($done,$cancelled))
                     + (SELECT COUNT(*) FROM PendingOperations WHERE AccountId=$a AND State NOT IN($finished,$dismissed));
                 """, ("$a", account.Value), ("$done", (int)SubmissionState.Completed),
@@ -309,6 +311,43 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
+    public Task<ImmutableArray<MailboxUnreadCount>> MailboxUnreadCountsAsync(AccountId account, CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(
+                connection,
+                null,
+                """
+                SELECT c.FolderId,COUNT(DISTINCT m.MessageId)
+                FROM Collections c
+                JOIN Accounts active ON active.AccountId=c.AccountId AND active.Active=1
+                LEFT JOIN Memberships x ON x.AccountId=c.AccountId AND x.FolderId=c.FolderId
+                LEFT JOIN (
+                    SELECT i.AccountId,i.FolderId,i.MessageId,MAX(i.UidValidity=current.UidValidity) AS Eligible
+                    FROM ImapInstances i
+                    JOIN Collections current ON current.AccountId=i.AccountId AND current.FolderId=i.FolderId
+                    WHERE i.AccountId=$a
+                    GROUP BY i.AccountId,i.FolderId,i.MessageId
+                ) validity ON validity.AccountId=x.AccountId AND validity.FolderId=x.FolderId AND validity.MessageId=x.MessageId
+                LEFT JOIN Messages m ON m.AccountId=x.AccountId AND m.MessageId=x.MessageId AND m.IsRead=0
+                    AND (validity.Eligible IS NULL OR validity.Eligible=1)
+                WHERE c.AccountId=$a
+                GROUP BY c.FolderId;
+                """,
+                ("$a", account.Value)
+            );
+            using SqliteDataReader reader = command.ExecuteReader();
+            ImmutableArray<MailboxUnreadCount>.Builder counts = ImmutableArray.CreateBuilder<MailboxUnreadCount>();
+            while (reader.Read())
+            {
+                counts.Add(new MailboxUnreadCount(account, new FolderId(reader.GetInt64(0)), reader.GetInt64(1)));
+            }
+
+            return counts.ToImmutable();
+        }, cancellationToken);
+    }
+
     public Task<ImmutableArray<MailboxSnapshot>> MailboxesAsync(CancellationToken cancellationToken)
     {
         return ReadAsync(connection =>
@@ -387,8 +426,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             using SqliteCommand command = Command(
                 connection,
                 null,
-                "SELECT DraftId FROM Drafts WHERE AccountId=$a ORDER BY rowid DESC LIMIT 200;",
-                ("$a", account.Value)
+                "SELECT DraftId FROM Drafts d WHERE AccountId=$a AND NOT EXISTS " +
+                "(SELECT 1 FROM OutboxSubmissions o WHERE o.AccountId=d.AccountId AND o.SourceDraftId=d.DraftId AND o.State<>$cancelled) " +
+                "ORDER BY d.rowid DESC LIMIT 200;",
+                ("$a", account.Value),
+                ("$cancelled", (int)SubmissionState.Cancelled)
             );
             using SqliteDataReader reader = command.ExecuteReader();
             ImmutableArray<Guid>.Builder ids = ImmutableArray.CreateBuilder<Guid>();
@@ -450,8 +492,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 connection,
                 null,
                 "SELECT Frozen,State,Revision,Evidence,SubmissionId,AccountId,BlobId FROM OutboxSubmissions " +
-                "WHERE AccountId=$a ORDER BY Created DESC LIMIT 200;",
-                ("$a", account.Value)
+                "WHERE AccountId=$a ORDER BY CASE WHEN State IN($completed,$cancelled) THEN 1 ELSE 0 END,Created DESC LIMIT 200;",
+                ("$a", account.Value),
+                ("$completed", (int)SubmissionState.Completed),
+                ("$cancelled", (int)SubmissionState.Cancelled)
             );
             using SqliteDataReader reader = command.ExecuteReader();
             ImmutableArray<OutboxEntry>.Builder entries = ImmutableArray.CreateBuilder<OutboxEntry>();
@@ -1201,8 +1245,6 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 LEFT JOIN ImapInstances i ON i.AccountId=m.AccountId AND i.MessageId=m.MessageId
                 LEFT JOIN Collections c ON c.AccountId=i.AccountId AND c.FolderId=i.FolderId
                 WHERE ($a IS NULL OR m.AccountId=$a) AND ($u=0 OR m.IsRead=0)
-                AND ($attachments=0 OR EXISTS(SELECT 1 FROM Attachments a
-                    WHERE a.AccountId=m.AccountId AND a.MessageId=m.MessageId))
                 AND (i.UidValidity IS NULL OR i.UidValidity=c.UidValidity)
                 AND EXISTS(SELECT 1 FROM Memberships x WHERE x.AccountId=m.AccountId AND x.MessageId=m.MessageId
                     AND ($f IS NULL OR x.FolderId=$f)
@@ -1222,7 +1264,6 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 sql,
                 ("$a", request.Account?.Value),
                 ("$u", request.UnreadOnly),
-                ("$attachments", request.KnownAttachmentsOnly),
                 ("$f", request.Folder?.Value),
                 ("$d", date),
                 ("$i", id),
@@ -1578,7 +1619,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task QueueAsync(FrozenSubmission submission, CancellationToken cancellationToken)
+    public Task<bool> QueueAsync(FrozenSubmission submission, CancellationToken cancellationToken)
     {
         if (!submission.Mime.Protected || submission.Recipients.IsDefaultOrEmpty ||
             submission.Recipients.Distinct(StringComparer.OrdinalIgnoreCase).Count() != submission.Recipients.Length)
@@ -1589,6 +1630,17 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         return WriteAsync(connection =>
         {
             using SqliteTransaction transaction = connection.BeginTransaction();
+            if (submission.SourceDraft is Guid sourceDraft && Convert.ToInt64(Scalar(
+                connection,
+                transaction,
+                "SELECT COUNT(*) FROM OutboxSubmissions WHERE AccountId=$a AND SourceDraftId=$draft AND State<>$cancelled;",
+                ("$a", submission.Account.Value),
+                ("$draft", sourceDraft.ToString("N")),
+                ("$cancelled", (int)SubmissionState.Cancelled)
+            ), CultureInfo.InvariantCulture) > 0)
+            {
+                return false;
+            }
             RegisterBlob(connection, transaction, submission.Account, submission.Mime);
             Execute(
                 connection,
@@ -1656,43 +1708,12 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
 
     public Task<OutboxEntry?> ClaimAsync(AccountId account, CancellationToken cancellationToken)
     {
-        return WriteAsync<OutboxEntry?>(connection =>
-        {
-            using SqliteTransaction transaction = connection.BeginTransaction();
-            OutboxEntry? entry;
-            using (SqliteCommand command = Command(
-                connection,
-                transaction,
-                "SELECT Frozen,State,Revision,Evidence,SubmissionId,AccountId,BlobId FROM OutboxSubmissions " +
-                "WHERE AccountId=$a AND State=$s " +
-                "ORDER BY Created,SubmissionId LIMIT 1;",
-                ("$a", account.Value),
-                ("$s", (int)SubmissionState.Queued)
-            ))
-            using (SqliteDataReader reader = command.ExecuteReader())
-            {
-                entry = reader.Read() ? ReadOutbox(reader) : null;
-            }
+        return ClaimSubmissionAsync(null, account, cancellationToken);
+    }
 
-            if (entry is null)
-            {
-                return null;
-            }
-
-            Execute(
-                connection,
-                transaction,
-                "UPDATE OutboxSubmissions SET State=$s,Revision=Revision+1 WHERE SubmissionId=$i;",
-                ("$s", (int)SubmissionState.Submitting),
-                ("$i", entry.Submission.Id.ToString("N"))
-            );
-            transaction.Commit();
-            return entry with
-            {
-                State = SubmissionState.Submitting,
-                Revision = entry.Revision + 1
-            };
-        }, cancellationToken);
+    public Task<OutboxEntry?> ClaimAsync(Guid id, AccountId account, CancellationToken cancellationToken)
+    {
+        return ClaimSubmissionAsync(id, account, cancellationToken);
     }
 
     public Task<bool> FinishAsync(OutboxEntry claim, SubmissionOutcome outcome, CancellationToken cancellationToken)
@@ -1928,6 +1949,48 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             }
 
             return string.Join("\n", plans);
+        }, cancellationToken);
+    }
+
+    private Task<OutboxEntry?> ClaimSubmissionAsync(Guid? id, AccountId account, CancellationToken cancellationToken)
+    {
+        return WriteAsync<OutboxEntry?>(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            OutboxEntry? entry;
+            using (SqliteCommand command = Command(
+                connection,
+                transaction,
+                "SELECT Frozen,State,Revision,Evidence,SubmissionId,AccountId,BlobId FROM OutboxSubmissions " +
+                "WHERE AccountId=$a AND State=$s AND ($i IS NULL OR SubmissionId=$i) " +
+                "ORDER BY Created,SubmissionId LIMIT 1;",
+                ("$a", account.Value),
+                ("$s", (int)SubmissionState.Queued),
+                ("$i", id?.ToString("N"))
+            ))
+            using (SqliteDataReader reader = command.ExecuteReader())
+            {
+                entry = reader.Read() ? ReadOutbox(reader) : null;
+            }
+
+            if (entry is null)
+            {
+                return null;
+            }
+
+            Execute(
+                connection,
+                transaction,
+                "UPDATE OutboxSubmissions SET State=$s,Revision=Revision+1 WHERE SubmissionId=$i;",
+                ("$s", (int)SubmissionState.Submitting),
+                ("$i", entry.Submission.Id.ToString("N"))
+            );
+            transaction.Commit();
+            return entry with
+            {
+                State = SubmissionState.Submitting,
+                Revision = entry.Revision + 1
+            };
         }, cancellationToken);
     }
 

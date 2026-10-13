@@ -39,7 +39,7 @@ public sealed class MainWindowTests
             Assert.That(reader.SelectedText, Is.EqualTo("synthetic"));
             Assert.That(reader.CanCopy, Is.True);
             Assert.That(reader.Text, Is.EqualTo("A synthetic message for selection."));
-            Assert.That(window.FindControl<ScrollViewer>("ReaderAttachmentScroll")!.IsVisible, Is.False);
+            Assert.That(window.FindControl<StackPanel>("ReaderAttachmentPanel")!.IsVisible, Is.False);
         }
         finally
         {

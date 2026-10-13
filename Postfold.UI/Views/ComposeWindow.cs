@@ -33,6 +33,10 @@ public sealed class ComposeWindow : Window
     private readonly Guid? _predecessor;
     private readonly SemaphoreSlim _saving = new SemaphoreSlim(1, 1);
     private readonly SemaphoreSlim _actions = new SemaphoreSlim(1, 1);
+    private CancellationTokenSource _submissionCancellation = new CancellationTokenSource();
+    private readonly Button _send;
+    private readonly Button _close;
+    private readonly WrapPanel _actionButtons;
     private readonly TextBox _sender;
     private readonly TextBox _recipients;
     private readonly TextBox _subject;
@@ -56,6 +60,8 @@ public sealed class ComposeWindow : Window
     private bool _conflict;
     private bool _stopping;
     private bool _closing;
+    private bool _canSubmit = true;
+    private Guid? _submission;
 
     public ComposeWindow(
         IMailApplication application,
@@ -76,17 +82,13 @@ public sealed class ComposeWindow : Window
         Title = Strings.Compose;
         Width = 760;
         Height = 760;
+        MinWidth = 480;
+        MinHeight = 480;
         StackPanel form = new StackPanel
         {
             Margin = new Thickness(24),
             Spacing = 12
         };
-        form.Children.Add(new TextBlock
-        {
-            Text = Strings.NewMail,
-            FontWeight = FontWeight.SemiBold,
-            FontSize = 22
-        });
         _sender = FormControls.AddField(form, "Sender", content.Sender);
         _recipients = FormControls.AddField(form, "Recipients", string.Join(";", content.Recipients));
         _subject = FormControls.AddField(form, "Subject", content.Subject);
@@ -94,14 +96,20 @@ public sealed class ComposeWindow : Window
         _body.AcceptsReturn = true;
         _body.TextWrapping = TextWrapping.Wrap;
         _body.MinHeight = 220;
-        _signature = FormControls.AddField(form, "Signature", content.Signature);
+        _body.Bind(TextBox.FontSizeProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("BodyFontSize"));
+        StackPanel signature = new StackPanel { Spacing = 8 };
+        _signature = FormControls.AddField(signature, "Signature", content.Signature);
         _signature.AcceptsReturn = true;
+        _signature.TextWrapping = TextWrapping.Wrap;
+        form.Children.Add(new Expander { Header = Strings.Signature, Content = signature });
         if (!content.Attachments.IsDefaultOrEmpty)
         {
             _attachments.AddRange(content.Attachments);
         }
 
-        FormControls.AddActionButton(form, "Attach", () => RunActionAsync(AttachAsync), _status);
+        WrapPanel actions = new WrapPanel();
+        _actionButtons = actions;
+        FormControls.AddActionButton(actions, "Attach", () => RunActionAsync(AttachAsync), _status);
         if (original is not null && !originalAttachments.IsDefaultOrEmpty)
         {
             ListBox originals = new ListBox
@@ -110,9 +118,9 @@ public sealed class ComposeWindow : Window
                 MaxHeight = 120
             };
             Avalonia.Automation.AutomationProperties.SetName(originals, Strings.Get("OriginalAttachments"));
-            originals.ItemTemplate = new FuncDataTemplate<AttachmentSnapshot>((attachment, _) => new TextBlock
+            originals.ItemTemplate = new FuncDataTemplate<AttachmentSnapshot>((attachment, _) => attachment is null ? null : new TextBlock
             {
-                Text = attachment!.Name
+                Text = attachment.Name
             });
             form.Children.Add(new TextBlock
             {
@@ -128,31 +136,43 @@ public sealed class ComposeWindow : Window
             }), _status);
         }
         Avalonia.Automation.AutomationProperties.SetName(_attachmentList, Strings.Get("ComposeAttachments"));
-        _attachmentList.ItemTemplate = new FuncDataTemplate<ComposeAttachment>((attachment, _) => new TextBlock
+        _attachmentList.ItemTemplate = new FuncDataTemplate<ComposeAttachment>((attachment, _) => attachment is null ? null : new TextBlock
         {
-            Text = attachment!.Name + " (" + attachment.Content.Length.ToString(
+            Text = attachment.Name + " (" + attachment.Content.Length.ToString(
                 System.Globalization.CultureInfo.CurrentCulture
             ) + " " + Strings.Get("Bytes") + ")"
         });
         _attachmentList.ItemsSource = _attachments.ToArray();
+        _attachmentList.IsVisible = _attachments.Count > 0;
         form.Children.Add(_attachmentList);
-        FormControls.AddActionButton(form, "RemoveAttachment", () => RunActionAsync(async () =>
+        Button remove = FormControls.AddActionButton(actions, "RemoveAttachment", () => RunActionAsync(async () =>
         {
             if (_attachmentList.SelectedItem is ComposeAttachment attachment && !_frozen)
             {
                 _attachments.Remove(attachment);
                 _attachmentList.ItemsSource = _attachments.ToArray();
+                _attachmentList.IsVisible = _attachments.Count > 0;
                 await FlushAsync();
             }
         }), _status);
-        FormControls.AddActionButton(form, "Save", () => RunActionAsync(async () => { await FlushAsync(); }), _status);
-        Button send = FormControls.AddActionButton(form, "Send", QueueAsync, _status);
+        remove.IsEnabled = _attachments.Count > 0;
+        _attachmentList.SelectionChanged += (_, _) => remove.IsEnabled = _attachmentList.SelectedItem is ComposeAttachment && !_frozen;
+        Button save = FormControls.AddActionButton(actions, "Save", () => RunActionAsync(async () => { await FlushAsync(); }), _status);
+        save.Classes.Remove("primary");
+        Button send = FormControls.AddActionButton(actions, "Send", QueueAsync, _status);
+        _send = send;
         send.IsEnabled = !conflict;
-        form.Children.Add(_status);
-        Content = new ScrollViewer
+        _close = FormControls.AddActionButton(actions, "CloseCompose", () =>
         {
-            Content = form
-        };
+            Close();
+            return Task.CompletedTask;
+        }, _status);
+        StackPanel footer = new StackPanel { Spacing = 8 };
+        footer.Children.Add(actions);
+        footer.Children.Add(_status);
+        Avalonia.Automation.AutomationProperties.SetLiveSetting(_status, Avalonia.Automation.AutomationLiveSetting.Polite);
+        Content = FormControls.Page(Strings.Compose, form, footer);
+        SizeChanged += (_, _) => _body.MinHeight = Math.Max(140, Bounds.Height - 540);
         foreach (TextBox field in new[] { _sender, _recipients, _subject, _body, _signature })
         {
             field.TextChanged += (_, _) =>
@@ -196,7 +216,11 @@ public sealed class ComposeWindow : Window
                 _closing = false;
             }
         };
-        Closed += (_, _) => _timer.Stop();
+        Closed += (_, _) =>
+        {
+            _timer.Stop();
+            _submissionCancellation.Dispose();
+        };
         Opened += (_, _) => _recipients.Focus();
         KeyDown += async (_, args) =>
         {
@@ -216,7 +240,10 @@ public sealed class ComposeWindow : Window
     }
 
     public AccountId Account => _account;
+    public Guid DraftId => _id;
     public Guid? SourceSubmission => _predecessor;
+
+    public event Action<string>? SendStatusChanged;
 
     public async Task<bool> FlushAsync()
     {
@@ -259,6 +286,7 @@ public sealed class ComposeWindow : Window
     public void BeginShutdown()
     {
         _stopping = true;
+        _submissionCancellation.Cancel();
         IsEnabled = false;
         _timer.Stop();
     }
@@ -284,6 +312,8 @@ public sealed class ComposeWindow : Window
     public void ResumeEditing()
     {
         _stopping = false;
+        _submissionCancellation.Dispose();
+        _submissionCancellation = new CancellationTokenSource();
         IsEnabled = true;
     }
 
@@ -326,6 +356,7 @@ public sealed class ComposeWindow : Window
 
         _attachments.Add(imported.Value!);
         _attachmentList.ItemsSource = _attachments.ToArray();
+        _attachmentList.IsVisible = _attachments.Count > 0;
         return await FlushAsync() ? Failure.None : Failure.Unavailable;
     }
 
@@ -377,35 +408,94 @@ public sealed class ComposeWindow : Window
 
     private async Task SendAsync()
     {
-        if (_frozen || _conflict || !await FlushAsync())
+        if ((_frozen && !_canSubmit) || _conflict || !await FlushAsync())
         {
             return;
         }
 
-        ComposeContent content = Snapshot();
-        if (!MailAddress.TryCreate(content.Sender, out _) || content.Recipients.IsDefaultOrEmpty ||
-            content.Recipients.Any(item => !MailAddress.TryCreate(item, out _) || item.Contains('\r') || item.Contains('\n')))
+        _actionButtons.IsEnabled = false;
+        try
         {
-            _status.Text = Strings.Describe(Failure.Validation);
-            return;
-        }
+            if (_submission is null)
+            {
+                ComposeContent content = Snapshot();
+                if (!MailAddress.TryCreate(content.Sender, out _) || content.Recipients.IsDefaultOrEmpty ||
+                    content.Recipients.Any(item => !MailAddress.TryCreate(item, out _) || item.Contains('\r') || item.Contains('\n')))
+                {
+                    _status.Text = Strings.Describe(Failure.Validation);
+                    return;
+                }
 
-        Outcome<FrozenSubmission> queued = await _application.SendAsync(
-            _account,
-            content,
-            _id,
-            _predecessor,
-            CancellationToken.None
-        );
-        if (queued.IsSuccess)
-        {
-            _frozen = true;
-            _allowClose = true;
-            Close();
+                Outcome<FrozenSubmission> queued = await _application.SendAsync(
+                    _account,
+                    content,
+                    _id,
+                    _predecessor,
+                    CancellationToken.None
+                );
+                if (!queued.IsSuccess)
+                {
+                    _status.Text = Strings.Describe(queued.Failure);
+                    return;
+                }
+
+                _submission = queued.Value!.Id;
+                _frozen = true;
+                _send.IsVisible = false;
+                foreach (Button button in _actionButtons.Children.OfType<Button>())
+                {
+                    if (button != _send && button != _close)
+                    {
+                        button.IsEnabled = false;
+                    }
+                }
+                foreach (TextBox field in new[] { _sender, _recipients, _subject, _body, _signature })
+                {
+                    field.IsReadOnly = true;
+                }
+            }
+
+            _status.Text = Strings.Get("Sending");
+            _canSubmit = false;
+            Failure failure = Failure.NeedsReview;
+            try
+            {
+                failure = await _application.SubmitAsync(_account, _submission.Value, _submissionCancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // The durable state determines whether cancellation happened before or during transmission.
+            }
+
+            OutboxEntry? entry = (await _application.Catalog.OutboxAsync(_account, CancellationToken.None))
+                .FirstOrDefault(item => item.Submission.Id == _submission);
+            _status.Text = entry is null ? Strings.Get("SendReview") : Strings.Get("SendStatus." + entry.State);
+            if (entry?.State is SubmissionState.Queued or SubmissionState.Rejected)
+            {
+                _status.Text += " " + Strings.Describe(failure);
+            }
+            _send.IsVisible = entry?.State == SubmissionState.Queued;
+            _canSubmit = entry?.State == SubmissionState.Queued;
+            SendStatusChanged?.Invoke(_status.Text!);
+            if (entry?.State == SubmissionState.Completed)
+            {
+                _allowClose = true;
+                Close();
+            }
         }
-        else
+        catch (Exception exception) when (_frozen && exception is IOException or UnauthorizedAccessException)
         {
-            _status.Text = Strings.Describe(queued.Failure);
+            _send.IsVisible = false;
+            _status.Text = Strings.Get("SendReview");
+            SendStatusChanged?.Invoke(_status.Text);
+        }
+        finally
+        {
+            _actionButtons.IsEnabled = true;
+            if (_frozen && IsVisible && !_stopping)
+            {
+                (_canSubmit ? _send : _close).Focus();
+            }
         }
     }
 
@@ -438,6 +528,7 @@ public sealed class ComposeWindow : Window
 
             _attachments.Add(imported.Value!);
             _attachmentList.ItemsSource = _attachments.ToArray();
+            _attachmentList.IsVisible = _attachments.Count > 0;
         }
 
         await FlushAsync();

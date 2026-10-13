@@ -27,7 +27,7 @@ public sealed class AccountSetupWindow : Window
     {
         Title = Strings.Setup;
         Width = 620;
-        Height = 780;
+        Height = 640;
         MinWidth = 360;
         MinHeight = 480;
         StackPanel form = new StackPanel
@@ -35,12 +35,6 @@ public sealed class AccountSetupWindow : Window
             Margin = new Thickness(24),
             Spacing = 12
         };
-        form.Children.Add(new TextBlock
-        {
-            Text = Strings.Setup,
-            FontWeight = FontWeight.SemiBold,
-            FontSize = 22
-        });
         StackPanel login = new StackPanel
         {
             Name = "LoginStep",
@@ -49,6 +43,8 @@ public sealed class AccountSetupWindow : Window
         form.Children.Add(login);
         TextBox email = FormControls.AddField(login, "Email");
         email.MaxLength = 320;
+        TextBox password = FormControls.AddField(login, "AccountPassword", password: true);
+        password.Name = "IncomingPassword";
         login.Children.Add(new TextBlock
         {
             Text = Strings.LoginHint,
@@ -62,8 +58,6 @@ public sealed class AccountSetupWindow : Window
             Header = Strings.Get("SharedLoginOptions"),
             Content = advanced
         });
-        TextBox password = FormControls.AddField(login, "AccountPassword", password: true);
-        password.Name = "IncomingPassword";
         StackPanel servers = new StackPanel
         {
             Name = "ServerStep",
@@ -71,19 +65,27 @@ public sealed class AccountSetupWindow : Window
             IsVisible = false
         };
         form.Children.Add(servers);
+        servers.Children.Add(new TextBlock { Text = Strings.ReceivingSettings, FontWeight = FontWeight.SemiBold });
         servers.Children.Add(new TextBlock
         {
             Text = Strings.ServerHint,
             TextWrapping = TextWrapping.Wrap
         });
         TextBox incomingHost = FormControls.AddField(servers, "IncomingHost");
-        TextBox incomingPort = FormControls.AddField(servers, "IncomingPort", "993");
-        ComboBox incomingTls = TlsChoice("IncomingTls");
-        servers.Children.Add(incomingTls);
+        StackPanel incomingPortGroup = new StackPanel { Spacing = 4 };
+        StackPanel incomingTlsGroup = new StackPanel { Spacing = 4 };
+        TextBox incomingPort = FormControls.AddField(incomingPortGroup, "IncomingPort", "993");
+        ComboBox incomingTls = TlsChoice("IncomingTls", incomingTlsGroup);
+        incomingTlsGroup.Children.Add(incomingTls);
+        servers.Children.Add(FormControls.Pair(incomingPortGroup, incomingTlsGroup));
+        servers.Children.Add(new TextBlock { Text = Strings.SendingSettings, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 12, 0, 0) });
         TextBox outgoingHost = FormControls.AddField(servers, "OutgoingHost");
-        TextBox outgoingPort = FormControls.AddField(servers, "OutgoingPort", "465");
-        ComboBox outgoingTls = TlsChoice("OutgoingTls");
-        servers.Children.Add(outgoingTls);
+        StackPanel outgoingPortGroup = new StackPanel { Spacing = 4 };
+        StackPanel outgoingTlsGroup = new StackPanel { Spacing = 4 };
+        TextBox outgoingPort = FormControls.AddField(outgoingPortGroup, "OutgoingPort", "465");
+        ComboBox outgoingTls = TlsChoice("OutgoingTls", outgoingTlsGroup);
+        outgoingTlsGroup.Children.Add(outgoingTls);
+        servers.Children.Add(FormControls.Pair(outgoingPortGroup, outgoingTlsGroup));
         TextBox draft = FormControls.AddField(servers, "DraftMailbox");
         form.Children.Add(new TextBlock
         {
@@ -96,7 +98,12 @@ public sealed class AccountSetupWindow : Window
             TextWrapping = TextWrapping.Wrap
         };
         AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
-        FormControls.AddActionButton(login, "ContinueServers", () =>
+        WrapPanel loginActions = new WrapPanel();
+        WrapPanel serverActions = new WrapPanel { IsVisible = false };
+        StackPanel footer = new StackPanel { Spacing = 8 };
+        footer.Children.Add(loginActions);
+        footer.Children.Add(serverActions);
+        FormControls.AddActionButton(loginActions, "ContinueServers", () =>
         {
             if (!MailAddress.TryCreate(email.Text, out MailAddress? address) || address.Address != email.Text)
             {
@@ -106,14 +113,18 @@ public sealed class AccountSetupWindow : Window
             }
             login.IsVisible = false;
             servers.IsVisible = true;
+            loginActions.IsVisible = false;
+            serverActions.IsVisible = true;
             incomingHost.Focus();
             status.Text = "";
             return System.Threading.Tasks.Task.CompletedTask;
         }, status).Classes.Add("primary");
-        FormControls.AddActionButton(servers, "BackLogin", () =>
+        FormControls.AddActionButton(serverActions, "BackLogin", () =>
         {
             servers.IsVisible = false;
             login.IsVisible = true;
+            loginActions.IsVisible = true;
+            serverActions.IsVisible = false;
             email.Focus();
             return System.Threading.Tasks.Task.CompletedTask;
         }, status);
@@ -122,7 +133,7 @@ public sealed class AccountSetupWindow : Window
             Name = "FolderRoles",
             Spacing = 8
         };
-        FormControls.AddActionButton(servers, "TestEndpoints", async () =>
+        FormControls.AddActionButton(serverActions, "TestEndpoints", async () =>
         {
             roles.Children.Clear();
             if (!int.TryParse(incomingPort.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int first) ||
@@ -138,6 +149,8 @@ public sealed class AccountSetupWindow : Window
                 status.Text = Strings.Describe(Failure.Validation);
                 servers.IsVisible = false;
                 login.IsVisible = true;
+                loginActions.IsVisible = true;
+                serverActions.IsVisible = false;
                 password.Focus();
                 return;
             }
@@ -170,8 +183,8 @@ public sealed class AccountSetupWindow : Window
             status.Text = $"{Strings.Get("CredentialResult")}: {Strings.Describe(result.Credentials)}; " +
                 $"IMAP: {Strings.Describe(result.Incoming)}; SMTP: {Strings.Describe(result.Outgoing)}; " +
                 $"{Strings.Sender}: {Strings.Describe(result.Identity)}; " +
-                $"{Strings.Get("InitialSync")}: {Strings.Describe(result.Synchronisation)}\n" +
-                string.Join("\n", result.Mailboxes.Select(item => item.Name));
+                $"{Strings.Get("InitialSync")}: {Strings.Describe(result.Synchronisation)}";
+            status.BringIntoView();
             if (result.Incoming == Failure.None && !result.Mailboxes.IsDefaultOrEmpty)
             {
                 AccountAdded?.Invoke(result.Mailboxes[0].Account);
@@ -226,27 +239,28 @@ public sealed class AccountSetupWindow : Window
         }, status).Classes.Add("primary");
         form.Children.Add(roles);
         form.Children.Add(status);
-        FormControls.AddActionButton(form, "SkipSetup", () =>
+        FormControls.AddActionButton(footer, "SkipSetup", () =>
         {
             Close();
             return System.Threading.Tasks.Task.CompletedTask;
         }, status);
-        Content = new ScrollViewer
-        {
-            Content = form
-        };
+        Content = FormControls.Page(Strings.Setup, form, footer);
         Opened += (_, _) => email.Focus();
         Closed += (_, _) => { password.Text = ""; CancelSetup(); };
 
-        ComboBox TlsChoice(string key)
+        ComboBox TlsChoice(string key, StackPanel target)
         {
-            servers.Children.Add(new TextBlock
+            TextBlock label = new TextBlock
             {
-                Text = Strings.Get(key)
-            });
+                Text = Strings.Get(key),
+                TextWrapping = TextWrapping.Wrap
+            };
+            label.Classes.Add("caption");
+            target.Children.Add(label);
             ComboBox choice = new ComboBox
             {
                 Name = key,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
                 ItemsSource = Enum.GetValues<TlsMode>(),
                 SelectedIndex = 0,
                 ItemTemplate = new FuncDataTemplate<TlsMode>((value, _) => new TextBlock

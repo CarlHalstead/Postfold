@@ -17,18 +17,22 @@ public sealed class OutboxWork : IAccountWork
     private readonly IOutboxStore _store;
     private readonly IBlobStore _blobs;
     private readonly IMessageSubmitter _submitter;
+    private readonly Guid? _submission;
 
-    public OutboxWork(AccountId account, IOutboxStore store, IBlobStore blobs, IMessageSubmitter submitter)
+    public OutboxWork(AccountId account, IOutboxStore store, IBlobStore blobs, IMessageSubmitter submitter, Guid? submission = null)
     {
         _account = account;
         _store = store;
         _blobs = blobs;
         _submitter = submitter;
+        _submission = submission;
     }
 
     public async Task<Failure> RunAsync(CancellationToken cancellationToken)
     {
-        OutboxEntry? claim = await _store.ClaimAsync(_account, cancellationToken).ConfigureAwait(false);
+        OutboxEntry? claim = _submission is Guid id
+            ? await _store.ClaimAsync(id, _account, cancellationToken).ConfigureAwait(false)
+            : await _store.ClaimAsync(_account, cancellationToken).ConfigureAwait(false);
         if (claim is null)
         {
             return Failure.None;

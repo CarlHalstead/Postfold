@@ -126,9 +126,13 @@ internal sealed class QualificationSession
         string directory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Postfold",
-            design is not null ? "synthetic-design-v2" : qualification is not null ? "synthetic-qualification-v1" : scale ? "synthetic-scale-v1" :
+            design is not null ? "synthetic-design-v3" : qualification is not null ? "synthetic-qualification-v1" : scale ? "synthetic-scale-v1" :
                 demo ? "synthetic-demo-v1" : "profiles/default"
         );
+        if (design is not null)
+        {
+            directory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(design))!, "synthetic-profile");
+        }
         try
         {
             EngineLimits limits = new EngineLimits(2, 256, 3, 200, 33554432, 200, 30, 20, 1073741824);
@@ -142,6 +146,13 @@ internal sealed class QualificationSession
             if (!opened.IsSuccess)
             {
                 _window.Title = "Postfold — " + opened.Failure;
+                if (design is not null)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(design))!);
+                    await File.WriteAllTextAsync(design, "Native design profile failed to open: " + opened.Failure + "\n", _lifetime.Token);
+                    _exitRequested = true;
+                    _window.Close();
+                }
                 return;
             }
 

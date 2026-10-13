@@ -90,15 +90,15 @@ internal static class NativeReaderQualification
             results.Add(new
             {
                 Case = "actual-reader-host-font-applied",
-                Passed = await InspectAsync("getComputedStyle(document.body).fontSize === '14px'")
+                Passed = await InspectAsync("getComputedStyle(document.body).fontSize === '18px'")
             });
             window.FontSize = 28;
             results.Add(new
             {
                 Case = "actual-reader-host-font-change-applied",
-                Passed = await InspectAsync("getComputedStyle(document.body).fontSize === '28px'")
+                Passed = await InspectAsync("getComputedStyle(document.body).fontSize === '31.5px'")
             });
-            window.FontSize = 14;
+            window.FontSize = 16;
             Failure consent = await reader.LoadImagesAsync(message, cancellationToken);
             results.Add(new
             {

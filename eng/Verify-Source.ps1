@@ -46,7 +46,7 @@ foreach ($relativePath in $trackedFiles)
         }
     }
 
-    if ($relativePath -notmatch '\.(cs|csproj|props|targets|slnx|axaml|resx|json|ya?ml|ps1|md)$' -and
+    if ($relativePath -notmatch '\.(cs|csproj|props|targets|slnx|axaml|resx|manifest|json|ya?ml|ps1|md)$' -and
         $relativePath -notin @('LICENSE', '.editorconfig', '.gitattributes', 'NuGet.Config'))
     {
         continue

@@ -372,6 +372,12 @@ public sealed class MailApplication : IMailApplication
         return engine is null ? Task.FromResult(Failure.Unavailable) : engine.ProcessOutboxAsync(cancellationToken);
     }
 
+    public Task<Failure> SubmitAsync(AccountId account, Guid submission, CancellationToken cancellationToken)
+    {
+        IMailAccountEngine? engine = _engines.Find(account);
+        return engine is null ? Task.FromResult(Failure.Unavailable) : engine.SubmitAsync(submission, cancellationToken);
+    }
+
     public async Task<Outcome<ComposeContent>> PrepareResendAsync(OutboxEntry entry, CancellationToken cancellationToken)
     {
         ImmutableArray<OutboxEntry> entries = await Catalog.OutboxAsync(

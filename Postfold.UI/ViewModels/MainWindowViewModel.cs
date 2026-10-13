@@ -43,7 +43,6 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     private SearchRequest? _pageScope;
     private readonly TimeProvider _clock;
     private bool _unreadOnly;
-    private bool _knownAttachmentsOnly;
     private bool _updatingRows;
 
     public MainWindowViewModel() : this(null)
@@ -146,6 +145,13 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     public bool HasAccounts => Accounts.Count > 0;
     public bool IsEmpty => Rows.Count == 0;
     public bool HasStatus => !string.IsNullOrEmpty(Status) || !string.IsNullOrEmpty(NotificationStatus);
+    public bool HasMore => _continuation is not null;
+    public bool AllMail => !UnreadOnly;
+    public string SearchScope => string.Join(" · ", new[]
+    {
+        Scope?.Account is AccountId account ? Accounts.FirstOrDefault(item => item.Id == account)?.Name : "",
+        Scope?.Name.Trim(), UnreadOnly ? Strings.Unread : "", Strings.Get("CachedMail")
+    }.Where(value => !string.IsNullOrEmpty(value)).Distinct());
 
     public bool UnreadOnly
     {
@@ -155,18 +161,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             if (SetProperty(ref _unreadOnly, value))
             {
                 InvalidatePage();
-            }
-        }
-    }
-
-    public bool KnownAttachmentsOnly
-    {
-        get => _knownAttachmentsOnly;
-        set
-        {
-            if (SetProperty(ref _knownAttachmentsOnly, value))
-            {
-                InvalidatePage();
+                OnPropertyChanged(nameof(AllMail));
+                OnPropertyChanged(nameof(SearchScope));
             }
         }
     }
@@ -183,8 +179,16 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    public string ReaderSubject => Selected?.Subject ?? Strings.Get("SelectMessage");
-    public string ReaderSender => Selected?.Participants ?? "";
+    public string ReaderSubject => Selected is null ? Strings.Get("SelectMessage") :
+        string.IsNullOrWhiteSpace(Selected.Subject) ? Strings.Get("NoSubject") : Selected.Subject;
+    public string ReaderSender => SenderPresentation.Create(Selected?.Participants ?? "").Name;
+    public string ReaderAddress => SenderPresentation.Create(Selected?.Participants ?? "").Address;
+    public string ReaderTime => Selected?.Date.ToLocalTime().ToString("t", CultureInfo.CurrentCulture) ?? "";
+    public string ReaderTo => Content is MimeSnapshot content && !content.ToRecipients.IsDefaultOrEmpty ?
+        "To: " + string.Join("; ", content.ToRecipients.Select(address =>
+            string.Equals(address, Accounts.FirstOrDefault(account => account.Id == Selected?.Account)?.Identity?.Sender,
+                StringComparison.OrdinalIgnoreCase) ? Strings.Get("Me") : address)) : "";
+    public bool HasSelection => Selected is not null;
     public string ReaderInitials => SelectedRow?.Initials ?? "";
     public string ReaderDate => Selected?.Date.ToLocalTime().ToString("f", CultureInfo.CurrentCulture) ?? "";
     public string ReaderAccount => Accounts.FirstOrDefault(account => account.Id == Selected?.Account)?.Name ?? "";
@@ -231,6 +235,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             {
                 InvalidatePage();
                 OnPropertyChanged(nameof(NavigationSelection));
+                OnPropertyChanged(nameof(SearchScope));
+                RegroupMessages();
             }
         }
     }
@@ -290,7 +296,9 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         foreach (AccountConfiguration account in Accounts)
         {
             Scopes.Add(new MailScope(account.Name, account.Id, null, false, account.Name));
-            foreach (MailboxSnapshot mailbox in Mailboxes.Where(item => item.Account == account.Id))
+            foreach (MailboxSnapshot mailbox in Mailboxes.Where(item => item.Account == account.Id)
+                .OrderBy(item => item.Role == MailboxRole.Unresolved ? int.MaxValue : (int)item.Role)
+                .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
             {
                 Scopes.Add(new MailScope("    " + mailbox.Name, mailbox.Account, mailbox.Id, false, account.Name));
             }
@@ -304,7 +312,9 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         {
             ImmutableArray<NavigationItemViewModel> children = scope.IsAccount ?
                 Scopes.Where(item => item.IsFolder && item.Account == scope.Account)
-                    .Select(item => new NavigationItemViewModel(item, [])).ToImmutableArray() : [];
+                    .Select(item => new NavigationItemViewModel(item, [],
+                        Mailboxes.First(mailbox => mailbox.Account == item.Account && mailbox.Id == item.Folder).Role))
+                    .ToImmutableArray() : [];
             Navigation.Add(new NavigationItemViewModel(scope, children)
             {
                 IsExpanded = scope.Account is not AccountId account || expanded.GetValueOrDefault(account, true)
@@ -344,8 +354,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
                 UnreadOnly,
                 100,
                 null,
-                Scope.InboxOnly,
-                KnownAttachmentsOnly
+                Scope.InboxOnly
             );
             if (next && request != _pageScope)
             {
@@ -401,10 +410,15 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             _pageScope = request;
             _continuation = result.Value.Continuation;
             MoreCommand.NotifyCanExecuteChanged();
+            OnPropertyChanged(nameof(HasMore));
             Selected = Messages.FirstOrDefault(item => item.Account == selection?.Account && item.Id == selection.Id);
             RegroupMessages();
             Status = "";
             OnPropertyChanged(nameof(IsEmpty));
+            if (!next)
+            {
+                await RefreshUnreadCountsAsync(generation, token);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -512,6 +526,11 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(HasStatus));
     }
 
+    public void ReportSendStatus(string status)
+    {
+        Status = status;
+    }
+
     public void ReportReadingResult(Failure result)
     {
         Status = result == Failure.None ? "" : Strings.Describe(result);
@@ -546,7 +565,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
                     message,
                     group == previous ? "" : group,
                     Accounts.FirstOrDefault(account => account.Id == message.Account)?.Name ?? Strings.Get("Account"),
-                    local.ToString(date == today ? "t" : "d", CultureInfo.CurrentCulture)
+                    local.ToString(date == today ? "t" : date >= startOfWeek ? "ddd" : "d", CultureInfo.CurrentCulture),
+                    Scope?.Account is null
                 );
                 previous = group;
                 if (index >= Rows.Count)
@@ -574,6 +594,10 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     {
         OnPropertyChanged(nameof(ReaderSubject));
         OnPropertyChanged(nameof(ReaderSender));
+        OnPropertyChanged(nameof(ReaderAddress));
+        OnPropertyChanged(nameof(ReaderTime));
+        OnPropertyChanged(nameof(ReaderTo));
+        OnPropertyChanged(nameof(HasSelection));
         OnPropertyChanged(nameof(ReaderInitials));
         OnPropertyChanged(nameof(ReaderDate));
         OnPropertyChanged(nameof(ReaderAccount));
@@ -583,6 +607,47 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(CanReplyAll));
         OnPropertyChanged(nameof(AttachmentHeading));
         OnPropertyChanged(nameof(HasAttachments));
+    }
+
+    private async Task RefreshUnreadCountsAsync(long generation, CancellationToken cancellationToken)
+    {
+        if (_application is null)
+        {
+            return;
+        }
+
+        foreach (AccountConfiguration account in Accounts.ToArray())
+        {
+            NavigationItemViewModel[] folders = Navigation.Where(item => item.Scope.Account == account.Id)
+                .SelectMany(item => item.Children).ToArray();
+            try
+            {
+                ImmutableArray<MailboxUnreadCount> counts = await _application.Catalog.MailboxUnreadCountsAsync(account.Id, cancellationToken);
+                if (generation != _searchGeneration || cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                foreach (NavigationItemViewModel folder in folders)
+                {
+                    folder.UnreadCount = counts.IsDefault ? null : counts.FirstOrDefault(count =>
+                        count.Account == account.Id && count.Folder == folder.Scope.Folder)?.Count;
+                }
+            }
+            catch (System.IO.IOException)
+            {
+                if (generation != _searchGeneration || cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                foreach (NavigationItemViewModel folder in folders)
+                {
+                    folder.UnreadCount = null;
+                }
+                Status = Strings.Get("CountsUnavailable");
+            }
+        }
     }
 
     private async Task MutateAsync(MutationKind kind, string? destination)
@@ -690,6 +755,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         _searchGeneration++;
         _searching?.Cancel();
         MoreCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasMore));
     }
 
     private async Task SynchroniseAsync()

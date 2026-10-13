@@ -15,8 +15,8 @@
   <data name="ConfirmRemoveAccount" xml:space="preserve"><value>Remove from Postfold</value></data>
   <data name="RemoveAccountHint" xml:space="preserve"><value>Disconnect this account and remove it from navigation and search. Server mail is unchanged. Local cache, history and stored credentials are retained in this profile; this is not a data wipe. Drafts and unresolved sends or changes must be reviewed first.</value></data>
   <data name="RemoveAccountComposeOpen" xml:space="preserve"><value>Close this account’s compose windows first. Their edits must be saved before removing the account.</value></data>
-  <data name="RemoveAccountWorkBlocked" xml:space="preserve"><value>Account removal is blocked to preserve drafts or unresolved sends and changes. Review Local drafts, Outbox and Pending commands first.</value></data>
-  <data name="More" xml:space="preserve"><value>Next page</value></data>
+  <data name="RemoveAccountWorkBlocked" xml:space="preserve"><value>Account removal is blocked to preserve drafts or unresolved sends and changes. Review Local drafts and Pending actions first.</value></data>
+  <data name="More" xml:space="preserve"><value>Load more messages</value></data>
   <data name="Retrieve" xml:space="preserve"><value>Retrieve content</value></data>
   <data name="Read" xml:space="preserve"><value>Toggle read</value></data>
   <data name="Flag" xml:space="preserve"><value>Toggle flag</value></data>
@@ -41,7 +41,27 @@
   <data name="Subject" xml:space="preserve"><value>Subject</value></data>
   <data name="Body" xml:space="preserve"><value>Plain-text message</value></data>
   <data name="Signature" xml:space="preserve"><value>Signature</value></data>
-  <data name="Send" xml:space="preserve"><value>Queue send</value></data>
+  <data name="Send" xml:space="preserve"><value>Send</value></data>
+  <data name="Sending" xml:space="preserve"><value>Sending…</value></data>
+  <data name="CloseCompose" xml:space="preserve"><value>Close</value></data>
+  <data name="NoSendIssues" xml:space="preserve"><value>No mail needs attention.</value></data>
+  <data name="FrozenDraft" xml:space="preserve"><value>This draft is already frozen for sending. Check Pending actions or Sent.</value></data>
+  <data name="SendReview" xml:space="preserve"><value>Your message is saved. Check Pending actions before trying again.</value></data>
+  <data name="MailNeedingAttention" xml:space="preserve"><value>Mail needing attention</value></data>
+  <data name="FolderChanges" xml:space="preserve"><value>Folder changes</value></data>
+  <data name="CancelSend" xml:space="preserve"><value>Cancel send</value></data>
+  <data name="SaveSentCopy" xml:space="preserve"><value>Save to Sent</value></data>
+  <data name="ReviewMessage" xml:space="preserve"><value>Review message</value></data>
+  <data name="RefreshSends" xml:space="preserve"><value>Refresh send status</value></data>
+  <data name="SendStatus.Queued" xml:space="preserve"><value>Not sent. Your message is saved; choose Send to try again when online.</value></data>
+  <data name="SendStatus.Submitting" xml:space="preserve"><value>Sending. Delivery is not yet confirmed.</value></data>
+  <data name="SendStatus.Accepted" xml:space="preserve"><value>Sent to the mail server. Saving to Sent is still needed. Check Pending actions; do not send again.</value></data>
+  <data name="SendStatus.SentCopyPending" xml:space="preserve"><value>Sent to the mail server, but saving to Sent could not be confirmed. Check Pending actions; do not send again.</value></data>
+  <data name="SendStatus.Completed" xml:space="preserve"><value>Sent to the mail server and saved to Sent.</value></data>
+  <data name="SendStatus.Rejected" xml:space="preserve"><value>This message was not sent. Check the error and review it in Pending actions before trying again.</value></data>
+  <data name="SendStatus.PartiallyAccepted" xml:space="preserve"><value>Some recipients may have received this message. Check each recipient in Pending actions before sending again.</value></data>
+  <data name="SendStatus.Uncertain" xml:space="preserve"><value>Delivery could not be confirmed and may already have happened. Check Pending actions before sending again.</value></data>
+  <data name="SendStatus.Cancelled" xml:space="preserve"><value>Cancelled before sending. Your saved message is available for review.</value></data>
   <data name="Save" xml:space="preserve"><value>Save draft</value></data>
   <data name="Attach" xml:space="preserve"><value>Add attachment</value></data>
   <data name="Saved" xml:space="preserve"><value>Saved locally</value></data>
@@ -59,11 +79,9 @@
   <data name="Name" xml:space="preserve"><value>Account name (optional; defaults to email)</value></data>
   <data name="DraftMailbox" xml:space="preserve"><value>Remote drafts mailbox (optional exact path)</value></data>
   <data name="Drafts" xml:space="preserve"><value>Local drafts</value></data>
-  <data name="Outbox" xml:space="preserve"><value>Outbox and recipient evidence</value></data>
   <data name="Synchronise" xml:space="preserve"><value>Sync mail</value></data>
-  <data name="Transmit" xml:space="preserve"><value>Submit the next queued message</value></data>
   <data name="Synthetic" xml:space="preserve"><value>Postfold — SYNTHETIC DEMO (no network)</value></data>
-  <data name="Settings" xml:space="preserve"><value>Appearance</value></data>
+  <data name="Settings" xml:space="preserve"><value>Settings</value></data>
   <data name="ResendConsent" xml:space="preserve"><value>I understand delivery may already have happened. A new submission may deliver duplicates to these recipients.</value></data>
   <data name="Resend" xml:space="preserve"><value>Create a linked resend draft for explicit review</value></data>
   <data name="SentCopy" xml:space="preserve"><value>Store a sent copy once</value></data>
@@ -153,7 +171,7 @@
   <data name="ComposeAttachments" xml:space="preserve"><value>Draft attachments</value></data>
   <data name="RemoveAttachment" xml:space="preserve"><value>Remove selected attachment</value></data>
   <data name="Bytes" xml:space="preserve"><value>bytes</value></data>
-  <data name="Commands" xml:space="preserve"><value>Mailbox commands</value></data>
+  <data name="Commands" xml:space="preserve"><value>Pending actions</value></data>
   <data name="CommandReviewHint" xml:space="preserve"><value>Review the server state before retrying a held command: its effect may already have happened. Dismissing preserves the command evidence and local projection until reconciliation. This view shows the latest 200 commands for this account.</value></data>
   <data name="CommandRetryConsent" xml:space="preserve"><value>I reviewed the server state and choose to queue another attempt for this command</value></data>
   <data name="CommandDecisionRequired" xml:space="preserve"><value>Select a command and explicitly confirm your retry decision</value></data>
@@ -209,7 +227,6 @@
   <data name="MoreSettings" xml:space="preserve"><value>More settings</value></data>
   <data name="AllMail" xml:space="preserve"><value>All</value></data>
   <data name="Unread" xml:space="preserve"><value>Unread</value></data>
-  <data name="KnownAttachments" xml:space="preserve"><value>Known attachments</value></data>
   <data name="SearchScopeHint" xml:space="preserve"><value>Search options</value></data>
   <data name="SelectMessage" xml:space="preserve"><value>Select a message</value></data>
   <data name="MarkRead" xml:space="preserve"><value>Mark as read</value></data>
@@ -244,4 +261,25 @@
   <data name="SaveAccountName" xml:space="preserve"><value>Save name</value></data>
   <data name="SharedLoginOptions" xml:space="preserve"><value>Login options</value></data>
   <data name="AccountPassword" xml:space="preserve"><value>Password</value></data>
+  <data name="Work" xml:space="preserve"><value>Work</value></data>
+  <data name="CachedMail" xml:space="preserve"><value>Cached mail</value></data>
+  <data name="CachedUnreadMessages" xml:space="preserve"><value>cached unread messages</value></data>
+  <data name="CountsUnavailable" xml:space="preserve"><value>Cached unread counts are unavailable. Refresh to try again.</value></data>
+  <data name="UnknownSender" xml:space="preserve"><value>Unknown sender</value></data>
+  <data name="NoSubject" xml:space="preserve"><value>(No subject)</value></data>
+  <data name="Me" xml:space="preserve"><value>me</value></data>
+  <data name="MoreActions" xml:space="preserve"><value>More</value></data>
+  <data name="SaveSettings" xml:space="preserve"><value>Save settings</value></data>
+  <data name="FiltersAndMore" xml:space="preserve"><value>Filters and more</value></data>
+  <data name="MessageDetails" xml:space="preserve"><value>Message details</value></data>
+  <data name="Appearance" xml:space="preserve"><value>Appearance</value></data>
+  <data name="Accounts" xml:space="preserve"><value>Accounts</value></data>
+  <data name="SenderAndSignature" xml:space="preserve"><value>Sender &amp; signature</value></data>
+  <data name="Desktop" xml:space="preserve"><value>Desktop</value></data>
+  <data name="ChooseAccount" xml:space="preserve"><value>Choose an account</value></data>
+  <data name="FontDefault" xml:space="preserve"><value>System default</value></data>
+  <data name="AttachmentType.File" xml:space="preserve"><value>File</value></data>
+  <data name="AttachmentType.Image" xml:space="preserve"><value>Image</value></data>
+  <data name="AttachmentType.Text" xml:space="preserve"><value>Text</value></data>
+  <data name="AttachmentType.Spreadsheet" xml:space="preserve"><value>Spreadsheet</value></data>
 </root>

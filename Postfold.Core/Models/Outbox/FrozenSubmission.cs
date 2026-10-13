@@ -12,5 +12,6 @@ public sealed record FrozenSubmission(
     string Sender,
     ImmutableArray<string> Recipients,
     Guid? Predecessor = null,
-    Guid? SourceDraft = null
+    Guid? SourceDraft = null,
+    string? Subject = null
 );

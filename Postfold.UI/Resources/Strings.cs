@@ -13,7 +13,10 @@ public static class Strings
     public static string MoreSettings => Get("MoreSettings");
     public static string AllMail => Get("AllMail");
     public static string Unread => Get("Unread");
-    public static string KnownAttachments => Get("KnownAttachments");
+    public static string Work => Get("Work");
+    public static string MoreActions => Get("MoreActions");
+    public static string FiltersAndMore => Get("FiltersAndMore");
+    public static string MessageDetails => Get("MessageDetails");
     public static string SearchScopeHint => Get("SearchScopeHint");
     public static string SelectMessage => Get("SelectMessage");
     public static string MarkRead => Get("MarkRead");
@@ -103,9 +106,7 @@ public static class Strings
     public static string Name => Get("Name");
     public static string DraftMailbox => Get("DraftMailbox");
     public static string Drafts => Get("Drafts");
-    public static string Outbox => Get("Outbox");
     public static string Synchronise => Get("Synchronise");
-    public static string Transmit => Get("Transmit");
     public static string Synthetic => Get("Synthetic");
     public static string Settings => Get("Settings");
 

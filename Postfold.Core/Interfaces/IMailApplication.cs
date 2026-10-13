@@ -66,7 +66,7 @@ public interface IMailApplication
         CancellationToken cancellationToken
     );
 
-    /// <summary>Freezes and queues a submission locally; transmitting it requires explicit outbox processing.</summary>
+    /// <summary>Freezes a submission durably. The compose Send action then calls SubmitAsync for this exact message.</summary>
     Task<Outcome<FrozenSubmission>> SendAsync(
         AccountId account,
         ComposeContent content,
@@ -76,6 +76,9 @@ public interface IMailApplication
     );
 
     Task<Failure> ProcessOutboxAsync(AccountId account, CancellationToken cancellationToken);
+
+    /// <summary>Attempts this account's exact queued message and its sent copy; never resubmits held or accepted mail.</summary>
+    Task<Failure> SubmitAsync(AccountId account, Guid submission, CancellationToken cancellationToken);
 
     Task<Outcome<ComposeContent>> PrepareResendAsync(OutboxEntry entry, CancellationToken cancellationToken);
 
