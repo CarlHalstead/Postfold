@@ -197,61 +197,65 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
                 checkpoint.Generation.StartsWith(validity + ":", StringComparison.Ordinal);
             string generation = continuing ? checkpoint!.Generation : validity + ":" + Guid.NewGuid().ToString("N");
             uint upper = continuing ? uint.Parse(checkpoint!.Cursor!, CultureInfo.InvariantCulture) :
-                (folder.UidNext?.Id ?? 1) - 1;
-            uint lower = upper > (uint)limit ? upper - (uint)limit + 1 : 1;
+                folder.UidNext is UniqueId nextUid ? nextUid.Id - 1 : uint.MaxValue;
             ulong baseline = checkpoint is not null &&
                 checkpoint.Generation.StartsWith(validity + ":", StringComparison.Ordinal) ? checkpoint.ModSequence : 0;
             ImmutableArray<MessageSnapshot>.Builder messages = ImmutableArray.CreateBuilder<MessageSnapshot>();
             ImmutableArray<ProviderIdentity>.Builder seen = ImmutableArray.CreateBuilder<ProviderIdentity>();
+            bool complete = true;
+            uint nextUpper = 0;
             if (upper > 0)
             {
-                UniqueIdRange range = new UniqueIdRange(new UniqueId(lower), new UniqueId(upper));
-                FetchRequest request = new FetchRequest(MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope |
-                    MessageSummaryItems.Flags | MessageSummaryItems.Size | MessageSummaryItems.ModSeq);
-                IList<UniqueId> present = await folder.SearchAsync(SearchQuery.Uids(range), cancellationToken)
-                    .ConfigureAwait(false);
-                foreach (UniqueId uid in present)
+                IList<UniqueId> present = await folder.SearchAsync(
+                    SearchQuery.Uids(new UniqueIdRange(UniqueId.MinValue, new UniqueId(upper))),
+                    cancellationToken
+                ).ConfigureAwait(false);
+                UniqueId[] candidates = present.Where(uid => uid.Id > 0 && uid.Id <= upper)
+                    .Distinct().OrderByDescending(uid => uid.Id).Take(limit + 1).ToArray();
+                complete = candidates.Length <= limit;
+                UniqueId[] selected = candidates.Take(limit).ToArray();
+                if (selected.Length > 0)
                 {
-                    if (uid.Id >= lower && uid.Id <= upper)
+                    nextUpper = selected[^1].Id - 1;
+                    foreach (UniqueId uid in selected)
                     {
                         seen.Add(Identity(new ImapIdentity(Account, scope, folder.UidValidity, uid.Id)));
                     }
-                }
-
-                if (Capabilities.CondStore && baseline > 0)
-                {
-                    request.ChangedSince = baseline;
-                }
-
-                IList<IMessageSummary> summaries = await folder.FetchAsync(range, request, cancellationToken)
-                    .ConfigureAwait(false);
-                foreach (IMessageSummary summary in summaries.Where(item => item.UniqueId.Id >= lower &&
-                    item.UniqueId.Id <= upper).OrderByDescending(item => item.UniqueId.Id))
-                {
-                    ImapIdentity imap = new ImapIdentity(Account, scope, folder.UidValidity, summary.UniqueId.Id);
-                    messages.Add(new MessageSnapshot(
-                        Account,
-                        new MessageId(0),
-                        Identity(imap),
-                        summary.Envelope?.Subject ?? "",
-                        summary.Envelope?.From.ToString() ?? "",
-                        summary.Envelope?.MessageId,
-                        summary.Envelope?.Date ?? DateTimeOffset.UnixEpoch,
-                        summary.Size ?? 0,
-                        (summary.Flags & MessageFlags.Seen) != 0,
-                        (summary.Flags & MessageFlags.Flagged) != 0,
-                        ContentAvailability.Missing,
-                        PendingState.None
-                    ));
+                    FetchRequest request = new FetchRequest(MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope |
+                        MessageSummaryItems.Flags | MessageSummaryItems.Size | MessageSummaryItems.ModSeq);
+                    if (Capabilities.CondStore && baseline > 0)
+                    {
+                        request.ChangedSince = baseline;
+                    }
+                    IList<IMessageSummary> summaries = await folder.FetchAsync(selected, request, cancellationToken)
+                        .ConfigureAwait(false);
+                    foreach (IMessageSummary summary in summaries.Where(item => selected.Contains(item.UniqueId))
+                        .OrderByDescending(item => item.UniqueId.Id))
+                    {
+                        ImapIdentity imap = new ImapIdentity(Account, scope, folder.UidValidity, summary.UniqueId.Id);
+                        messages.Add(new MessageSnapshot(
+                            Account,
+                            new MessageId(0),
+                            Identity(imap),
+                            summary.Envelope?.Subject ?? "",
+                            summary.Envelope?.From.ToString() ?? "",
+                            summary.Envelope?.MessageId,
+                            summary.Envelope?.Date ?? DateTimeOffset.UnixEpoch,
+                            summary.Size ?? 0,
+                            (summary.Flags & MessageFlags.Seen) != 0,
+                            (summary.Flags & MessageFlags.Flagged) != 0,
+                            ContentAvailability.Missing,
+                            PendingState.None
+                        ));
+                    }
                 }
             }
 
-            bool complete = upper == 0 || lower == 1;
             Checkpoint next = new Checkpoint(
                 Account,
                 scope,
                 generation,
-                complete ? null : (lower - 1).ToString(CultureInfo.InvariantCulture),
+                complete ? null : nextUpper.ToString(CultureInfo.InvariantCulture),
                 complete ? folder.HighestModSeq : baseline,
                 complete
             );

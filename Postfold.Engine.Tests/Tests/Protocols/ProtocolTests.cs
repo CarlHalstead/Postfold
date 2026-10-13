@@ -32,6 +32,49 @@ public sealed class ProtocolTests
 {
     [TestCase(false)]
     [TestCase(true)]
+    public async Task ReadAsync_WhenInboxHasSparseUidsOrNoUidNext_LoadsItsMessagesInBoundedPages(bool omitUidNext)
+    {
+        // Arrange
+        await using LocalMailServer server = new LocalMailServer(true)
+        {
+            CurrentUids = [3, 4000000],
+            UidNext = omitUidNext ? null : 4000001
+        };
+        SessionCredentialStore credentials = new SessionCredentialStore();
+        await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
+        await using ImapAdapter adapter = new ImapAdapter(
+            EngineFixture.Account,
+            new MailEndpoint("localhost", server.Port, TlsMode.Implicit, "synthetic", "fixture"),
+            credentials,
+            1048576
+        )
+        {
+            FixtureAuthority = server.Authority
+        };
+        await using SqliteProfile profile = await EngineFixture.OpenAsync(EngineFixture.DirectoryPath());
+        MailboxSnapshot inbox = (await adapter.DiscoverAsync(CancellationToken.None)).Value.Single(item => item.Role == MailboxRole.Inbox);
+        ReconciliationWork work = new ReconciliationWork(adapter, profile, inbox, 1);
+
+        // Act
+        Failure first = await work.RunAsync(CancellationToken.None);
+        Checkpoint? continuation = await profile.ReadCheckpointAsync(EngineFixture.Account, "INBOX", CancellationToken.None);
+        Failure second = await work.RunAsync(CancellationToken.None);
+        MailboxSnapshot persisted = (await profile.MailboxesAsync(CancellationToken.None)).Single(item => item.Role == MailboxRole.Inbox);
+        SearchPage page = (await profile.SearchAsync(new SearchRequest(EngineFixture.Account, false, "", persisted.Id, false, 10),
+            CancellationToken.None)).Value!;
+
+        // Assert
+        Assert.That(first, Is.EqualTo(Failure.None));
+        Assert.That(second, Is.EqualTo(Failure.None));
+        Assert.That(continuation!.Complete, Is.False);
+        Assert.That(continuation.Cursor, Is.EqualTo("3999999"));
+        Assert.That(page.Messages.Select(message => message.Provider.Imap!.Uid), Is.EquivalentTo(new uint[] { 3, 4000000 }));
+        Assert.That(server.Commands.Count(command => command.Contains("UID FETCH", StringComparison.Ordinal)), Is.EqualTo(2));
+        Assert.That((await profile.ReadCheckpointAsync(EngineFixture.Account, "INBOX", CancellationToken.None))!.Complete, Is.True);
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
     public async Task ApplyAsync_WhenSafeMoveCapabilityExists_RemovesOnlySelectedSource(bool fallback)
     {
         // Arrange

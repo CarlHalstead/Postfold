@@ -94,6 +94,7 @@ internal sealed class LocalMailServer : IAsyncDisposable
         get; set;
     }
     internal uint UidValidity { get; set; } = 7;
+    internal uint? UidNext { get; set; } = 3;
     internal bool AdvancedImap
     {
         get; set;
@@ -296,7 +297,8 @@ internal sealed class LocalMailServer : IAsyncDisposable
                 command.StartsWith("EXAMINE", StringComparison.Ordinal))
             {
                 await ReplyAsync(stream, "* FLAGS (\\Seen \\Flagged \\Deleted)\r\n* 2 EXISTS\r\n" +
-                    "* OK [UIDVALIDITY " + UidValidity + "] generation\r\n* OK [UIDNEXT 3] next\r\n");
+                    "* OK [UIDVALIDITY " + UidValidity + "] generation\r\n" +
+                    (UidNext is uint next ? "* OK [UIDNEXT " + next + "] next\r\n" : ""));
                 if (AdvancedImap)
                 {
                     await ReplyAsync(stream, "* OK [HIGHESTMODSEQ 10] modification sequence\r\n");
