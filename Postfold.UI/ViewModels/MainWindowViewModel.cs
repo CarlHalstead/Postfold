@@ -124,7 +124,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     public string SearchScope => string.Join(" · ", new[]
     {
         Scope?.Account is AccountId account ? Accounts.FirstOrDefault(item => item.Id == account)?.Name : "",
-        Scope?.Name.Trim(), UnreadOnly ? Strings.Unread : "", Strings.Get("CachedMail")
+        Scope?.Name.Trim(), UnreadOnly ? Strings.Unread : ""
     }.Where(value => !string.IsNullOrEmpty(value)).Distinct());
 
     public bool UnreadOnly
@@ -273,7 +273,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
                 .OrderBy(item => item.Role == MailboxRole.Unresolved ? int.MaxValue : (int)item.Role)
                 .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
             {
-                Scopes.Add(new MailScope("    " + mailbox.Name, mailbox.Account, mailbox.Id, false, account.Name));
+                string name = mailbox.Role == MailboxRole.Inbox ? Strings.Get("Inbox") : mailbox.Name;
+                Scopes.Add(new MailScope("    " + name, mailbox.Account, mailbox.Id, false, account.Name));
             }
         }
         OnPropertyChanged(nameof(HasAccounts));

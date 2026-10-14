@@ -233,6 +233,9 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             }
 
             IRemoteDraftStore? drafts = null;
+            MailboxSnapshot[] draftFolders = discovered.Value.Where(item =>
+                item.Role == MailboxRole.Drafts && item.Selectable && item.Writable).ToArray();
+            selectedDraftMailbox ??= draftFolders.Length == 1 ? draftFolders[0].RemoteKey : null;
             if (selectedDraftMailbox is not null)
             {
                 Outcome<IRemoteDraftStore> selection = adapter.SelectDraftMailbox(selectedDraftMailbox, _profile.Blobs);
@@ -250,7 +253,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             await _profile.ConfigureAccountAsync(account, incoming, outgoing, linked.Token).ConfigureAwait(false);
             await _profile.SaveMailboxesAsync(account, discovered.Value, null, linked.Token).ConfigureAwait(false);
             await _profile.SaveCapabilitiesAsync(account, adapter.Capabilities, linked.Token).ConfigureAwait(false);
-            ISentCopyStore? sent = discovered.Value.Count(item => item.Role == MailboxRole.Sent) == 1 ? adapter : null;
+            ISentCopyStore? sent = discovered.Value.Count(item => item.Role == MailboxRole.Sent && item.Selectable && item.Writable) == 1 ? adapter : null;
             MailAccountEngine engine = new MailAccountEngine(
                 adapter,
                 adapter,

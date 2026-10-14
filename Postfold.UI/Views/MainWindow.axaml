@@ -60,6 +60,7 @@
                     BorderThickness="0"
                     Margin="12,0"
                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                    ScrollViewer.AllowAutoHide="False"
                     AutomationProperties.Name="{x:Static ui:Strings.Scope}">
                     <TreeView.Styles>
                         <Style Selector="TreeViewItem" x:DataType="viewModels:NavigationItemViewModel">

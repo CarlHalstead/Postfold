@@ -9,7 +9,7 @@
   <data name="SkipSetup" xml:space="preserve"><value>Skip for now</value></data>
   <data name="Setup" xml:space="preserve"><value>Add account</value></data>
   <data name="ProfileUnavailable" xml:space="preserve"><value>Local profile unavailable</value></data>
-  <data name="ProfileStartupHint" xml:space="preserve"><value>Postfold could not open the local folder containing your accounts, cached mail, drafts and queued sends. Start fresh to use a separate empty profile. The previous folder will be preserved for recovery; its accounts and mail will not appear in the new profile.</value></data>
+  <data name="ProfileStartupHint" xml:space="preserve"><value>Postfold could not open the local folder containing your accounts, mail, drafts and queued sends. Start fresh to use a separate empty profile. The previous folder will be preserved for recovery; its accounts and mail will not appear in the new profile.</value></data>
   <data name="StartFresh" xml:space="preserve"><value>Start fresh</value></data>
   <data name="OpenProfilesFolder" xml:space="preserve"><value>Open profiles folder</value></data>
   <data name="OpenProfilesFolderFailed" xml:space="preserve"><value>Postfold could not open the profiles folder in your file explorer.</value></data>
@@ -20,7 +20,7 @@
   <data name="InitialSync" xml:space="preserve"><value>Initial message sync</value></data>
   <data name="RemoveAccount" xml:space="preserve"><value>Remove account</value></data>
   <data name="ConfirmRemoveAccount" xml:space="preserve"><value>Remove from Postfold</value></data>
-  <data name="RemoveAccountHint" xml:space="preserve"><value>Disconnect this account and remove it from navigation and search. Server mail is unchanged. Local cache, history and stored credentials are retained in this profile; this is not a data wipe. Drafts and unresolved sends or changes must be reviewed first.</value></data>
+  <data name="RemoveAccountHint" xml:space="preserve"><value>Disconnect this account and remove it from navigation and search. Server mail is unchanged. Mail, history and stored credentials are retained in this profile; this is not a data wipe. Drafts and unresolved sends or changes must be reviewed first.</value></data>
   <data name="RemoveAccountComposeOpen" xml:space="preserve"><value>Close this account’s compose windows first. Their edits must be saved before removing the account.</value></data>
   <data name="RemoveAccountWorkBlocked" xml:space="preserve"><value>Account removal is blocked to preserve drafts or unresolved sends and changes. Review Local drafts and Pending actions first.</value></data>
   <data name="More" xml:space="preserve"><value>Load more messages</value></data>
@@ -31,16 +31,17 @@
   <data name="Trash" xml:space="preserve"><value>Move to trash</value></data>
   <data name="Reply" xml:space="preserve"><value>Reply</value></data>
   <data name="Forward" xml:space="preserve"><value>Forward</value></data>
-  <data name="SearchHint" xml:space="preserve"><value>Search includes downloaded mail. Select one account or choose all accounts.</value></data>
+  <data name="SearchHint" xml:space="preserve"><value>Search messages. Select one account or choose all accounts.</value></data>
   <data name="HtmlUnavailable" xml:space="preserve"><value>This message contains HTML. Choose Read HTML in More message actions to open it safely.</value></data>
   <data name="UnifiedInbox" xml:space="preserve"><value>Unified inbox</value></data>
+  <data name="Inbox" xml:space="preserve"><value>Inbox</value></data>
   <data name="UnifiedSearch" xml:space="preserve"><value>All accounts — local search</value></data>
-  <data name="Ready" xml:space="preserve"><value>Cached view ready</value></data>
-  <data name="Missing" xml:space="preserve"><value>Content is not cached. Retrieve content while online.</value></data>
-  <data name="NoResults" xml:space="preserve"><value>No cached messages in this scope</value></data>
+  <data name="Ready" xml:space="preserve"><value>Ready</value></data>
+  <data name="Missing" xml:space="preserve"><value>Content is unavailable. Retrieve it while online.</value></data>
+  <data name="NoResults" xml:space="preserve"><value>No messages match in this scope</value></data>
   <data name="Pending" xml:space="preserve"><value>Durable command recorded; check pending status</value></data>
   <data name="Scope" xml:space="preserve"><value>Navigation and search scope</value></data>
-  <data name="Messages" xml:space="preserve"><value>Cached messages</value></data>
+  <data name="Messages" xml:space="preserve"><value>Messages</value></data>
   <data name="Preview" xml:space="preserve"><value>Message plain text</value></data>
   <data name="Destination" xml:space="preserve"><value>Save attachment</value></data>
   <data name="Sender" xml:space="preserve"><value>From address</value></data>
@@ -50,7 +51,6 @@
   <data name="Body" xml:space="preserve"><value>Plain-text message</value></data>
   <data name="Send" xml:space="preserve"><value>Send</value></data>
   <data name="Sending" xml:space="preserve"><value>Sending…</value></data>
-  <data name="CloseCompose" xml:space="preserve"><value>Close</value></data>
   <data name="NoSendIssues" xml:space="preserve"><value>No mail needs attention.</value></data>
   <data name="FrozenDraft" xml:space="preserve"><value>This draft is already frozen for sending. Check Pending actions or Sent.</value></data>
   <data name="SendReview" xml:space="preserve"><value>Your message is saved. Check Pending actions before trying again.</value></data>
@@ -69,22 +69,19 @@
   <data name="SendStatus.PartiallyAccepted" xml:space="preserve"><value>Some recipients may have received this message. Check each recipient in Pending actions before sending again.</value></data>
   <data name="SendStatus.Uncertain" xml:space="preserve"><value>Delivery could not be confirmed and may already have happened. Check Pending actions before sending again.</value></data>
   <data name="SendStatus.Cancelled" xml:space="preserve"><value>Cancelled before sending. Your saved message is available for review.</value></data>
-  <data name="Save" xml:space="preserve"><value>Save draft</value></data>
   <data name="Attach" xml:space="preserve"><value>Add attachment</value></data>
-  <data name="Saved" xml:space="preserve"><value>Saved locally</value></data>
-  <data name="Saving" xml:space="preserve"><value>Saving locally…</value></data>
+  <data name="Saved" xml:space="preserve"><value>Draft saved</value></data>
+  <data name="Saving" xml:space="preserve"><value>Saving draft…</value></data>
+  <data name="DraftAutosaveHint" xml:space="preserve"><value>Your draft saves automatically when you pause typing.</value></data>
   <data name="DraftFailed" xml:space="preserve"><value>Save failed. Keep this window open to preserve your edits.</value></data>
   <data name="Conflict" xml:space="preserve"><value>Conflicting draft versions are preserved. Sending is disabled until reviewed.</value></data>
-  <data name="Privacy" xml:space="preserve"><value>Cached mail is not encrypted by Postfold. Protect your Windows account and disk.</value></data>
   <data name="SessionOnly" xml:space="preserve"><value>Session only — do not persist passwords</value></data>
   <data name="TestEndpoints" xml:space="preserve"><value>Test both endpoints and add account</value></data>
   <data name="IncomingHost" xml:space="preserve"><value>Incoming IMAP host</value></data>
   <data name="OutgoingHost" xml:space="preserve"><value>Outgoing SMTP host</value></data>
   <data name="Port" xml:space="preserve"><value>Port</value></data>
-  <data name="Username" xml:space="preserve"><value>Username</value></data>
   <data name="Password" xml:space="preserve"><value>Password</value></data>
   <data name="Name" xml:space="preserve"><value>Account name (optional; defaults to email)</value></data>
-  <data name="DraftMailbox" xml:space="preserve"><value>Remote drafts mailbox (optional exact path)</value></data>
   <data name="Drafts" xml:space="preserve"><value>Local drafts</value></data>
   <data name="Synchronise" xml:space="preserve"><value>Sync mail</value></data>
   <data name="Synthetic" xml:space="preserve"><value>Postfold — SYNTHETIC DEMO (no network)</value></data>
@@ -133,10 +130,6 @@
   <data name="Uncertain" xml:space="preserve"><value>Uncertain — delivery may already have happened; automatic resend is held</value></data>
   <data name="Cancelled" xml:space="preserve"><value>Cancelled before submission — frozen content is preserved</value></data>
   <data name="NotAccepted" xml:space="preserve"><value>Not accepted</value></data>
-  <data name="SentRole" xml:space="preserve"><value>Sent-copy folder</value></data>
-  <data name="DraftsRole" xml:space="preserve"><value>Server drafts folder</value></data>
-  <data name="RoleUnavailable" xml:space="preserve"><value>Unavailable — leave this role unassigned</value></data>
-  <data name="SaveRoles" xml:space="preserve"><value>Save selected folder roles</value></data>
   <data name="MeasurementSaved" xml:space="preserve"><value>Postfold — SYNTHETIC MEASUREMENT saved; close to exit</value></data>
   <data name="Failure.None" xml:space="preserve"><value>Completed</value></data>
   <data name="Failure.Validation" xml:space="preserve"><value>Invalid settings or content</value></data>
@@ -148,9 +141,9 @@
   <data name="Failure.Corrupt" xml:space="preserve"><value>Stored content could not be read safely</value></data>
   <data name="Failure.NewerSchema" xml:space="preserve"><value>This profile requires a newer Postfold version</value></data>
   <data name="Failure.CursorExpired" xml:space="preserve"><value>Search changed; refresh the first page</value></data>
-  <data name="ContentAvailability.Missing" xml:space="preserve"><value>Not cached</value></data>
-  <data name="ContentAvailability.Available" xml:space="preserve"><value>Cached</value></data>
-  <data name="ContentAvailability.Evicted" xml:space="preserve"><value>Cache reclaimed; retrieve when online</value></data>
+  <data name="ContentAvailability.Missing" xml:space="preserve"><value>Unavailable</value></data>
+  <data name="ContentAvailability.Available" xml:space="preserve"><value>Available</value></data>
+  <data name="ContentAvailability.Evicted" xml:space="preserve"><value>Content unavailable; try again when online</value></data>
   <data name="PendingState.None" xml:space="preserve"><value>No pending command</value></data>
   <data name="PendingState.Queued" xml:space="preserve"><value>Command saved locally</value></data>
   <data name="PendingState.InFlight" xml:space="preserve"><value>Command in progress</value></data>
@@ -166,17 +159,15 @@
   <data name="Failure.PolicyBlocked" xml:space="preserve"><value>Connection blocked by this profile's network policy</value></data>
   <data name="Failure.CredentialStorageUnavailable" xml:space="preserve"><value>Secure credential storage is unavailable; explicitly choose session-only storage to continue</value></data>
   <data name="DestinationDenied" xml:space="preserve"><value>Access to the selected destination was denied</value></data>
-  <data name="IncomingPort" xml:space="preserve"><value>Incoming IMAP port</value></data>
-  <data name="OutgoingPort" xml:space="preserve"><value>Outgoing SMTP port</value></data>
+  <data name="IncomingPort" xml:space="preserve"><value>Port</value></data>
+  <data name="OutgoingPort" xml:space="preserve"><value>Port</value></data>
   <data name="IncomingTls" xml:space="preserve"><value>Incoming TLS mode</value></data>
   <data name="OutgoingTls" xml:space="preserve"><value>Outgoing TLS mode</value></data>
-  <data name="IncomingUsername" xml:space="preserve"><value>Incoming username</value></data>
-  <data name="OutgoingUsername" xml:space="preserve"><value>Outgoing username</value></data>
   <data name="IncomingPassword" xml:space="preserve"><value>Password for receiving</value></data>
   <data name="OutgoingPassword" xml:space="preserve"><value>Outgoing password</value></data>
   <data name="CredentialResult" xml:space="preserve"><value>Credential storage</value></data>
-  <data name="ComposeAttachments" xml:space="preserve"><value>Draft attachments</value></data>
-  <data name="RemoveAttachment" xml:space="preserve"><value>Remove selected attachment</value></data>
+  <data name="ComposeAttachments" xml:space="preserve"><value>Attachments</value></data>
+  <data name="RemoveAttachment" xml:space="preserve"><value>Remove attachment</value></data>
   <data name="Bytes" xml:space="preserve"><value>bytes</value></data>
   <data name="Commands" xml:space="preserve"><value>Pending actions</value></data>
   <data name="CommandReviewHint" xml:space="preserve"><value>Review the server state before retrying a held command: its effect may already have happened. Dismissing preserves the command evidence and local projection until reconciliation. This view shows the latest 200 commands for this account.</value></data>
@@ -192,7 +183,7 @@
   <data name="MoveCapabilityUnsupported" xml:space="preserve"><value>Move, archive and trash are unavailable: this server offers neither native move nor selective expunge.</value></data>
   <data name="DesktopSettings" xml:space="preserve"><value>Desktop behaviour</value></data>
   <data name="TrayOptIn" xml:space="preserve"><value>Keep running in the tray when the main window closes (opt in)</value></data>
-  <data name="PrivateNotifications" xml:space="preserve"><value>Show generic private notifications for newly cached mail</value></data>
+  <data name="PrivateNotifications" xml:space="preserve"><value>Show generic private notifications for new mail</value></data>
   <data name="DesktopIntegrationHint" xml:space="preserve"><value>By default, closing exits after saving drafts. Tray mode retains the session; use its Open or Exit menu. Notifications contain no sender, account, subject or message text, and Windows may suppress them. No default-client registration is changed. Background delivery timing is not guaranteed.</value></data>
   <data name="TestGenericNotification" xml:space="preserve"><value>Test generic notification</value></data>
   <data name="GenericNewMail" xml:space="preserve"><value>New mail is available. Open Postfold to read it.</value></data>
@@ -221,12 +212,12 @@
   <data name="ReadFalse" xml:space="preserve"><value>Unread</value></data>
   <data name="FlaggedTrue" xml:space="preserve"><value>Flagged</value></data>
   <data name="ReducedMotion" xml:space="preserve"><value>Control transitions are disabled for reduced motion.</value></data>
-  <data name="OriginalAttachments" xml:space="preserve"><value>Original attachments: select each attachment you want to forward. Uncached content requires a connection.</value></data>
+  <data name="OriginalAttachments" xml:space="preserve"><value>Original attachments: select each attachment you want to forward.</value></data>
   <data name="AttachOriginal" xml:space="preserve"><value>Attach selected original</value></data>
   <data name="NavigationResize" xml:space="preserve"><value>Resize navigation pane</value></data>
   <data name="PreviewResize" xml:space="preserve"><value>Resize preview pane</value></data>
   <data name="Credentials" xml:space="preserve"><value>Account credentials</value></data>
-  <data name="CredentialsHint" xml:space="preserve"><value>Re-enter the password for this account. Sending can share it or use a separate password. Cached mail and pending work are preserved. Session-only passwords need re-entry after restart. Previously stored secure credentials are not removed.</value></data>
+  <data name="CredentialsHint" xml:space="preserve"><value>Re-enter the password for this account. Sending can share it or use a separate password. Session-only passwords need re-entry after restart. Previously stored secure credentials are not removed.</value></data>
   <data name="SaveCredentials" xml:space="preserve"><value>Save account credentials</value></data>
   <data name="CredentialsSaved" xml:space="preserve"><value>Credentials saved. Synchronise checks incoming TLS and authentication; submitting queued mail checks outgoing TLS and authentication.</value></data>
   <data name="NewMail" xml:space="preserve"><value>New mail</value></data>
@@ -244,18 +235,16 @@
   <data name="Today" xml:space="preserve"><value>Today</value></data>
   <data name="Yesterday" xml:space="preserve"><value>Yesterday</value></data>
   <data name="Email" xml:space="preserve"><value>Email address</value></data>
-  <data name="SharedCredentials" xml:space="preserve"><value>Use the same credentials for sending</value></data>
   <data name="SharedPassword" xml:space="preserve"><value>Use the same password for sending</value></data>
-  <data name="LoginHint" xml:space="preserve"><value>Enter your password once. Your email address is the default login; custom usernames are optional.</value></data>
+  <data name="LoginHint" xml:space="preserve"><value>Your email address and password are used for receiving and sending mail.</value></data>
   <data name="ServerSettings" xml:space="preserve"><value>Server settings</value></data>
-  <data name="ServerHint" xml:space="preserve"><value>Manual configuration is required. Receiving (IMAP) and sending (SMTP) use independent servers and certificate-validating TLS.</value></data>
-  <data name="AdvancedLogin" xml:space="preserve"><value>Advanced login and draft options</value></data>
+  <data name="ServerHint" xml:space="preserve"><value>Check the server details below. Enter any missing details from your email provider.</value></data>
+  <data name="SetupDiscovering" xml:space="preserve"><value>Looking up server settings…</value></data>
   <data name="ReceivingSettings" xml:space="preserve"><value>Receiving (IMAP)</value></data>
   <data name="SendingSettings" xml:space="preserve"><value>Sending (SMTP)</value></data>
   <data name="ContinueServers" xml:space="preserve"><value>Continue to server settings</value></data>
-  <data name="BackLogin" xml:space="preserve"><value>Back to login</value></data>
-  <data name="SendingOverrideHint" xml:space="preserve"><value>Sending uses a separate username and password. Switching back clears the unused sending password.</value></data>
-  <data name="CredentialUsernames" xml:space="preserve"><value>Configured receiving and sending usernames are preserved. Change the account server configuration separately.</value></data>
+  <data name="Back" xml:space="preserve"><value>Back</value></data>
+  <data name="SendingOverrideHint" xml:space="preserve"><value>Sending uses a separate password. Switching back clears the unused sending password.</value></data>
   <data name="ReadState" xml:space="preserve"><value>Read</value></data>
   <data name="UnreadState" xml:space="preserve"><value>Unread</value></data>
   <data name="Flagged" xml:space="preserve"><value>Flagged</value></data>
@@ -266,12 +255,10 @@
   <data name="RenameAccount" xml:space="preserve"><value>Rename account</value></data>
   <data name="RenameName" xml:space="preserve"><value>Account name</value></data>
   <data name="SaveAccountName" xml:space="preserve"><value>Save name</value></data>
-  <data name="SharedLoginOptions" xml:space="preserve"><value>Login options</value></data>
   <data name="AccountPassword" xml:space="preserve"><value>Password</value></data>
   <data name="Work" xml:space="preserve"><value>Work</value></data>
-  <data name="CachedMail" xml:space="preserve"><value>Cached mail</value></data>
-  <data name="CachedUnreadMessages" xml:space="preserve"><value>cached unread messages</value></data>
-  <data name="CountsUnavailable" xml:space="preserve"><value>Cached unread counts are unavailable. Refresh to try again.</value></data>
+  <data name="UnreadMessages" xml:space="preserve"><value>unread messages</value></data>
+  <data name="CountsUnavailable" xml:space="preserve"><value>Unread counts are unavailable. Refresh to try again.</value></data>
   <data name="UnknownSender" xml:space="preserve"><value>Unknown sender</value></data>
   <data name="NoSubject" xml:space="preserve"><value>(No subject)</value></data>
   <data name="Me" xml:space="preserve"><value>me</value></data>

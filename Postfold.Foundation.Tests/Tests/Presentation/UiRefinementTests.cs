@@ -99,7 +99,7 @@ public sealed class UiRefinementTests
         // Assert
         NavigationItemViewModel folder = model.Navigation.Single(item => item.IsAccount).Children.Single();
         Assert.That(folder.UnreadCount, Is.EqualTo(4));
-        Assert.That(folder.AccessibleName, Does.Contain("cached unread"));
+        Assert.That(folder.AccessibleName, Does.Contain("unread messages"));
     }
 
     [AvaloniaTest]

@@ -6,6 +6,9 @@ namespace Postfold.UI.Resources;
 /// <summary>Local outline geometry shared by navigation and commands; no remote artwork is requested.</summary>
 public static class MailIcons
 {
+    public static readonly Geometry Back = Geometry.Parse("M 7,2 L 1,8 L 7,14 M 1,8 L 15,8");
+    public static readonly Geometry Add = Geometry.Parse("M 8,1 L 8,15 M 1,8 L 15,8");
+    public static readonly Geometry Close = Geometry.Parse("M 3,3 L 13,13 M 13,3 L 3,13");
     public static readonly Geometry Account = Geometry.Parse("M 8,1 A 7,7 0 1 1 7.99,1 M 5,6 A 3,3 0 1 0 11,6 M 3,13 Q 8,8 13,13");
     public static readonly Geometry Folder = Geometry.Parse("M 1,4 L 6,4 L 8,6 L 15,6 L 15,14 L 1,14 Z");
     public static readonly Geometry Inbox = Geometry.Parse("M 2,2 L 14,2 L 15,14 L 1,14 Z M 1,7 L 5,7 L 6,10 L 10,10 L 11,7 L 15,7");

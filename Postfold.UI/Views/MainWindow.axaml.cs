@@ -1225,20 +1225,12 @@ public sealed partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap
         });
         form.Children.Add(account);
-        TextBlock usernames = new TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap
-        };
-        form.Children.Add(usernames);
-        CredentialFields credentials = new CredentialFields(form, includeUsernames: false);
+        CredentialFields credentials = new CredentialFields(form);
         void SelectAccount()
         {
             credentials.Clear();
             if (account.SelectedItem is AccountConfiguration selected)
             {
-                usernames.Text = Strings.CredentialUsernames + "\n" +
-                    Strings.Get("IncomingUsername") + ": " + selected.Incoming.Username + "\n" +
-                    Strings.Get("OutgoingUsername") + ": " + selected.Outgoing.Username;
                 credentials.Shared.IsChecked = selected.Incoming.Username == selected.Outgoing.Username;
             }
         }

@@ -36,8 +36,8 @@ public sealed class ComposeWindow : Window
     private readonly SemaphoreSlim _actions = new SemaphoreSlim(1, 1);
     private CancellationTokenSource _submissionCancellation = new CancellationTokenSource();
     private readonly Button _send;
-    private readonly Button _close;
     private readonly WrapPanel _actionButtons;
+    private readonly StackPanel _attachmentControls = new StackPanel { Spacing = 8 };
     private readonly string _sender;
     private readonly AutoCompleteBox _recipients;
     private CancellationTokenSource _suggestionLifetime = new CancellationTokenSource();
@@ -46,13 +46,11 @@ public sealed class ComposeWindow : Window
     private readonly TextBox _body;
     private readonly TextBlock _status = new TextBlock
     {
-        TextWrapping = TextWrapping.Wrap
+        TextWrapping = TextWrapping.Wrap,
+        Focusable = true
     };
     private readonly List<ComposeAttachment> _attachments = [];
-    private readonly ListBox _attachmentList = new ListBox
-    {
-        MaxHeight = 120
-    };
+    private readonly ItemsControl _attachmentList = new ItemsControl { Name = "ComposeAttachments" };
     private readonly DispatcherTimer _timer = new DispatcherTimer
     {
         Interval = TimeSpan.FromMilliseconds(600)
@@ -122,7 +120,23 @@ public sealed class ComposeWindow : Window
 
         WrapPanel actions = new WrapPanel();
         _actionButtons = actions;
-        FormControls.AddActionButton(actions, "Attach", () => RunActionAsync(AttachAsync), _status);
+        StackPanel attachmentHeading = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing = 8
+        };
+        attachmentHeading.Children.Add(new TextBlock
+        {
+            Text = Strings.Get("ComposeAttachments"),
+            FontWeight = FontWeight.SemiBold,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+        });
+        Button addAttachment = FormControls.AddActionButton(attachmentHeading, "Attach", () => RunActionAsync(AttachAsync), _status);
+        addAttachment.Content = FormControls.Icon(MailIcons.Add);
+        addAttachment.Margin = default;
+        ToolTip.SetTip(addAttachment, Strings.Attach);
+        _attachmentControls.Children.Add(attachmentHeading);
+        form.Children.Add(_attachmentControls);
         if (original is not null && !originalAttachments.IsDefaultOrEmpty)
         {
             ListBox originals = new ListBox
@@ -149,43 +163,79 @@ public sealed class ComposeWindow : Window
             }), _status);
         }
         Avalonia.Automation.AutomationProperties.SetName(_attachmentList, Strings.Get("ComposeAttachments"));
-        _attachmentList.ItemTemplate = new FuncDataTemplate<ComposeAttachment>((attachment, _) => attachment is null ? null : new TextBlock
+        _attachmentList.ItemTemplate = new FuncDataTemplate<ComposeAttachment>((attachment, _) =>
         {
-            Text = attachment.Name + " (" + attachment.Content.Length.ToString(
-                System.Globalization.CultureInfo.CurrentCulture
-            ) + " " + Strings.Get("Bytes") + ")"
+            if (attachment is null)
+            {
+                return null;
+            }
+            Grid row = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("*,Auto")
+            };
+            TextBlock name = new TextBlock
+            {
+                Text = attachment.Name + " (" + attachment.Content.Length.ToString(
+                    System.Globalization.CultureInfo.CurrentCulture
+                ) + " " + Strings.Get("Bytes") + ")",
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 12, 0)
+            };
+            ToolTip.SetTip(name, name.Text);
+            row.Children.Add(name);
+            Button remove = FormControls.AddActionButton(row, "RemoveAttachment", () => RunActionAsync(async () =>
+            {
+                if (!_frozen)
+                {
+                    _attachments.Remove(attachment);
+                    _attachmentList.ItemsSource = _attachments.ToArray();
+                    _attachmentList.IsVisible = _attachments.Count > 0;
+                    await FlushAsync();
+                    addAttachment.Focus();
+                }
+            }), _status);
+            remove.Content = FormControls.Icon(MailIcons.Close);
+            remove.Margin = default;
+            remove.Classes.Add("quiet");
+            Avalonia.Automation.AutomationProperties.SetName(remove, Strings.Get("RemoveAttachment") + " " + attachment.Name);
+            ToolTip.SetTip(remove, Strings.Get("RemoveAttachment"));
+            Grid.SetColumn(remove, 1);
+            Border card = new Border
+            {
+                Child = row,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(12, 4),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            card.Bind(Border.BorderBrushProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("MailInputBorderBrush"));
+            return card;
         });
         _attachmentList.ItemsSource = _attachments.ToArray();
         _attachmentList.IsVisible = _attachments.Count > 0;
-        form.Children.Add(_attachmentList);
-        Button remove = FormControls.AddActionButton(actions, "RemoveAttachment", () => RunActionAsync(async () =>
+        _attachmentControls.Children.Add(new ScrollViewer
         {
-            if (_attachmentList.SelectedItem is ComposeAttachment attachment && !_frozen)
-            {
-                _attachments.Remove(attachment);
-                _attachmentList.ItemsSource = _attachments.ToArray();
-                _attachmentList.IsVisible = _attachments.Count > 0;
-                await FlushAsync();
-            }
-        }), _status);
-        remove.IsEnabled = _attachments.Count > 0;
-        _attachmentList.SelectionChanged += (_, _) => remove.IsEnabled = _attachmentList.SelectedItem is ComposeAttachment && !_frozen;
-        Button save = FormControls.AddActionButton(actions, "Save", () => RunActionAsync(async () => { await FlushAsync(); }), _status);
-        save.Classes.Remove("primary");
+            Content = _attachmentList,
+            MaxHeight = 160,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled
+        });
         Button send = FormControls.AddActionButton(actions, "Send", QueueAsync, _status);
         _send = send;
         send.IsEnabled = !conflict;
-        _close = FormControls.AddActionButton(actions, "CloseCompose", () =>
-        {
-            Close();
-            return Task.CompletedTask;
-        }, _status);
         StackPanel footer = new StackPanel { Spacing = 8 };
         footer.Children.Add(actions);
+        TextBlock autosaveHint = new TextBlock
+        {
+            Text = Strings.Get("DraftAutosaveHint"),
+            TextWrapping = TextWrapping.Wrap
+        };
+        autosaveHint.Classes.Add("caption");
+        footer.Children.Add(autosaveHint);
         footer.Children.Add(_status);
         Avalonia.Automation.AutomationProperties.SetLiveSetting(_status, Avalonia.Automation.AutomationLiveSetting.Polite);
         Content = FormControls.Page(Strings.Compose, form, footer);
-        SizeChanged += (_, _) => _body.MinHeight = Math.Max(140, Bounds.Height - 380);
+        SizeChanged += (_, _) => _body.MinHeight = Math.Max(140, Bounds.Height - 520);
         _recipients.TextChanged += (_, _) => ScheduleSave();
         foreach (TextBox field in new[] { _subject, _body })
         {
@@ -489,6 +539,7 @@ public sealed class ComposeWindow : Window
         }
 
         _actionButtons.IsEnabled = false;
+        _attachmentControls.IsEnabled = false;
         try
         {
             if (_submission is null)
@@ -517,13 +568,6 @@ public sealed class ComposeWindow : Window
                 _submission = queued.Value!.Id;
                 _frozen = true;
                 _send.IsVisible = false;
-                foreach (Button button in _actionButtons.Children.OfType<Button>())
-                {
-                    if (button != _send && button != _close)
-                    {
-                        button.IsEnabled = false;
-                    }
-                }
                 _recipients.IsEnabled = false;
                 foreach (TextBox field in new[] { _subject, _body })
                 {
@@ -568,9 +612,17 @@ public sealed class ComposeWindow : Window
         finally
         {
             _actionButtons.IsEnabled = true;
+            _attachmentControls.IsEnabled = !_frozen;
             if (_frozen && IsVisible && !_stopping)
             {
-                (_canSubmit ? _send : _close).Focus();
+                if (_canSubmit)
+                {
+                    _send.Focus();
+                }
+                else
+                {
+                    _status.Focus();
+                }
             }
         }
     }

@@ -120,6 +120,10 @@ internal static class UiDesignQualification
         account.Close();
         main.OpenCompose();
         ComposeWindow compose = main.OwnedWindows.OfType<ComposeWindow>().Single();
+        if (model.Selected is not null && model.Attachments.Count > 0)
+        {
+            await compose.AttachOriginalAsync(model.Selected, model.Attachments[0], cancellationToken);
+        }
         await CaptureAsync(compose, "compose");
         Apply(AppearanceSettings.Default with
         {

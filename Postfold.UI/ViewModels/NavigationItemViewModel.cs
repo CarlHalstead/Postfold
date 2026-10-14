@@ -33,7 +33,7 @@ public sealed class NavigationItemViewModel : ObservableObject
     public Geometry Icon { get; }
     public string CountText => UnreadCount > 0 ? UnreadCount.Value.ToString("N0", CultureInfo.CurrentCulture) : "";
     public string AccessibleName => Name + (UnreadCount is long count ? ", " + count.ToString(CultureInfo.CurrentCulture) +
-        " " + Strings.Get("CachedUnreadMessages") : "");
+        " " + Strings.Get("UnreadMessages") : "");
     public long? UnreadCount
     {
         get => _unreadCount;

@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
+using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using NSubstitute;
 using NUnit.Framework;
@@ -8,6 +9,8 @@ using Postfold.Core.Interfaces;
 using Postfold.Core.Models;
 using Postfold.Core.Models.Accounts;
 using Postfold.Core.Models.Drafts;
+using Postfold.Core.Models.Messages;
+using Postfold.UI.Resources;
 using Postfold.UI.Views;
 using System;
 using System.Collections.Generic;
@@ -20,6 +23,64 @@ namespace Postfold.Foundation.Tests.Tests.Views;
 
 public sealed class ComposeInteractionTests
 {
+    [AvaloniaTest]
+    public async Task RemoveAttachment_WhenItsCloseButtonIsClicked_RemovesOnlyThatAttachmentAndSavesDraft()
+    {
+        // Arrange
+        AccountId account = new AccountId(1);
+        BlobReference blob = new BlobReference(Guid.NewGuid(), account, 20, "synthetic", true);
+        ComposeAttachment first = new ComposeAttachment("first.pdf", "application/pdf", blob);
+        ComposeAttachment second = new ComposeAttachment("second.txt", "text/plain", blob with
+        {
+            Id = Guid.NewGuid()
+        });
+        IMailApplication application = Substitute.For<IMailApplication>();
+        application.Catalog.Returns(Substitute.For<IClientCatalog>());
+        application.SaveDraftAsync(account, Arg.Any<Guid>(), Arg.Any<ComposeContent>(), Arg.Any<CancellationToken>())
+            .Returns(Outcome<DraftSnapshot>.Success(new DraftSnapshot(Guid.NewGuid(), account, 1, 0, 0, blob, null, null, false, false)));
+        ComposeContent content = new ComposeContent(
+            "owner@synthetic.invalid",
+            [],
+            "Subject",
+            "Body",
+            DateTimeOffset.UnixEpoch,
+            "synthetic@synthetic.invalid",
+            [first, second]
+        );
+        ComposeWindow window = new ComposeWindow(application, account, content);
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            Button remove = window.GetVisualDescendants().OfType<Button>().Single(button =>
+                Avalonia.Automation.AutomationProperties.GetName(button) == Strings.Get("RemoveAttachment") + " first.pdf");
+
+            // Act
+            remove.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await window.PrepareShutdownAsync();
+
+            // Assert
+            ItemsControl attachments = window.GetVisualDescendants().OfType<ItemsControl>().Single(control => control.Name == "ComposeAttachments");
+            Assert.That(attachments.Items.Cast<ComposeAttachment>(), Is.EqualTo(new[] { second }));
+            Assert.That(window.GetVisualDescendants().OfType<TextBlock>().Any(text => text.Text == Strings.Get("ComposeAttachments")), Is.True);
+            Assert.That(
+                window.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "Attach").Content,
+                Is.TypeOf<Avalonia.Controls.Shapes.Path>()
+            );
+            await application.Received().SaveDraftAsync(
+                account,
+                Arg.Any<Guid>(),
+                Arg.Is<ComposeContent>(saved => saved.Attachments.Length == 1 && saved.Attachments[0] == second),
+                Arg.Any<CancellationToken>()
+            );
+        }
+        finally
+        {
+            window.ConfirmShutdown();
+            window.Close();
+        }
+    }
+
     [AvaloniaTest]
     [TestCase("fr", "friend@synthetic.invalid", false)]
     [TestCase("first@synthetic.invalid; fr", "first@synthetic.invalid; friend@synthetic.invalid", false)]

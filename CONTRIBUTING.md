@@ -72,6 +72,13 @@ invariants, security or protocol behaviour; avoid restating the code or adding d
 
 ## XAML style
 
+In multi-step dialogs, put a left-arrow back button beside the title. Use the shared page header,
+hide the arrow on the first step, and provide an accessible name and tooltip.
+
+Use the native title-bar X to close dialogs; do not add a duplicate Close button in their content.
+Preserve save-before-close and failure recovery. Compose drafts save automatically after a typing pause,
+with a concise footer explanation and truthful save status rather than a manual Save draft button.
+
 Give each element its own line. Keep short opening tags together. When attributes wrap, put each attribute on its
 own indented line. Use four spaces and retain meaningful attribute values, binding expressions and resource keys.
 Update `x:Class`, XML namespace declarations and resource lookups whenever namespaces or paths change.

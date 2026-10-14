@@ -82,8 +82,7 @@ internal static class ClientQualification
                     "Name" => "Authored synthetic account",
                     "IncomingHost" => "incoming.synthetic.invalid",
                     "OutgoingHost" => "outgoing.synthetic.invalid",
-                    "IncomingUsername" => "incoming-synthetic",
-                    "OutgoingUsername" => "outgoing-synthetic",
+                    "Email" => "owner@synthetic.invalid",
                     "IncomingPassword" or "OutgoingPassword" => "authored-synthetic-secret",
                     _ => field.Text
                 };

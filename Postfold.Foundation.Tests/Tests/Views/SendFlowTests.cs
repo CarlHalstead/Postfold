@@ -50,6 +50,10 @@ public sealed class SendFlowTests
             content.Sender,
             content.Recipients
         );
+        content = content with
+        {
+            Attachments = [new ComposeAttachment("preserved.txt", "text/plain", frozen.Mime)]
+        };
         application.SaveDraftAsync(account, Arg.Any<Guid>(), Arg.Any<ComposeContent>(), Arg.Any<CancellationToken>())
             .Returns(Outcome<DraftSnapshot>.Success(new DraftSnapshot(
                 Guid.NewGuid(),
@@ -79,6 +83,8 @@ public sealed class SendFlowTests
             // Assert
             Assert.That(window.IsVisible, Is.True);
             Assert.That(window.GetVisualDescendants().OfType<TextBox>().All(field => field.IsReadOnly || !field.IsEffectivelyEnabled), Is.True);
+            Assert.That(window.GetVisualDescendants().OfType<Button>().Where(button => button.Name is "Attach" or "RemoveAttachment")
+                .All(button => !button.IsEffectivelyEnabled), Is.True);
             Assert.That(window.GetVisualDescendants().OfType<TextBlock>()
                 .Any(text => text.Text?.Contains(Strings.Get("SendStatus." + state), StringComparison.Ordinal) == true), Is.True);
             Button send = window.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "Send");

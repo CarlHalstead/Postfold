@@ -15,7 +15,7 @@ internal static class FormControls
 {
     private static readonly ConditionalWeakTable<Window, List<Task>> Work = new ConditionalWeakTable<Window, List<Task>>();
 
-    internal static DockPanel Page(string title, Control content, Panel? footer = null)
+    internal static DockPanel Page(string title, Control content, Panel? footer = null, Button? back = null)
     {
         DockPanel page = new DockPanel();
         if (title.Length > 0)
@@ -25,11 +25,23 @@ internal static class FormControls
                 Text = title,
                 FontWeight = FontWeight.SemiBold,
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Avalonia.Thickness(24, 24, 24, 16)
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
             };
             heading.Bind(TextBlock.FontSizeProperty, new DynamicResourceExtension("SubjectFontSize"));
-            DockPanel.SetDock(heading, Dock.Top);
-            page.Children.Add(heading);
+            Grid header = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+                Margin = new Avalonia.Thickness(24, 24, 24, 16)
+            };
+            if (back is not null)
+            {
+                back.Margin = new Avalonia.Thickness(0, 0, 12, 0);
+                header.Children.Add(back);
+            }
+            header.Children.Add(heading);
+            Grid.SetColumn(heading, 1);
+            DockPanel.SetDock(header, Dock.Top);
+            page.Children.Add(header);
         }
         if (footer is not null)
         {
@@ -43,6 +55,16 @@ internal static class FormControls
             Content = content
         });
         return page;
+    }
+
+    internal static Avalonia.Controls.Shapes.Path Icon(Geometry geometry)
+    {
+        return new Avalonia.Controls.Shapes.Path
+        {
+            Data = geometry,
+            Width = 16,
+            Height = 16
+        };
     }
 
     internal static void ApplyTypography(Window window, double fontSize, FontFamily fontFamily)
@@ -144,7 +166,7 @@ internal static class FormControls
         };
         AutomationProperties.SetName(button, Strings.Get(key));
         AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
-        if (key is "Send" or "Save" or "SaveSettings" or "SaveCredentials" or "SaveRoles")
+        if (key is "Send" or "SaveSettings" or "SaveCredentials")
         {
             button.Classes.Add("primary");
         }
