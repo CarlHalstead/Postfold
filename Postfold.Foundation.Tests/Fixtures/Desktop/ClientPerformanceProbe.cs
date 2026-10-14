@@ -34,8 +34,7 @@ public static class ClientPerformanceProbe
         foreach (Postfold.Core.Models.Messages.MessageSnapshot message in model.Messages.Take(20).ToArray())
         {
             long sample = Stopwatch.GetTimestamp();
-            model.Selected = message;
-            await model.ReadSelectedAsync(false);
+            await model.OpenMessageAsync(message);
             await FrameAsync(window, cancellationToken);
             previews.Add(Stopwatch.GetElapsedTime(sample).TotalMilliseconds);
         }

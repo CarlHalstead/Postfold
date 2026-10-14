@@ -42,6 +42,9 @@ synthetic profile with 100,000 messages; initial seeding takes longer and is not
 Demo and qualification code lives in the test project and is excluded from the desktop application.
 The ordinary launch uses `%LOCALAPPDATA%/Postfold/profiles/default`, opens dismissible setup when no accounts
 exist, and refreshes configured accounts after showing local mail.
+To open a separate existing profile, launch the normal app with `--profile "C:/absolute/profile-directory"`
+before any `mailto:` activation. The directory must already exist and the path must be absolute.
+That profile supplies its own mail, credentials and preferences; normal account synchronisation still applies.
 
 Select an account or inbox in the left pane, select cached mail in the centre, and read plain text on the right.
 Search scope is the selected navigation entry; choose Unified inbox or All accounts explicitly.

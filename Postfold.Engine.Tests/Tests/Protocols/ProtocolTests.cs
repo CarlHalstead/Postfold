@@ -30,6 +30,30 @@ namespace Postfold.Engine.Tests.Tests.Protocols;
 
 public sealed class ProtocolTests
 {
+    [Test]
+    public async Task DiscoverAsync_WhenCredentialsAreMissing_RequiresAuthenticationWithoutContactingServer()
+    {
+        // Arrange
+        await using LocalMailServer server = new LocalMailServer(imap: true);
+        await using ImapAdapter adapter = new ImapAdapter(
+            EngineFixture.Account,
+            new MailEndpoint("localhost", server.Port, TlsMode.Implicit, "synthetic", "missing"),
+            new SessionCredentialStore(),
+            1048576
+        )
+        {
+            FixtureAuthority = server.Authority
+        };
+
+        // Act
+        Outcome<ImmutableArray<MailboxSnapshot>> result = await adapter.DiscoverAsync(CancellationToken.None);
+
+        // Assert
+        Assert.That(result.IsSuccess, Is.False);
+        Assert.That(result.Failure, Is.EqualTo(Failure.NeedsAuthentication));
+        Assert.That(server.Connections, Is.Zero);
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public async Task ReadAsync_WhenInboxHasSparseUidsOrNoUidNext_LoadsItsMessagesInBoundedPages(bool omitUidNext)

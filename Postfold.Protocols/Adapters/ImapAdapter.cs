@@ -949,16 +949,6 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
 
     private async Task<Failure> ConnectAsync(CancellationToken cancellationToken)
     {
-        if (!_client.IsConnected)
-        {
-            await _client.ConnectAsync(
-                _endpoint.Host,
-                _endpoint.Port,
-                _endpoint.Tls == TlsMode.Implicit ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls,
-                cancellationToken
-            ).ConfigureAwait(false);
-        }
-
         if (!_client.IsAuthenticated)
         {
             Outcome<Credential> credential = await _credentials.ReadAsync(_endpoint.CredentialKey, cancellationToken)
@@ -966,6 +956,16 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
             if (!credential.IsSuccess)
             {
                 return Failure.NeedsAuthentication;
+            }
+
+            if (!_client.IsConnected)
+            {
+                await _client.ConnectAsync(
+                    _endpoint.Host,
+                    _endpoint.Port,
+                    _endpoint.Tls == TlsMode.Implicit ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls,
+                    cancellationToken
+                ).ConfigureAwait(false);
             }
 
             if (credential.Value!.BearerToken)

@@ -21,6 +21,7 @@ internal sealed class LocalMailServer : IAsyncDisposable
     private readonly bool _imap;
     private readonly bool _startTls;
     private readonly Task _server;
+    private int _connections;
 
     internal LocalMailServer(bool imap, bool startTls = false)
     {
@@ -67,6 +68,8 @@ internal sealed class LocalMailServer : IAsyncDisposable
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
         _server = RunAsync();
     }
+
+    internal int Connections => Volatile.Read(ref _connections);
 
     internal X509Certificate2 Authority
     {
@@ -152,6 +155,7 @@ internal sealed class LocalMailServer : IAsyncDisposable
         while (!_stop.IsCancellationRequested)
         {
             using TcpClient client = await _listener.AcceptTcpClientAsync(_stop.Token);
+            Interlocked.Increment(ref _connections);
             Stream transport = client.GetStream();
             if (!_startTls)
             {

@@ -106,7 +106,7 @@ internal sealed class DesktopSession
     private async Task StartAsync()
     {
         string[] arguments = _desktop.Args ?? [];
-        string directory = Path.Combine(
+        string directory = Program.ProfileDirectory ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Postfold",
             "profiles/default"
