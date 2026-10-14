@@ -15,9 +15,16 @@ public sealed class App : Application
 {
     private ReducedMotionPolicy? _motion;
 
+    /// <summary>Overrides the motion preference; null uses the operating system setting.</summary>
+    public bool? ReduceMotion
+    {
+        get;
+        init;
+    }
+
     public override void Initialize()
     {
-        _motion = new ReducedMotionPolicy();
+        _motion = new ReducedMotionPolicy(ReduceMotion);
         Styles.Add(new FluentTheme());
         Styles.Add(new StyleInclude(new Uri("avares://Postfold.UI/"))
         {

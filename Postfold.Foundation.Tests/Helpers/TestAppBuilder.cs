@@ -10,6 +10,9 @@ public static class TestAppBuilder
 {
     public static AppBuilder BuildAvaloniaApp()
     {
-        return AppBuilder.Configure<App>().UseHeadless(new AvaloniaHeadlessPlatformOptions());
+        return AppBuilder.Configure(() => new App
+        {
+            ReduceMotion = false
+        }).UseHeadless(new AvaloniaHeadlessPlatformOptions());
     }
 }

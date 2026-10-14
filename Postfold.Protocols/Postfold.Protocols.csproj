@@ -2,6 +2,7 @@
     <ItemGroup>
         <PackageReference Include="MailKit" />
         <PackageReference Include="MimeKit" />
+        <PackageReference Include="System.Security.Cryptography.Pkcs" />
         <ProjectReference Include="../Postfold.Core/Postfold.Core.csproj" />
     </ItemGroup>
 </Project>
