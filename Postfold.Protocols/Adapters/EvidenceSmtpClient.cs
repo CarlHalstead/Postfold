@@ -10,10 +10,7 @@ namespace Postfold.Protocols.Adapters;
 
 internal sealed class EvidenceSmtpClient : SmtpClient, ITransferProgress
 {
-    internal Dictionary<string, RecipientEvidence> Evidence
-    {
-        get;
-    } =
+    internal Dictionary<string, RecipientEvidence> Evidence { get; } =
         new Dictionary<string, RecipientEvidence>(StringComparer.OrdinalIgnoreCase);
     internal SubmissionPhase Phase { get; set; } = SubmissionPhase.BeforeConnect;
 

@@ -12,14 +12,8 @@ namespace Postfold.Core.Interfaces;
 /// <summary>Discovers provider mailboxes and reads bounded metadata pages using account-scoped checkpoints.</summary>
 public interface IMailboxReader : IAsyncDisposable
 {
-    AccountId Account
-    {
-        get;
-    }
-    Capabilities Capabilities
-    {
-        get;
-    }
+    AccountId Account { get; }
+    Capabilities Capabilities { get; }
 
     Task<Outcome<ImmutableArray<MailboxSnapshot>>> DiscoverAsync(CancellationToken cancellationToken);
 

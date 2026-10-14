@@ -8,14 +8,8 @@ public sealed class Credential
         BearerToken = bearerToken;
     }
 
-    public string Secret
-    {
-        get;
-    }
-    public bool BearerToken
-    {
-        get;
-    }
+    public string Secret { get; }
+    public bool BearerToken { get; }
 
     public override string ToString()
     {

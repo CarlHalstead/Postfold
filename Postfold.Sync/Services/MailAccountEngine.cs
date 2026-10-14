@@ -94,14 +94,8 @@ public sealed class MailAccountEngine : IMailAccountEngine
         _signal = signal;
     }
 
-    public AccountId Account
-    {
-        get;
-    }
-    public ImmutableArray<MailboxSnapshot> Mailboxes
-    {
-        get;
-    }
+    public AccountId Account { get; }
+    public ImmutableArray<MailboxSnapshot> Mailboxes { get; }
     public Capabilities Capabilities => _reader.Capabilities;
 
     public async Task<Failure> ReconcileAsync(string mailbox, CancellationToken cancellationToken)

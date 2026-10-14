@@ -18,10 +18,7 @@ namespace Postfold.Core.Interfaces;
 /// <summary>Provides presentation with local mail queries and explicit account-scoped actions over durable engine work.</summary>
 public interface IMailApplication
 {
-    IClientCatalog Catalog
-    {
-        get;
-    }
+    IClientCatalog Catalog { get; }
 
     Task<Outcome<SearchPage>> SearchAsync(SearchRequest request, CancellationToken cancellationToken);
 

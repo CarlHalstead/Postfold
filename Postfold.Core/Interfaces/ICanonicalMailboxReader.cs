@@ -9,10 +9,7 @@ namespace Postfold.Core.Interfaces;
 /// <summary>Reads account-wide canonical messages and memberships using provider checkpoints rather than mailbox copies.</summary>
 public interface ICanonicalMailboxReader
 {
-    AccountId Account
-    {
-        get;
-    }
+    AccountId Account { get; }
 
     Task<Outcome<CanonicalPage>> ReadAsync(Checkpoint? checkpoint, int limit, CancellationToken cancellationToken);
 }

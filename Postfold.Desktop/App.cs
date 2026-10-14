@@ -16,11 +16,7 @@ public sealed class App : Application
     private ReducedMotionPolicy? _motion;
 
     /// <summary>Overrides the motion preference; null uses the operating system setting.</summary>
-    public bool? ReduceMotion
-    {
-        get;
-        init;
-    }
+    public bool? ReduceMotion { get; init; }
 
     public override void Initialize()
     {

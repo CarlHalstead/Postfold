@@ -71,61 +71,25 @@ internal sealed class LocalMailServer : IAsyncDisposable
 
     internal int Connections => Volatile.Read(ref _connections);
 
-    internal X509Certificate2 Authority
-    {
-        get;
-    }
-    internal int Port
-    {
-        get;
-    }
-    internal bool RejectSecondRecipient
-    {
-        get; set;
-    }
-    internal bool RejectAllRecipients
-    {
-        get; set;
-    }
-    internal bool RejectData
-    {
-        get; set;
-    }
+    internal X509Certificate2 Authority { get; }
+    internal int Port { get; }
+    internal bool RejectSecondRecipient { get; set; }
+    internal bool RejectAllRecipients { get; set; }
+    internal bool RejectData { get; set; }
     internal bool AdvertiseStartTls { get; set; } = true;
-    internal bool LoseAcknowledgement
-    {
-        get; set;
-    }
+    internal bool LoseAcknowledgement { get; set; }
     internal uint UidValidity { get; set; } = 7;
     internal uint? UidNext { get; set; } = 3;
-    internal bool AdvancedImap
-    {
-        get; set;
-    }
-    internal bool AttachmentMessage
-    {
-        get; set;
-    }
-    internal bool OmitNativeMove
-    {
-        get; set;
-    }
-    internal bool IncludeArchive
-    {
-        get; set;
-    }
+    internal bool AdvancedImap { get; set; }
+    internal bool AttachmentMessage { get; set; }
+    internal bool OmitNativeMove { get; set; }
+    internal bool IncludeArchive { get; set; }
     internal List<uint> ArchiveUids { get; } = new List<uint>();
     internal uint[] CurrentUids { get; set; } = [1, 2];
     internal Dictionary<uint, string> RemoteContent { get; } = new Dictionary<uint, string>();
     internal List<string> Commands { get; } = new List<string>();
-    internal string? SubmittedMime
-    {
-        get; private set;
-    }
-    internal int SubmissionCount
-    {
-        get; private set;
-    }
+    internal string? SubmittedMime { get; private set; }
+    internal int SubmissionCount { get; private set; }
 
     public async ValueTask DisposeAsync()
     {

@@ -16,10 +16,7 @@ internal sealed class ManualTimer : ITimer
     }
 
     internal TimeSpan Due { get; private set; } = Timeout.InfiniteTimeSpan;
-    internal bool Disposed
-    {
-        get; private set;
-    }
+    internal bool Disposed { get; private set; }
 
     public bool Change(TimeSpan dueTime, TimeSpan period)
     {

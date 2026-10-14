@@ -52,6 +52,9 @@ change is needed. Do not change field-initialisation behaviour merely to reorder
 Use one blank line between members and logical sections, while keeping simple property groups compact.
 Do not add blank lines immediately inside braces or use authored `#region` blocks.
 
+Write simple auto-properties on one line, including their braces and accessors:
+`public long MessageId { get; set; }`. Apply the same rule to `get; init;`, get-only auto-properties
+and auto-properties with initialisers. Properties with accessor block bodies use multiline Allman braces.
 Methods and constructors use block bodies. Simple properties and accessors may use expression bodies.
 Partial types are limited to generated code or tooling requirements. Prefer guard clauses and early returns.
 Use LINQ for readable queries and loops for effects, complex control flow or measured performance needs.

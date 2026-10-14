@@ -62,55 +62,22 @@ public sealed class WindowsHtmlIsolation : IDisposable
         _core.WebMessageReceived += WebMessageReceived;
     }
 
-    public int DeniedResources
-    {
-        get; private set;
-    }
-    public int DeniedNavigations
-    {
-        get; private set;
-    }
-    public int DeniedPopups
-    {
-        get; private set;
-    }
-    public int DeniedDownloads
-    {
-        get; private set;
-    }
-    public int StartedNavigations
-    {
-        get; private set;
-    }
-    public int ServedDocuments
-    {
-        get; private set;
-    }
-    public int ServedImages
-    {
-        get; private set;
-    }
-    public int DeniedPermissions
-    {
-        get; private set;
-    }
+    public int DeniedResources { get; private set; }
+    public int DeniedNavigations { get; private set; }
+    public int DeniedPopups { get; private set; }
+    public int DeniedDownloads { get; private set; }
+    public int StartedNavigations { get; private set; }
+    public int ServedDocuments { get; private set; }
+    public int ServedImages { get; private set; }
+    public int DeniedPermissions { get; private set; }
     public bool ScriptsDisabled => !_core.Settings.IsScriptEnabled;
     public bool BridgesDisabled => !_core.Settings.IsWebMessageEnabled && !_core.Settings.AreHostObjectsAllowed;
     public bool HasFailed => _failed;
-    public string? LastDeniedNavigation
-    {
-        get; private set;
-    }
-    public string? LastNavigationError
-    {
-        get; private set;
-    }
+    public string? LastDeniedNavigation { get; private set; }
+    public string? LastNavigationError { get; private set; }
     internal int RetainedResponses => _responses.Count;
     internal long RetainedResponseBytes => _responseBytes;
-    internal int ReceivedWebMessages
-    {
-        get; private set;
-    }
+    internal int ReceivedWebMessages { get; private set; }
 
     internal event Action<string>? DenialObserved;
 

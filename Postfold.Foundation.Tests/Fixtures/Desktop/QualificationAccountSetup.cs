@@ -12,18 +12,9 @@ namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 /// <summary>Authored form responses; never stores credentials, creates an account or connects a server.</summary>
 internal sealed class QualificationAccountSetup(IClientCatalog catalog, IAccountSetup roles) : IAccountSetup
 {
-    internal Failure Credentials
-    {
-        get; set;
-    }
-    internal Failure Incoming
-    {
-        get; set;
-    }
-    internal Failure Outgoing
-    {
-        get; set;
-    }
+    internal Failure Credentials { get; set; }
+    internal Failure Incoming { get; set; }
+    internal Failure Outgoing { get; set; }
 
     public async Task<AccountSetupResult> AddAsync(AccountSetupRequest request, CancellationToken cancellationToken)
     {

@@ -25,18 +25,12 @@ public sealed class NavigationItemViewModel : ObservableObject
         Icon = scope.IsAccount ? MailIcons.Account : MailIcons.ForRole(scope.IsFolder ? role : MailboxRole.Inbox);
     }
 
-    public MailScope Scope
-    {
-        get;
-    }
+    public MailScope Scope { get; }
     public string Name => Scope.Name.TrimStart();
     public bool IsFolder => Scope.IsFolder;
     public bool IsAccount => Scope.IsAccount;
     public Avalonia.Thickness RowMargin => new Avalonia.Thickness(IsFolder ? 32 : 12, 8, 12, 8);
-    public Geometry Icon
-    {
-        get;
-    }
+    public Geometry Icon { get; }
     public string CountText => UnreadCount > 0 ? UnreadCount.Value.ToString("N0", CultureInfo.CurrentCulture) : "";
     public string AccessibleName => Name + (UnreadCount is long count ? ", " + count.ToString(CultureInfo.CurrentCulture) +
         " " + Strings.Get("CachedUnreadMessages") : "");
@@ -52,10 +46,7 @@ public sealed class NavigationItemViewModel : ObservableObject
             }
         }
     }
-    public ImmutableArray<NavigationItemViewModel> Children
-    {
-        get;
-    }
+    public ImmutableArray<NavigationItemViewModel> Children { get; }
     public bool IsExpanded
     {
         get => _isExpanded;

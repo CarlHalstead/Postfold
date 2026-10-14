@@ -40,10 +40,7 @@ public sealed class SmtpSubmitter : IMessageSubmitter
         _maximumBytes = maximumBytes;
     }
 
-    internal X509Certificate2? FixtureAuthority
-    {
-        get; set;
-    }
+    internal X509Certificate2? FixtureAuthority { get; set; }
 
     public async Task<SubmissionOutcome> SubmitAsync(
         FrozenSubmission submission,

@@ -59,10 +59,7 @@ public sealed class MailApplication : IMailApplication
         _maximumBytes = maximumBytes;
     }
 
-    public IClientCatalog Catalog
-    {
-        get;
-    }
+    public IClientCatalog Catalog { get; }
 
     public Task<Outcome<SearchPage>> SearchAsync(SearchRequest request, CancellationToken cancellationToken)
     {

@@ -18,18 +18,9 @@ namespace Postfold.Core.Interfaces;
 /// <summary>Owns one account's synchronisation, durable mutations, drafts and outbox processing.</summary>
 public interface IMailAccountEngine : IAsyncDisposable
 {
-    AccountId Account
-    {
-        get;
-    }
-    Capabilities Capabilities
-    {
-        get;
-    }
-    ImmutableArray<MailboxSnapshot> Mailboxes
-    {
-        get;
-    }
+    AccountId Account { get; }
+    Capabilities Capabilities { get; }
+    ImmutableArray<MailboxSnapshot> Mailboxes { get; }
 
     Task<Failure> ReconcileAsync(string mailbox, CancellationToken cancellationToken);
 

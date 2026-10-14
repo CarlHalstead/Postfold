@@ -9,18 +9,9 @@ namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 /// <summary>In-process authored responses for native reader integration; never opens a socket.</summary>
 internal sealed class QualificationImageTransport : HttpMessageHandler
 {
-    internal bool RedirectToPrivateAddress
-    {
-        get; set;
-    }
-    internal bool Oversized
-    {
-        get; set;
-    }
-    internal int Requests
-    {
-        get; private set;
-    }
+    internal bool RedirectToPrivateAddress { get; set; }
+    internal bool Oversized { get; set; }
+    internal int Requests { get; private set; }
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {

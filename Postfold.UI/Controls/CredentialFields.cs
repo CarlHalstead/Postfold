@@ -63,26 +63,11 @@ internal sealed class CredentialFields
         };
     }
 
-    internal TextBox? ReceivingUsername
-    {
-        get;
-    }
-    internal TextBox ReceivingPassword
-    {
-        get;
-    }
-    internal TextBox? SendingUsername
-    {
-        get;
-    }
-    internal TextBox SendingPassword
-    {
-        get;
-    }
-    internal CheckBox Shared
-    {
-        get;
-    }
+    internal TextBox? ReceivingUsername { get; }
+    internal TextBox ReceivingPassword { get; }
+    internal TextBox? SendingUsername { get; }
+    internal TextBox SendingPassword { get; }
+    internal CheckBox Shared { get; }
     internal string OutgoingPassword => Shared.IsChecked == true ? ReceivingPassword.Text ?? "" : SendingPassword.Text ?? "";
 
     internal string OutgoingUsername(string receiving)

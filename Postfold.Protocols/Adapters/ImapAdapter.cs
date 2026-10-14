@@ -69,10 +69,7 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
         _client.Timeout = 30000;
     }
 
-    public AccountId Account
-    {
-        get;
-    }
+    public AccountId Account { get; }
     public Capabilities Capabilities { get; private set; } = new Capabilities(false, false, false, false, false, false);
 
     internal X509Certificate2? FixtureAuthority

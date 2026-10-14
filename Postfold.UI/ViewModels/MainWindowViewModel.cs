@@ -72,10 +72,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
 
     public ObservableCollection<MailScope> Scopes { get; } = [];
     public ObservableCollection<NavigationItemViewModel> Navigation { get; } = [];
-    public bool UpdatingNavigation
-    {
-        get; private set;
-    }
+    public bool UpdatingNavigation { get; private set; }
     public NavigationItemViewModel? NavigationSelection
     {
         get => Navigation.Concat(Navigation.SelectMany(item => item.Children)).FirstOrDefault(item => item.Scope == Scope);
@@ -92,38 +89,14 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     public ObservableCollection<AttachmentSnapshot> Attachments { get; } = [];
     public ObservableCollection<AccountConfiguration> Accounts { get; } = [];
     public ObservableCollection<MailboxSnapshot> Mailboxes { get; } = [];
-    public IAsyncRelayCommand RefreshCommand
-    {
-        get;
-    }
-    public IAsyncRelayCommand MoreCommand
-    {
-        get;
-    }
-    public IAsyncRelayCommand RetrieveCommand
-    {
-        get;
-    }
-    public IAsyncRelayCommand ReadCommand
-    {
-        get;
-    }
-    public IAsyncRelayCommand FlagCommand
-    {
-        get;
-    }
-    public IAsyncRelayCommand ArchiveCommand
-    {
-        get;
-    }
-    public IAsyncRelayCommand TrashCommand
-    {
-        get;
-    }
-    public IAsyncRelayCommand SynchroniseCommand
-    {
-        get;
-    }
+    public IAsyncRelayCommand RefreshCommand { get; }
+    public IAsyncRelayCommand MoreCommand { get; }
+    public IAsyncRelayCommand RetrieveCommand { get; }
+    public IAsyncRelayCommand ReadCommand { get; }
+    public IAsyncRelayCommand FlagCommand { get; }
+    public IAsyncRelayCommand ArchiveCommand { get; }
+    public IAsyncRelayCommand TrashCommand { get; }
+    public IAsyncRelayCommand SynchroniseCommand { get; }
 
     public string Title
     {
@@ -222,10 +195,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     }
 
     public MimeSnapshot? Content => _content;
-    public long CachedMessageCount
-    {
-        get; private set;
-    }
+    public long CachedMessageCount { get; private set; }
 
     public MailScope? Scope
     {

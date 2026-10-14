@@ -20,10 +20,7 @@ namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 internal sealed class QualificationMailApplication(IMailApplication application) : IMailApplication
 {
     public IClientCatalog Catalog => application.Catalog;
-    internal bool FailDraftSaves
-    {
-        get; set;
-    }
+    internal bool FailDraftSaves { get; set; }
 
     public Task<Outcome<SearchPage>> SearchAsync(SearchRequest request, CancellationToken cancellationToken)
     {

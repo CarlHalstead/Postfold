@@ -10,14 +10,8 @@ namespace Postfold.Core.Interfaces;
 /// <summary>Composes account connections and exposes explicit credential and mailbox-role configuration.</summary>
 public interface IAccountProvisioner
 {
-    bool NetworkAllowed
-    {
-        get;
-    }
-    IClientCatalog Catalog
-    {
-        get;
-    }
+    bool NetworkAllowed { get; }
+    IClientCatalog Catalog { get; }
 
     /// <summary>Returns an unused account id, including ids retained for removed accounts.</summary>
     Task<AccountId> NextAccountIdAsync(CancellationToken cancellationToken);

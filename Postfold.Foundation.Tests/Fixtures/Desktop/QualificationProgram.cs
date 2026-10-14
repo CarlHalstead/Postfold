@@ -8,15 +8,8 @@ namespace Postfold.Foundation.Tests.Fixtures.Desktop;
 
 public static class QualificationProgram
 {
-    internal static long Started
-    {
-        get; private set;
-    }
-    internal static bool StartClient
-    {
-        get;
-        private set;
-    }
+    internal static long Started { get; private set; }
+    internal static bool StartClient { get; private set; }
 
     [STAThread]
     public static void Main(string[] args)

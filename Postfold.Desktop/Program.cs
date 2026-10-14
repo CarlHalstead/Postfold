@@ -7,17 +7,9 @@ namespace Postfold.Desktop;
 
 public static class Program
 {
-    internal static bool StartClient
-    {
-        get;
-        private set;
-    }
+    internal static bool StartClient { get; private set; }
 
-    internal static string? ProfileDirectory
-    {
-        get;
-        private set;
-    }
+    internal static string? ProfileDirectory { get; private set; }
 
     [STAThread]
     public static void Main(string[] args)

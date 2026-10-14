@@ -22,10 +22,7 @@ internal sealed class WindowsHtmlNetworkIsolation : IDisposable
             "--disable-quic --disable-background-networking --dns-prefetch-disable --disable-preconnect";
     }
 
-    internal string Arguments
-    {
-        get;
-    }
+    internal string Arguments { get; }
 
     public void Dispose()
     {

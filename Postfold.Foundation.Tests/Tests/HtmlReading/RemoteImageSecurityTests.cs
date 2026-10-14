@@ -105,14 +105,8 @@ public sealed class RemoteImageSecurityTests
             _target = target;
         }
 
-        internal int Requests
-        {
-            get; private set;
-        }
-        internal bool PrivateHeadersAbsent
-        {
-            get; private set;
-        }
+        internal int Requests { get; private set; }
+        internal bool PrivateHeadersAbsent { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -127,10 +121,7 @@ public sealed class RemoteImageSecurityTests
 
     private sealed class RebindingDns : IDnsResolver
     {
-        internal int Lookups
-        {
-            get; private set;
-        }
+        internal int Lookups { get; private set; }
 
         public Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken)
         {
