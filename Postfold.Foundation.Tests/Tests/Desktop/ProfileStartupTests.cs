@@ -9,7 +9,6 @@ using NUnit.Framework;
 using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
 using Postfold.Core.Models.Synchronisation;
-using Postfold.Core.Services;
 using Postfold.Desktop.Composition;
 using Postfold.Desktop.Stores;
 using Postfold.Engine.Tests.Fixtures;

@@ -16,6 +16,12 @@ internal sealed class QualificationAccountSetup(IClientCatalog catalog, IAccount
     internal Failure Incoming { get; set; }
     internal Failure Outgoing { get; set; }
 
+    public Task<AccountServerSettings> DiscoverAsync(string email, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new AccountServerSettings(null, null));
+    }
+
     public async Task<AccountSetupResult> AddAsync(AccountSetupRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

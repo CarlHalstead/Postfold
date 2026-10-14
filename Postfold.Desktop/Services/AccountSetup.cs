@@ -20,13 +20,28 @@ public sealed class AccountSetup : IAccountSetup
     private readonly ICredentialStore _session;
     private readonly IClientIdentity? _identity;
     private readonly SemaphoreSlim _additions = new SemaphoreSlim(1, 1);
+    private readonly IAccountServerDiscovery _discovery;
 
-    public AccountSetup(IAccountProvisioner host, ICredentialStore secure, ICredentialStore session, IClientIdentity? identity = null)
+    public AccountSetup(
+        IAccountProvisioner host,
+        ICredentialStore secure,
+        ICredentialStore session,
+        IClientIdentity? identity = null,
+        IAccountServerDiscovery? discovery = null
+    )
     {
         _host = host;
         _secure = secure;
         _session = session;
         _identity = identity;
+        _discovery = discovery ?? new MailServerDiscovery();
+    }
+
+    public Task<AccountServerSettings> DiscoverAsync(string email, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return _host.NetworkAllowed ? _discovery.DiscoverAsync(email, cancellationToken) :
+            Task.FromResult(new AccountServerSettings(null, null));
     }
 
     public async Task<AccountSetupResult> AddAsync(AccountSetupRequest request, CancellationToken cancellationToken)
