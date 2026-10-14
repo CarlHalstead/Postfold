@@ -1,5 +1,7 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using NUnit.Framework;
 using Postfold.Core.Enums;
 using Postfold.Core.Models;
@@ -25,6 +27,25 @@ namespace Postfold.Engine.Tests.Tests.Storage;
 
 public sealed class MigrationTests
 {
+    [TestCase("\n")]
+    [TestCase("\r\n")]
+    public void SchemaHash_WhenMigrationSqlUsesPlatformLineEndings_MatchesReviewedManifest(string newline)
+    {
+        // Arrange
+        using SqliteConnection connection = ProfileMigration.Connect(":memory:", readOnly: false);
+        using ProfileDbContext context = new ProfileDbContext(new DbContextOptionsBuilder<ProfileDbContext>().UseSqlite(connection).Options);
+        string script = context.GetService<IMigrator>().GenerateScript().ReplaceLineEndings(newline);
+        ProfileEvidence.Execute(connection, script);
+
+        // Act
+        string schema = ProfileMigration.SchemaHash(connection);
+
+        // Assert
+        Assert.That(schema, Is.EqualTo(ProfileMigrationManifest.Versions[0].SchemaHash));
+        ProfileEvidence.Execute(connection, "DROP INDEX MessageDate;");
+        Assert.That(ProfileMigration.SchemaHash(connection), Is.Not.EqualTo(schema));
+    }
+
     [Test]
     public async Task OpenAsync_WhenFreshThenReopened_PreservesReviewedSchemaAndHistory()
     {

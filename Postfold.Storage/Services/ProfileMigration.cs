@@ -113,7 +113,9 @@ internal static class ProfileMigration
         {
             for (int field = 0; field < 4; field++)
             {
-                schema.Append(reader.IsDBNull(field) ? "" : reader.GetString(field));
+                string value = reader.IsDBNull(field) ? "" : reader.GetString(field);
+                // EF emits platform-specific SQL newlines; retain the reviewed Windows fingerprint on every OS.
+                schema.Append(field == 3 ? value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\n", "\r\n", StringComparison.Ordinal) : value);
                 schema.Append('\0');
             }
 
