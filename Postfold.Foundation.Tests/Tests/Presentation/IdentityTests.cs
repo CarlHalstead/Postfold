@@ -33,6 +33,7 @@ public sealed class IdentityTests
             new ComposeIdentity("sender@synthetic.invalid\r\nBcc: victim@synthetic.invalid"),
             CancellationToken.None
         );
+        await profile.DisposeAsync();
         await using SqliteProfile restarted = (await SqliteProfile.OpenAsync(
             System.IO.Path.Combine(directory, "profile.db"),
             TimeProvider.System,

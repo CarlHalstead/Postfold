@@ -122,6 +122,7 @@ public sealed class ClientProtocolFlowTests
             await compose.QueueAsync();
             OutboxEntry entry = (await profile.OutboxAsync(EngineFixture.Account, CancellationToken.None))[0];
             await application.SubmitAsync(EngineFixture.Account, entry.Submission.Id, CancellationToken.None);
+            await profile.DisposeAsync();
             await using SqliteProfile restarted = (await SqliteProfile.OpenAsync(
                 System.IO.Path.Combine(directory, "profile.db"),
                 TimeProvider.System,

@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using NUnit.Framework;
 using Postfold.Core.Enums;
 using Postfold.Core.Models.Accounts;
@@ -6,9 +7,12 @@ using Postfold.Core.Models.Messages;
 using Postfold.Core.Models.Operations;
 using Postfold.Core.Models.Search;
 using Postfold.Engine.Tests.Fixtures;
+using Postfold.Engine.Tests.Fixtures.Storage;
+using Postfold.Storage.Services;
 using Postfold.Storage.Stores;
 using System;
 using System.Collections.Immutable;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -84,5 +88,36 @@ public sealed class MailboxUnreadCountTests
         Assert.That(unknown, Is.Empty);
         Assert.That(recycled.Single().Count, Is.EqualTo(1));
         Assert.That(inactive, Is.Empty);
+    }
+
+    [TestCase(false, 2)]
+    [TestCase(true, 3)]
+    public async Task MailboxUnreadCountsAsync_WhenGenerationsOverlap_CountsEligibleUnreadMemberships(bool currentInstanceAlsoExists, int expected)
+    {
+        // Arrange
+        string directory = EngineFixture.DirectoryPath();
+        await using SqliteProfile profile = await EngineFixture.OpenAsync(directory);
+        await profile.CommitAsync(
+            EngineFixture.Mailbox(),
+            EngineFixture.Page([EngineFixture.Message(1), EngineFixture.Message(2), EngineFixture.Message(3), EngineFixture.Message(4)]),
+            CancellationToken.None
+        );
+        using SqliteConnection connection = ProfileMigration.Connect(Path.Combine(directory, "profile.db"), readOnly: false);
+        ProfileEvidence.Execute(connection, """
+            UPDATE ImapInstances SET UidValidity=6 WHERE Uid=2;
+            DELETE FROM ImapInstances WHERE Uid=3;
+            UPDATE Messages SET IsRead=1 WHERE ProviderKey='INBOX:7:4';
+            """);
+        if (currentInstanceAlsoExists)
+        {
+            ProfileEvidence.Execute(connection, "INSERT INTO ImapInstances SELECT AccountId,FolderId,7,99,MessageId,NULL FROM ImapInstances WHERE Uid=2;");
+        }
+
+        // Act
+        ImmutableArray<MailboxUnreadCount> counts = await profile.MailboxUnreadCountsAsync(EngineFixture.Account, CancellationToken.None);
+
+        // Assert
+        Assert.That(counts, Has.Length.EqualTo(1));
+        Assert.That(counts[0].Count, Is.EqualTo(expected));
     }
 }

@@ -24,7 +24,8 @@ Generated exceptions are limited to generated sources in `obj`, not whole projec
 Core is framework-only. Protocols, Storage, Sync and UI reference Core only; Desktop composes them.
 UI uses Core application ports implemented by Sync. Sync must not reference concrete Storage or Protocols types.
 Every injected application service has an interface; keep optional capability ports narrow.
-Do not introduce speculative abstractions, an ORM, MediatR, event sourcing, a plugin framework or a custom analyzer.
+EF Core SQLite owns schema and migrations in Storage; existing parameterised queries remain supported.
+Do not introduce speculative abstractions, MediatR, event sourcing, a plugin framework or a custom analyzer.
 
 ## C# style
 
@@ -99,9 +100,11 @@ Run the following from the repository root:
 
 ```sh
 dotnet restore Postfold.slnx --locked-mode
+dotnet tool restore
 dotnet build Postfold.slnx --configuration Release --no-restore
 dotnet format Postfold.slnx --verify-no-changes --no-restore
 dotnet format style Postfold.slnx --verify-no-changes --no-restore --severity info --diagnostics IDE0005
+dotnet ef migrations has-pending-model-changes --project Postfold.Storage --startup-project Postfold.Storage --context ProfileDbContext --configuration Release --no-build
 dotnet test Postfold.slnx --configuration Release --no-build --no-restore
 pwsh -File eng/Verify-Source.ps1 -IncludeUntracked
 ```
@@ -115,6 +118,9 @@ member ordering, enum layout, wrapped lists, object initialisers, spacing, XAML 
 No analyzer package or custom analyzer is needed for these rules.
 
 Private plans, agent instructions, skills and local configuration must remain outside source control and artifacts.
+The EF design-time factory uses an in-memory target. Production profile admission owns migrations, backups and
+exclusive access; do not run developer database-update commands against mail profiles. Migration downgrades
+and automatic backup restoration are prohibited because queue history may follow irreversible mail effects.
 Use short descriptive branch names and scope-free commit titles of the form `type: imperative description`,
 approximately 72 characters with no trailing full stop. Allowed types are `feat`, `fix`, `docs`, `refactor`, `perf`,
 `test`, `ci`, `build`, `chore`, `style` and `revert`. Use breaking markers only for actual compatibility changes.

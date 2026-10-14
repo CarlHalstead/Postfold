@@ -30,6 +30,7 @@ public sealed class DesktopIntegrationTests
         // Act
         Failure configured = await integration.ConfigureAsync(new DesktopPreferences(false, false), CancellationToken.None);
         Failure notified = integration.NotifyNewMail();
+        await profile.DisposeAsync();
         await using SqliteProfile reopened = (await SqliteProfile.OpenAsync(
             System.IO.Path.Combine(directory, "profile.db"),
             TimeProvider.System,

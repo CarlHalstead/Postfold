@@ -12,6 +12,8 @@ using Postfold.Core.Models.Operations;
 using Postfold.Core.Models.Outbox;
 using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
+using Postfold.Storage.Models;
+using Postfold.Storage.Services;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -33,16 +35,18 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     IDesktopPreferenceStore, IAccountIdentityStore, IAsyncDisposable
 {
     private readonly string _path;
+    private readonly FileStream _lease;
     private readonly BlobStore _blobs;
     private readonly SemaphoreSlim _writer = new SemaphoreSlim(1, 1);
     private readonly SemaphoreSlim _readers = new SemaphoreSlim(4, 4);
     private readonly TimeProvider _time;
     private int _disposed;
 
-    private SqliteProfile(string path, TimeProvider time)
+    private SqliteProfile(string path, TimeProvider time, FileStream lease)
     {
         _path = Path.GetFullPath(path);
         _time = time;
+        _lease = lease;
         _blobs = new BlobStore(Path.Combine(Path.GetDirectoryName(_path)!, "objects"));
     }
 
@@ -388,19 +392,15 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 connection,
                 null,
                 """
-                SELECT c.FolderId,COUNT(DISTINCT m.MessageId)
+                SELECT c.FolderId,COUNT(m.MessageId)
                 FROM Collections c
                 JOIN Accounts active ON active.AccountId=c.AccountId AND active.Active=1
                 LEFT JOIN Memberships x ON x.AccountId=c.AccountId AND x.FolderId=c.FolderId
-                LEFT JOIN (
-                    SELECT i.AccountId,i.FolderId,i.MessageId,MAX(i.UidValidity=current.UidValidity) AS Eligible
-                    FROM ImapInstances i
-                    JOIN Collections current ON current.AccountId=i.AccountId AND current.FolderId=i.FolderId
-                    WHERE i.AccountId=$a
-                    GROUP BY i.AccountId,i.FolderId,i.MessageId
-                ) validity ON validity.AccountId=x.AccountId AND validity.FolderId=x.FolderId AND validity.MessageId=x.MessageId
                 LEFT JOIN Messages m ON m.AccountId=x.AccountId AND m.MessageId=x.MessageId AND m.IsRead=0
-                    AND (validity.Eligible IS NULL OR validity.Eligible=1)
+                    AND (EXISTS(SELECT 1 FROM ImapInstances i INDEXED BY ImapMessage WHERE i.AccountId=x.AccountId
+                        AND i.MessageId=x.MessageId AND i.FolderId=x.FolderId AND i.UidValidity=c.UidValidity)
+                        OR NOT EXISTS(SELECT 1 FROM ImapInstances i INDEXED BY ImapMessage WHERE i.AccountId=x.AccountId
+                            AND i.MessageId=x.MessageId AND i.FolderId=x.FolderId))
                 WHERE c.AccountId=$a
                 GROUP BY c.FolderId;
                 """,
@@ -583,68 +583,55 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         CancellationToken cancellationToken
     )
     {
-        BlobStore.VerifyPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        SqliteProfile profile = new SqliteProfile(path, time);
+        FileStream? lease = null;
         try
         {
-            Failure failure = await profile.WriteAsync(connection =>
+            lease = await ProfileMigration.AdmitAsync(path, cancellationToken).ConfigureAwait(false);
+            SqliteProfile profile = new SqliteProfile(path, time, lease);
+            lease = null;
+            return Outcome<SqliteProfile>.Success(profile);
+        }
+        catch (ProfileAdmissionException exception)
+        {
+            if (exception.Failure == Failure.Corrupt)
             {
-                int version = Convert.ToInt32(Scalar(connection, null, "PRAGMA user_version;"), CultureInfo.InvariantCulture);
-                if (version > ProfileSchema.Version)
-                {
-                    return Failure.NewerSchema;
-                }
-
-                string integrity = (string)Scalar(connection, null, "PRAGMA quick_check;")!;
-                if (integrity != "ok")
-                {
-                    return Failure.Corrupt;
-                }
-
-                if (version < ProfileSchema.Version)
-                {
-                    profile.BackupBeforeMigration(connection);
-                    using SqliteTransaction transaction = connection.BeginTransaction();
-                    Execute(connection, transaction, ProfileSchema.Sql);
-                    Execute(
-                        connection,
-                        transaction,
-                        "INSERT INTO SchemaMigrations VALUES($v,$t,$h);",
-                        ("$v", ProfileSchema.Version),
-                        ("$t", time.GetUtcNow().ToUnixTimeMilliseconds()),
-                        ("$h", Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ProfileSchema.Sql))))
-                    );
-                    transaction.Commit();
-                }
-
-                Execute(connection, null, "PRAGMA journal_mode=WAL;");
-                return Failure.None;
-            }, cancellationToken).ConfigureAwait(false);
-            if (failure != Failure.None)
-            {
-                if (failure == Failure.Corrupt)
-                {
-                    profile.PreserveCorruption();
-                }
-
-                await profile.DisposeAsync().ConfigureAwait(false);
-                return Outcome<SqliteProfile>.Fail(failure);
+                PreserveCorruption(path);
             }
 
-            return Outcome<SqliteProfile>.Success(profile);
+            return Outcome<SqliteProfile>.Fail(exception.Failure);
         }
         catch (SqliteException exception) when (exception.SqliteErrorCode is 11 or 26)
         {
-            profile.PreserveCorruption();
-            await profile.DisposeAsync().ConfigureAwait(false);
+            PreserveCorruption(path);
             return Outcome<SqliteProfile>.Fail(Failure.Corrupt);
         }
         catch (SqliteException)
         {
-            profile.PreserveCorruption();
-            await profile.DisposeAsync().ConfigureAwait(false);
             return Outcome<SqliteProfile>.Fail(Failure.Unavailable);
+        }
+        catch (InvalidDataException)
+        {
+            return Outcome<SqliteProfile>.Fail(Failure.NeedsReview);
+        }
+        catch (JsonException)
+        {
+            return Outcome<SqliteProfile>.Fail(Failure.NeedsReview);
+        }
+        catch (FormatException)
+        {
+            return Outcome<SqliteProfile>.Fail(Failure.NeedsReview);
+        }
+        catch (IOException)
+        {
+            return Outcome<SqliteProfile>.Fail(Failure.Unavailable);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Outcome<SqliteProfile>.Fail(Failure.Unavailable);
+        }
+        finally
+        {
+            lease?.Dispose();
         }
     }
 
@@ -1305,15 +1292,15 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             .Select(match => "\"" + match.Value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\""));
         return ReadAsync(connection =>
         {
-            string sql = """
-                SELECT m.*,c.RemoteKey,i.UidValidity,i.Uid,
-                    (SELECT substr(s.Body,1,200) FROM SearchText s WHERE s.rowid=m.MessageId) AS CachedPreview,
-                    EXISTS(SELECT 1 FROM Attachments a WHERE a.AccountId=m.AccountId AND a.MessageId=m.MessageId)
-                FROM Messages m
+            string dateIndex = request.Unified ? "UnifiedMessageDate" : "MessageDate";
+            string accountFilter = request.Unified ? "1=1" : "m.AccountId=$a";
+            string sql = $$"""
+                SELECT m.MessageId,m.Date,c.RemoteKey,i.UidValidity,i.Uid
+                FROM Messages m INDEXED BY {{dateIndex}}
                 JOIN Accounts active ON active.AccountId=m.AccountId AND active.Active=1
                 LEFT JOIN ImapInstances i ON i.AccountId=m.AccountId AND i.MessageId=m.MessageId
                 LEFT JOIN Collections c ON c.AccountId=i.AccountId AND c.FolderId=i.FolderId
-                WHERE ($a IS NULL OR m.AccountId=$a) AND ($u=0 OR m.IsRead=0)
+                WHERE {{accountFilter}} AND ($u=0 OR m.IsRead=0)
                 AND (i.UidValidity IS NULL OR i.UidValidity=c.UidValidity)
                 AND EXISTS(SELECT 1 FROM Memberships x WHERE x.AccountId=m.AccountId AND x.MessageId=m.MessageId
                     AND ($f IS NULL OR x.FolderId=$f)
@@ -1326,7 +1313,18 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 sql += " AND m.MessageId IN(SELECT rowid FROM SearchText WHERE SearchText MATCH $q)";
             }
 
-            sql += " ORDER BY m.Date DESC,m.MessageId DESC LIMIT $n;";
+            sql += " ORDER BY m.Date DESC,m.MessageId DESC LIMIT $n";
+            // Materialise previews only for the bounded page, after matching and ordering metadata.
+            // Otherwise common FTS terms read body/attachment evidence for every match before LIMIT.
+            sql = """
+                SELECT m.*,page.RemoteKey,page.UidValidity,page.Uid,
+                    (SELECT substr(s.Body,1,200) FROM SearchText s WHERE s.rowid=m.MessageId) AS CachedPreview,
+                    EXISTS(SELECT 1 FROM Attachments a WHERE a.AccountId=m.AccountId AND a.MessageId=m.MessageId)
+                FROM (
+                """ + sql + """
+                ) page JOIN Messages m ON m.MessageId=page.MessageId
+                ORDER BY m.Date DESC,m.MessageId DESC;
+                """;
             using SqliteCommand command = Command(
                 connection,
                 null,
@@ -1936,6 +1934,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
 
         _readers.Release(4);
         _writer.Release();
+        _lease.Dispose();
         // Connection lifetimes belong to individual operations; pooling is disabled.
     }
 
@@ -2216,6 +2215,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     private SqliteConnection Connect()
     {
         BlobStore.VerifyPath(_path);
+        foreach (string suffix in new[] { "-wal", "-shm", "-journal" })
+        {
+            BlobStore.VerifyPath(_path + suffix);
+        }
         SqliteConnection connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = _path,
@@ -2262,56 +2265,21 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         );
     }
 
-    private void BackupBeforeMigration(SqliteConnection connection)
+    private static void PreserveCorruption(string path)
     {
-        string backup = _path + ".before-migration-" + Guid.NewGuid().ToString("N");
-        using SqliteConnection destination = new SqliteConnection("Data Source=" + backup + ";Pooling=False");
-        destination.Open();
-        connection.BackupDatabase(destination);
-        if ((string)Scalar(destination, null, "PRAGMA quick_check;")! != "ok")
-        {
-            throw new InvalidDataException("Migration backup validation failed.");
-        }
-
-        List<string> protectedObjects = new List<string>();
-        if (Convert.ToInt32(Scalar(
-            connection,
-            null,
-            "SELECT count(*) FROM sqlite_master WHERE name='Blobs';"
-        ), CultureInfo.InvariantCulture) == 1)
-        {
-            using SqliteCommand command = Command(
-                connection,
-                null,
-                "SELECT ObjectName,Length,Hash FROM Blobs WHERE Protected=1;"
-            );
-            using SqliteDataReader reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                protectedObjects.Add(reader.GetString(0) + "|" + reader.GetInt64(1) + "|" + reader.GetString(2));
-            }
-        }
-
-        File.WriteAllText(
-            backup + ".protected.json",
-            JsonSerializer.Serialize(protectedObjects) + "\n",
-            new UTF8Encoding(false)
-        );
-    }
-
-    private void PreserveCorruption()
-    {
-        string location = _path + ".recovery-" + Guid.NewGuid().ToString("N");
+        BlobStore.VerifyPath(path);
+        string location = path + ".recovery-" + Guid.NewGuid().ToString("N");
         Directory.CreateDirectory(location);
         foreach (string suffix in new[] { "", "-wal", "-shm" })
         {
-            if (File.Exists(_path + suffix))
+            if (File.Exists(path + suffix))
             {
-                File.Copy(_path + suffix, Path.Combine(location, "profile.db" + suffix));
+                BlobStore.VerifyPath(path + suffix);
+                File.Copy(path + suffix, Path.Combine(location, "profile.db" + suffix));
             }
         }
 
-        // Protected objects remain in place. Recovery never overwrites a profile or replays its queue.
+        // Protected objects remain in place; recovery never restores or replays queues.
     }
 
     private long Now()

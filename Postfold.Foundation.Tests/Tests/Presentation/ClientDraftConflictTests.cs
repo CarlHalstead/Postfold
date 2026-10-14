@@ -119,6 +119,7 @@ public sealed class ClientDraftConflictTests
 
         // Act
         Failure pushed = await application.PushDraftAsync(EngineFixture.Account, id, CancellationToken.None);
+        await profile.DisposeAsync();
         await using SqliteProfile restarted = (await SqliteProfile.OpenAsync(
             Path.Combine(directory, "profile.db"),
             TimeProvider.System,

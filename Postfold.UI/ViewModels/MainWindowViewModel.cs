@@ -686,36 +686,40 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        foreach (AccountConfiguration account in Accounts.ToArray())
+        IMailApplication application = _application;
+        Task<(AccountId Account, ImmutableArray<MailboxUnreadCount> Counts, bool Available)>[] pending = Accounts.ToArray()
+            .Select(account => ReadCountsAsync(account.Id)).ToArray();
+        (AccountId Account, ImmutableArray<MailboxUnreadCount> Counts, bool Available)[] results = await Task.WhenAll(pending);
+        if (generation != _searchGeneration || cancellationToken.IsCancellationRequested)
         {
-            NavigationItemViewModel[] folders = Navigation.Where(item => item.Scope.Account == account.Id)
+            return;
+        }
+
+        foreach ((AccountId account, ImmutableArray<MailboxUnreadCount> counts, bool available) in results)
+        {
+            NavigationItemViewModel[] folders = Navigation.Where(item => item.Scope.Account == account)
                 .SelectMany(item => item.Children).ToArray();
+            foreach (NavigationItemViewModel folder in folders)
+            {
+                folder.UnreadCount = !available || counts.IsDefault ? null : counts.FirstOrDefault(count =>
+                    count.Account == account && count.Folder == folder.Scope.Folder)?.Count;
+            }
+
+            if (!available)
+            {
+                Status = Strings.Get("CountsUnavailable");
+            }
+        }
+
+        async Task<(AccountId Account, ImmutableArray<MailboxUnreadCount> Counts, bool Available)> ReadCountsAsync(AccountId account)
+        {
             try
             {
-                ImmutableArray<MailboxUnreadCount> counts = await _application.Catalog.MailboxUnreadCountsAsync(account.Id, cancellationToken);
-                if (generation != _searchGeneration || cancellationToken.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                foreach (NavigationItemViewModel folder in folders)
-                {
-                    folder.UnreadCount = counts.IsDefault ? null : counts.FirstOrDefault(count =>
-                        count.Account == account.Id && count.Folder == folder.Scope.Folder)?.Count;
-                }
+                return (account, await application.Catalog.MailboxUnreadCountsAsync(account, cancellationToken), true);
             }
             catch (System.IO.IOException)
             {
-                if (generation != _searchGeneration || cancellationToken.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                foreach (NavigationItemViewModel folder in folders)
-                {
-                    folder.UnreadCount = null;
-                }
-                Status = Strings.Get("CountsUnavailable");
+                return (account, default, false);
             }
         }
     }

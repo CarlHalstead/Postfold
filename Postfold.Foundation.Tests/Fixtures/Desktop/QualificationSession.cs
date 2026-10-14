@@ -129,9 +129,9 @@ internal sealed class QualificationSession
             design is not null ? "synthetic-design-v3" : qualification is not null ? "synthetic-qualification-v1" : scale ? "synthetic-scale-v1" :
                 demo ? "synthetic-demo-v1" : "profiles/default"
         );
-        if (design is not null)
+        if (design is not null || measurement is not null)
         {
-            directory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(design))!, "synthetic-profile");
+            directory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(design ?? measurement!))!, "synthetic-profile");
         }
         try
         {
@@ -146,6 +146,17 @@ internal sealed class QualificationSession
             if (!opened.IsSuccess)
             {
                 _window.Title = "Postfold — " + opened.Failure;
+                if (measurement is not null)
+                {
+                    await File.WriteAllTextAsync(measurement, JsonSerializer.Serialize(new
+                    {
+                        Failure = opened.Failure.ToString(),
+                        AcceptanceComplete = false
+                    }) + "\n", _lifetime.Token);
+                    _exitRequested = true;
+                    _window.Close();
+                    return;
+                }
                 if (design is not null)
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(design))!);

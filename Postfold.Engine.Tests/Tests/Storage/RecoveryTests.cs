@@ -11,7 +11,6 @@ using Postfold.Storage.Stores;
 using System;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -75,7 +74,7 @@ public sealed class RecoveryTests
     }
 
     [Test]
-    public async Task OpenAsync_WhenMigrationFails_PreservesOriginalAndConsistentBackup()
+    public async Task OpenAsync_WhenDatabaseIsOccupied_RefusesWithoutChangingEvidence()
     {
         // Arrange
         string path = EngineFixture.DirectoryPath();
@@ -88,20 +87,16 @@ public sealed class RecoveryTests
             command.ExecuteNonQuery();
         }
 
+        byte[] before = await File.ReadAllBytesAsync(database);
+
         // Act
         Outcome<SqliteProfile> result = await SqliteProfile.OpenAsync(database, TimeProvider.System, CancellationToken.None);
-        string backup = Directory.GetFiles(path, "*.before-migration-*").Single(file => !file.EndsWith(".json", StringComparison.Ordinal));
-        using SqliteConnection saved = new SqliteConnection("Data Source=" + backup + ";Pooling=False");
-        saved.Open();
-        using SqliteCommand read = saved.CreateCommand();
-        read.CommandText = "SELECT Sentinel FROM Accounts;";
-        string? sentinel = (string?)read.ExecuteScalar();
 
         // Assert
-        Assert.That(result.IsSuccess, Is.False);
-        Assert.That(sentinel, Is.EqualTo("unsent evidence"));
-        Assert.That(File.Exists(database), Is.True);
-        Assert.That(File.Exists(backup + ".protected.json"), Is.True);
+        Assert.That(result.Failure, Is.EqualTo(Failure.NeedsReview));
+        Assert.That(await File.ReadAllBytesAsync(database), Is.EqualTo(before));
+        Assert.That(Directory.GetDirectories(path, "*.before-migration-*"), Is.Empty);
+        Assert.That(Directory.Exists(Path.Combine(path, "objects")), Is.False);
     }
 
     [Test]

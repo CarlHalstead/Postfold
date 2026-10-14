@@ -131,6 +131,16 @@ public sealed class ClientAttachmentTests
             forward.ConfirmShutdown();
             forward.Close();
         }
+        server.UidValidity = 8;
+        using MemoryStream staleDestination = new MemoryStream();
+        Failure stale = await application.SaveAttachmentAsync(
+            message,
+            discovered.Value[0].Part,
+            staleDestination,
+            CancellationToken.None
+        );
+
+        await profile.DisposeAsync();
         await using SqliteProfile restarted = (await SqliteProfile.OpenAsync(
             Path.Combine(directory, "profile.db"),
             TimeProvider.System,
@@ -143,14 +153,6 @@ public sealed class ClientAttachmentTests
         );
         DraftSnapshot draft = (await restarted.DraftsAsync(message.Account, CancellationToken.None))[0];
         ComposeContent restored = (await application.ReadDraftAsync(draft, CancellationToken.None)).Value!;
-        server.UidValidity = 8;
-        using MemoryStream staleDestination = new MemoryStream();
-        Failure stale = await application.SaveAttachmentAsync(
-            message,
-            discovered.Value[0].Part,
-            staleDestination,
-            CancellationToken.None
-        );
 
         // Assert
         Assert.That(discovered.IsSuccess, Is.True);

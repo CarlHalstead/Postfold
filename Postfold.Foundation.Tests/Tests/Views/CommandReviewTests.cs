@@ -60,6 +60,7 @@ public sealed class CommandReviewTests
             false,
             CancellationToken.None
         );
+        await profile.DisposeAsync();
         await using SqliteProfile reopened = (await SqliteProfile.OpenAsync(
             System.IO.Path.Combine(directory, "profile.db"),
             TimeProvider.System,
