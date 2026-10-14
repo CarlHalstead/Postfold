@@ -8,7 +8,7 @@ Windows is the first product target, followed by Linux, macOS, Android and iOS.
 
 ## Development
 
-Install the .NET SDK version specified in `global.json`. No mobile workloads are needed for the desktop foundation.
+Install the latest stable .NET 10 SDK (10.0.402 or newer). The root `global.json` applies to every project and solution in this repository and selects the latest installed .NET 10.0 feature band and patch; prereleases are excluded. CI installs the latest stable .NET 10.0 SDK. No mobile workloads are needed for the desktop foundation.
 From the repository root:
 
 ```sh
