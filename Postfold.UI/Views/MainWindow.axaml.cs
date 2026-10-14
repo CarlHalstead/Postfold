@@ -37,6 +37,7 @@ namespace Postfold.UI.Views;
 public sealed partial class MainWindow : Window
 {
     private static readonly DataFormat<MessageSnapshot> MessageDragFormat = DataFormat.CreateInProcessFormat<MessageSnapshot>("Postfold.Message");
+    private readonly ILauncher? _launcher;
     private readonly List<ComposeWindow> _compose = [];
     private readonly List<Task> _work = [];
     private CancellationTokenSource _lifetime = new CancellationTokenSource();
@@ -66,10 +67,35 @@ public sealed partial class MainWindow : Window
     private PointerPressedEventArgs? _dragPress;
     private MessageSnapshot? _dragMessage;
     private Point _dragStart;
+    private Failure _startupFailure;
+    private bool _canStartFresh;
+    private Window? _profileFailureDialog;
+    private string? _profilesDirectory;
 
-    public MainWindow()
+    public MainWindow() : this(null)
     {
+    }
+
+    /// <summary>Allows the host or tests to supply a platform launcher; null uses the window's native launcher.</summary>
+    public MainWindow(ILauncher? launcher)
+    {
+        _launcher = launcher;
         AvaloniaXamlLoader.Load(this);
+        Wire("SetupButton", () =>
+        {
+            if (_setup is null && _startupFailure != Failure.None)
+            {
+                ShowProfileFailure();
+            }
+            else
+            {
+                OpenAccountSetup();
+            }
+            return Task.CompletedTask;
+        });
+        Wire("SettingsButton", () => { OpenSettings(); return Task.CompletedTask; });
+        this.FindControl<Button>("SetupButton")!.IsEnabled = false;
+        this.FindControl<Button>("SettingsButton")!.IsEnabled = false;
         this.FindControl<ListBox>("MessageList")!.TemplateApplied += (_, args) =>
         {
             if (_pageScroll is not null)
@@ -152,6 +178,9 @@ public sealed partial class MainWindow : Window
             }
         };
     }
+
+    /// <summary>Requests a separate empty profile; the desktop host owns its creation and selection.</summary>
+    public event EventHandler? FreshProfileRequested;
 
     public void SetHtmlSurface(Control? surface)
     {
@@ -296,9 +325,8 @@ public sealed partial class MainWindow : Window
                 Track(RefreshFromControlsAsync);
             }
         };
-        Wire("SetupButton", () => { OpenAccountSetup(); return Task.CompletedTask; });
         this.FindControl<Button>("SetupButton")!.IsEnabled = setup is not null;
-        Wire("SettingsButton", () => { OpenSettings(); return Task.CompletedTask; });
+        this.FindControl<Button>("SettingsButton")!.IsEnabled = true;
         Wire("WorkButton", () => { OpenWorkMenu(); return Task.CompletedTask; });
         Wire("DetailsButton", () => { ShowMessageDetails(); return Task.CompletedTask; });
         Wire("PlainButton", () => { SetHtmlSurface(null); return Task.CompletedTask; });
@@ -352,6 +380,36 @@ public sealed partial class MainWindow : Window
                 args.Handled = true;
             }
         };
+    }
+
+    /// <summary>Shows a profile startup failure without making unavailable account actions silently inert.</summary>
+    public void ReportStartupFailure(
+        Failure failure,
+        bool canStartFresh = true,
+        string? profilesDirectory = null
+    )
+    {
+        _startupFailure = failure;
+        _canStartFresh = canStartFresh;
+        _profilesDirectory = profilesDirectory;
+        if (DataContext is MainWindowViewModel model)
+        {
+            model.Title = "Postfold — " + Strings.Get("ProfileUnavailable");
+            model.ReportSendStatus(Strings.Get("ProfileStartupHint"));
+        }
+        this.FindControl<Button>("SetupButton")!.IsEnabled = true;
+        this.FindControl<Button>("SettingsButton")!.IsEnabled = true;
+        ShowProfileFailure();
+    }
+
+    /// <summary>Prevents new account/settings actions while a selected profile is opening.</summary>
+    public void BeginProfileStartup()
+    {
+        _startupFailure = Failure.None;
+        _profileFailureDialog?.Close();
+        _settingsDialog?.Close();
+        this.FindControl<Button>("SetupButton")!.IsEnabled = false;
+        this.FindControl<Button>("SettingsButton")!.IsEnabled = false;
     }
 
     /// <summary>Opens or activates the dismissible account dialog, including first-run startup.</summary>
@@ -1270,6 +1328,56 @@ public sealed partial class MainWindow : Window
             }
             _settingsDialog.Activate();
         }
+    }
+
+    private void ShowProfileFailure()
+    {
+        if (_profileFailureDialog is not null)
+        {
+            _profileFailureDialog.Activate();
+            return;
+        }
+        StackPanel form = new StackPanel();
+        form.Children.Add(new TextBlock
+        {
+            Text = Strings.Get("ProfileStartupHint"),
+            TextWrapping = TextWrapping.Wrap
+        });
+        TextBlock status = new TextBlock { Name = "ProfileStartupStatus", TextWrapping = TextWrapping.Wrap };
+        FormControls.AddActionButton(form, "StartFresh", () =>
+        {
+            FreshProfileRequested?.Invoke(this, EventArgs.Empty);
+            return Task.CompletedTask;
+        }, status).IsEnabled = _canStartFresh && FreshProfileRequested is not null;
+        FormControls.AddActionButton(form, "OpenProfilesFolder", async () =>
+        {
+            if (_profilesDirectory is null)
+            {
+                return;
+            }
+            try
+            {
+                bool opened = await (_launcher ?? Launcher).LaunchDirectoryInfoAsync(new DirectoryInfo(_profilesDirectory));
+                status.Text = opened ? "" : Strings.Get("OpenProfilesFolderFailed");
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                status.Text = Strings.Get("OpenProfilesFolderFailed");
+            }
+        }, status).IsEnabled = _profilesDirectory is not null;
+        form.Children.Add(status);
+        Window window = new Window
+        {
+            Title = Strings.Get("ProfileUnavailable"),
+            Width = 560,
+            Height = 360,
+            MinWidth = 420,
+            MinHeight = 300,
+            Content = form
+        };
+        _profileFailureDialog = window;
+        window.Closed += (_, _) => _profileFailureDialog = null;
+        ShowWindow(window);
     }
 
     private void OpenWorkMenu()

@@ -24,6 +24,7 @@ internal sealed class DesktopSession
 {
     private readonly IClassicDesktopStyleApplicationLifetime _desktop;
     private readonly MainWindow _window;
+    private readonly ProfileSelectionStore _profiles;
     private DesktopMailRuntime? _host;
     private Task _starting = Task.CompletedTask;
     private Task _synchronising = Task.CompletedTask;
@@ -36,10 +37,26 @@ internal sealed class DesktopSession
     private WindowsHtmlReadingService? _html;
     private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
 
-    internal DesktopSession(IClassicDesktopStyleApplicationLifetime desktop, MainWindow window)
+    internal DesktopSession(
+        IClassicDesktopStyleApplicationLifetime desktop,
+        MainWindow window,
+        string? profilesDirectory = null
+    )
     {
         _desktop = desktop;
         _window = window;
+        _profiles = new ProfileSelectionStore(profilesDirectory ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Postfold",
+            "profiles"
+        ));
+        window.FreshProfileRequested += (_, _) =>
+        {
+            if (_starting.IsCompleted && !_closing && _host is null)
+            {
+                _starting = StartFreshAsync();
+            }
+        };
         desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         window.Opened += (_, _) =>
         {
@@ -103,16 +120,14 @@ internal sealed class DesktopSession
         };
     }
 
-    private async Task StartAsync()
+    internal Task Startup => _starting;
+
+    private async Task<bool> StartAsync(string? directory = null)
     {
         string[] arguments = _desktop.Args ?? [];
-        string directory = Program.ProfileDirectory ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Postfold",
-            "profiles/default"
-        );
         try
         {
+            directory ??= Program.ProfileDirectory ?? _profiles.ReadDirectory();
             EngineLimits limits = new EngineLimits(2, 256, 3, 200, 33554432, 200, 30, 20, 1073741824);
             Outcome<DesktopMailRuntime> opened = await DesktopMailRuntime.OpenAsync(
                 directory,
@@ -123,8 +138,8 @@ internal sealed class DesktopSession
             );
             if (!opened.IsSuccess)
             {
-                _window.Title = "Postfold — " + Strings.Describe(opened.Failure);
-                return;
+                _window.ReportStartupFailure(opened.Failure, profilesDirectory: Path.GetDirectoryName(directory));
+                return false;
             }
             _host = opened.Value!;
             WindowsCredentialStore secure = new WindowsCredentialStore(Path.Combine(directory, "credentials"));
@@ -189,13 +204,40 @@ internal sealed class DesktopSession
                     model.ReportReadingResult(content.Failure);
                 }
             }
+            return true;
         }
         catch (OperationCanceledException)
         {
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _window.Title = "Postfold — local profile unavailable";
+            _window.ReportStartupFailure(
+                Failure.Unavailable,
+                _host is null,
+                directory is null ? _profiles.DirectoryPath : Path.GetDirectoryName(directory)
+            );
+        }
+        return false;
+    }
+
+    private async Task StartFreshAsync()
+    {
+        _window.BeginProfileStartup();
+        string directory = _profiles.NewDirectory();
+        if (!await StartAsync(directory))
+        {
+            return;
+        }
+        try
+        {
+            _profiles.SaveDirectory(directory);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            if (_window.DataContext is MainWindowViewModel model)
+            {
+                model.ReportSendStatus(Strings.Get("ProfileSelectionNotSaved"));
+            }
         }
     }
 

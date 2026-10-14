@@ -8,6 +8,13 @@
   <data name="NoMessages" xml:space="preserve"><value>No messages</value></data>
   <data name="SkipSetup" xml:space="preserve"><value>Skip for now</value></data>
   <data name="Setup" xml:space="preserve"><value>Add account</value></data>
+  <data name="ProfileUnavailable" xml:space="preserve"><value>Local profile unavailable</value></data>
+  <data name="ProfileStartupHint" xml:space="preserve"><value>Postfold could not open the local folder containing your accounts, cached mail, drafts and queued sends. Start fresh to use a separate empty profile. The previous folder will be preserved for recovery; its accounts and mail will not appear in the new profile.</value></data>
+  <data name="StartFresh" xml:space="preserve"><value>Start fresh</value></data>
+  <data name="OpenProfilesFolder" xml:space="preserve"><value>Open profiles folder</value></data>
+  <data name="OpenProfilesFolderFailed" xml:space="preserve"><value>Postfold could not open the profiles folder in your file explorer.</value></data>
+  <data name="ProfileSelectionNotSaved" xml:space="preserve"><value>The new profile is open, but Postfold could not remember it for the next launch.</value></data>
+  <data name="AppearanceSessionOnly" xml:space="preserve"><value>Applied for this session. Settings cannot be saved until a profile is open.</value></data>
   <data name="DuplicateAccount" xml:space="preserve"><value>This email address is already added. Use its existing account or remove it before adding it again.</value></data>
   <data name="SetupConnecting" xml:space="preserve"><value>Testing endpoints and loading initial messages…</value></data>
   <data name="InitialSync" xml:space="preserve"><value>Initial message sync</value></data>

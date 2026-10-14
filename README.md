@@ -23,6 +23,13 @@ dotnet run --project Postfold.Desktop --configuration Release --no-build
 Packages are pinned centrally and each project has a dependency lock file. Dependency changes require review,
 an unlocked restore to regenerate locks, advisory checks and the validation commands above.
 
+If a local profile cannot be opened, Postfold explains the failure and offers **Start fresh**. This creates a
+separate empty profile and remembers it for future launches, preserving the previous accounts, cache, drafts
+and queued sends in their original folder. Older profiles without EF migration history currently require
+separate recovery; they are never reset automatically. An explicit `--profile` launch argument overrides the
+remembered selection. Settings remain available while a profile is blocked; appearance changes then apply
+only to the current session. **Open profiles folder** opens the containing folder in the OS-native file explorer.
+
 The application projects sit at the root. Core has no package dependencies; Protocols, Storage, Sync and UI
 reference Core only. Desktop composes all five. Foundation and engine tests verify boundaries, cached presentation,
 stale selection, offline persistence, local TLS protocols, draft/outbox durability and synthetic headless interaction.

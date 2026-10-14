@@ -168,7 +168,7 @@ public sealed class SettingsWindow : Window
                     return;
                 }
                 apply(chosen);
-                status.Text = appearance is null ? Strings.Saved :
+                status.Text = appearance is null ? Strings.Get("AppearanceSessionOnly") :
                     Strings.Describe(await appearance.SaveAsync(chosen, _lifetime.Token));
             }, status).Classes.Add("primary");
             footer.Children.Add(status);
