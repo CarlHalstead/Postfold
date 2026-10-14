@@ -149,7 +149,7 @@ public sealed class ClientDraftConflictTests
             Assert.That(pushed, Is.EqualTo(Failure.NeedsReview));
             Assert.That(preserved.Conflict, Is.True);
             Assert.That(local.PlainText, Is.EqualTo(content.PlainText));
-            Assert.That(remoteContent.PlainText, Is.EqualTo("synthetic body\r\n"));
+            Assert.That(remoteContent.PlainText, Is.EqualTo("synthetic body" + Environment.NewLine));
             Assert.That(versions.Count(version => version.Origin == "Local"), Is.GreaterThanOrEqualTo(2));
             Assert.That(held.IsVisible, Is.True);
             Assert.That(await restarted.OutboxAsync(EngineFixture.Account, CancellationToken.None), Is.Empty);

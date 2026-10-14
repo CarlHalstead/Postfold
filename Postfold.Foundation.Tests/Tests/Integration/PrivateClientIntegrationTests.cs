@@ -85,7 +85,7 @@ public sealed class PrivateClientIntegrationTests
         Outcome<ComposeContent> editable = await reopened.Application.PrepareResendAsync(preserved, CancellationToken.None);
         Assert.That(preserved.Submission.Id, Is.EqualTo(submission));
         Assert.That(preserved.State, Is.EqualTo(SubmissionState.Cancelled));
-        Assert.That(editable.Value!.PlainText, Is.EqualTo(content.PlainText + "\r\n"));
+        Assert.That(editable.Value!.PlainText, Is.EqualTo(content.PlainText + Environment.NewLine));
         Assert.That(editable.Value.Predecessor, Is.EqualTo(submission));
         Guid replacementDraft = Guid.NewGuid();
         await reopened.RestoreAccountsAsync(new SessionCredentialStore(), CancellationToken.None);
