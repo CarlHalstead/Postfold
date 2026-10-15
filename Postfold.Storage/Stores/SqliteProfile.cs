@@ -1899,8 +1899,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 UPDATE Messages SET Pending=COALESCE((SELECT State FROM PendingOperations o
                     WHERE o.AccountId=Messages.AccountId AND o.MessageId=Messages.MessageId
                     AND o.State IN(1,2,3,4,5) ORDER BY o.rowid DESC LIMIT 1),0)
-                    WHERE EXISTS(SELECT 1 FROM PendingOperations o WHERE o.AccountId=Messages.AccountId
-                        AND o.MessageId=Messages.MessageId);
+                    WHERE (AccountId,MessageId) IN (SELECT AccountId,MessageId FROM PendingOperations);
                 """
             );
             Execute(
