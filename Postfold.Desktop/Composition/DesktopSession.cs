@@ -7,7 +7,9 @@ using Postfold.Core.Models.Appearance;
 using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.Core.Services;
+using Postfold.Desktop.Interfaces;
 using Postfold.Desktop.Services;
+using Postfold.Desktop.Services.Updates;
 using Postfold.Desktop.Stores;
 using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
@@ -20,7 +22,7 @@ using System.Threading.Tasks;
 
 namespace Postfold.Desktop.Composition;
 
-internal sealed class DesktopSession
+internal sealed class DesktopSession : IUpdateShutdown
 {
     private readonly IClassicDesktopStyleApplicationLifetime _desktop;
     private readonly MainWindow _window;
@@ -133,6 +135,121 @@ internal sealed class DesktopSession
 
     internal MainWindow Window => _window;
 
+    /// <summary>No apply process may be launched unless this barrier succeeds. Native handoff remains separately disabled.</summary>
+    public async Task<Failure> PrepareUpdateShutdownAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_closing || _finished)
+        {
+            return Blocked(Failure.PolicyBlocked, "UpdateShutdownBusy");
+        }
+        _closing = true;
+        bool confirmingDrafts = false;
+        (Window Window, bool Enabled)[] children = _window.OwnedWindows.Select(child => (child, child.IsEnabled)).ToArray();
+        _window.IsEnabled = false;
+        foreach ((Window child, _) in children)
+        {
+            child.IsEnabled = false;
+        }
+        try
+        {
+            await _starting;
+            if (_host is null)
+            {
+                _closing = false;
+                _window.IsEnabled = true;
+                RestoreChildren();
+                return Blocked(Failure.PolicyBlocked, "UpdateShutdownProfileBlocked");
+            }
+            // Active SMTP work is observed, never cancelled to satisfy a restart deadline.
+            await _host.PauseWorkAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (Postfold.Core.Models.Accounts.AccountConfiguration account in await _host.Catalog.AccountsAsync(cancellationToken))
+            {
+                if ((await _host.Catalog.OutboxAsync(account.Id, cancellationToken)).Any(entry => entry.State == SubmissionState.Submitting))
+                {
+                    _host.ResumeWork();
+                    _closing = false;
+                    _window.IsEnabled = true;
+                    RestoreChildren();
+                    return Blocked(Failure.NeedsReview, "UpdateShutdownSubmissionBlocked");
+                }
+            }
+            confirmingDrafts = true;
+            if (!await _window.FlushComposeAsync())
+            {
+                _host.ResumeWork();
+                _closing = false;
+                _window.IsEnabled = true;
+                RestoreChildren();
+                return Blocked(Failure.Unavailable, "UpdateShutdownDraftBlocked");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _host?.ResumeWork();
+            _closing = false;
+            _window.IsEnabled = true;
+            RestoreChildren();
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            if (confirmingDrafts)
+            {
+                return Blocked(Failure.Unavailable, "UpdateShutdownDraftBlocked");
+            }
+            _host?.ResumeWork();
+            _closing = false;
+            _window.IsEnabled = true;
+            RestoreChildren();
+            return Blocked(Failure.Unavailable, "UpdateShutdownWorkBlocked");
+        }
+
+        void RestoreChildren()
+        {
+            foreach ((Window child, bool enabled) in children)
+            {
+                child.IsEnabled = enabled;
+            }
+        }
+
+        // Draft confirmation is the irreversible UI boundary. Finish closing safely even if the request is cancelled.
+        // The caller must still recheck cancellation before any native handoff.
+        try
+        {
+            await _lifetime.CancelAsync();
+            await _synchronising;
+            if (_html is not null)
+            {
+                await _html.DisposeAsync();
+            }
+            if (_window.DataContext is MainWindowViewModel model)
+            {
+                await model.DisposeAsync();
+            }
+            await _host!.DisposeAsync();
+            _integration?.Dispose();
+            _notifications?.Dispose();
+            _finished = true;
+            return Failure.None;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Mail remains stopped if closure is incomplete; never re-admit services or launch an updater.
+            return Blocked(Failure.Unavailable, "UpdateShutdownWorkBlocked");
+        }
+
+        Failure Blocked(Failure failure, string key)
+        {
+            if (_window.DataContext is MainWindowViewModel model)
+            {
+                model.ReportSendStatus(Strings.Get(key));
+            }
+            return failure;
+        }
+    }
+
     private async Task<bool> StartAsync(string? directory = null)
     {
         string[] arguments = _desktop.Args ?? [];
@@ -168,7 +285,7 @@ internal sealed class DesktopSession
                     TrayEnabled = false
                 }, _lifetime.Token);
             }
-            _window.Configure(application, new AccountSetup(_host, secure, session, _host.Identity), _integration, _host);
+            _window.Configure(application, new AccountSetup(_host, secure, session, _host.Identity), _integration, _host, new InactiveClientUpdates());
             _html = new WindowsHtmlReadingService(
                 _window,
                 application,

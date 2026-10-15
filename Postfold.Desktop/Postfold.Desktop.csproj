@@ -6,6 +6,7 @@
         <ApplicationManifest>app.manifest</ApplicationManifest>
     </PropertyGroup>
     <ItemGroup>
+        <PackageReference Include="Velopack" />
         <PackageReference Include="System.Security.Cryptography.ProtectedData" />
         <ProjectReference Include="../Postfold.Core/Postfold.Core.csproj" />
         <ProjectReference Include="../Postfold.Protocols/Postfold.Protocols.csproj" />

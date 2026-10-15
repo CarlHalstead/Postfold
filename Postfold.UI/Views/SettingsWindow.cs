@@ -2,7 +2,6 @@ using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
-using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
@@ -40,7 +39,8 @@ public sealed class SettingsWindow : Window
         Action<AccountId> rename,
         Action<AccountId> remove,
         bool canManage,
-        bool canRestoreCredentials
+        bool canRestoreCredentials,
+        IClientUpdates? updates = null
     )
     {
         Title = Strings.Settings;
@@ -49,15 +49,6 @@ public sealed class SettingsWindow : Window
         MinWidth = 480;
         MinHeight = 480;
         DockPanel root = new DockPanel();
-        TextBlock heading = new TextBlock
-        {
-            Text = Strings.Settings,
-            FontWeight = FontWeight.SemiBold,
-            Margin = new Thickness(24, 24, 24, 16)
-        };
-        heading.Bind(TextBlock.FontSizeProperty, new DynamicResourceExtension("SubjectFontSize"));
-        DockPanel.SetDock(heading, Dock.Top);
-        root.Children.Add(heading);
         _accounts = new ComboBox
         {
             Name = "SettingsAccountSelection",
@@ -84,7 +75,8 @@ public sealed class SettingsWindow : Window
             Section("Appearance", Appearance()),
             Section("Accounts", Accounts()),
             Section("SenderIdentity", Identity()),
-            Section("Desktop", Desktop())
+            Section("Desktop", Desktop()),
+            Section("Updates", Updates())
         };
         _tabs.SelectionChanged += (_, _) => _accounts.IsVisible = _tabs.SelectedIndex is 1 or 2;
         _accounts.IsVisible = false;
@@ -262,6 +254,19 @@ public sealed class SettingsWindow : Window
             return FormControls.Page("", form, footer);
         }
 
+        Control Updates()
+        {
+            UpdateSettingsView view = new UpdateSettingsView(desktop, updates, _lifetime.Token);
+            Opened += async (_, _) =>
+            {
+                Task load = view.LoadAsync();
+                FormControls.Track(this, load);
+                await load;
+            };
+            Closed += (_, _) => view.Stop();
+            return view;
+        }
+
         Control Desktop()
         {
             StackPanel form = Form();
@@ -334,6 +339,7 @@ public sealed class SettingsWindow : Window
             "Accounts" => 1,
             "SenderIdentity" => 2,
             "Desktop" => 3,
+            "Updates" => 4,
             _ => 0
         };
         _accounts.IsVisible = _tabs.SelectedIndex is 1 or 2;

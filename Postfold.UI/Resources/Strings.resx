@@ -276,4 +276,38 @@
   <data name="AttachmentType.Image" xml:space="preserve"><value>Image</value></data>
   <data name="AttachmentType.Text" xml:space="preserve"><value>Text</value></data>
   <data name="AttachmentType.Spreadsheet" xml:space="preserve"><value>Spreadsheet</value></data>
+  <data name="Updates" xml:space="preserve"><value>Updates</value></data>
+  <data name="UpdateChecksEnabled" xml:space="preserve"><value>Automatically check for updates</value></data>
+  <data name="UpdateDownloadsEnabled" xml:space="preserve"><value>Allow update downloads</value></data>
+  <data name="UpdateUnmeteredOnly" xml:space="preserve"><value>Download only on unmetered connections</value></data>
+  <data name="UpdatesUnavailable" xml:space="preserve"><value>Updates are inactive in this build. Your preferences are saved, but no update checks, downloads or installation will run.</value></data>
+  <data name="CheckForUpdates" xml:space="preserve"><value>Check now</value></data>
+  <data name="DownloadUpdate" xml:space="preserve"><value>Download update</value></data>
+  <data name="RestartToUpdate" xml:space="preserve"><value>Restart to update</value></data>
+  <data name="SaveUpdatePreferences" xml:space="preserve"><value>Save preferences</value></data>
+  <data name="UpdateShutdownBusy" xml:space="preserve"><value>A shutdown is already in progress. Update installation remains blocked.</value></data>
+  <data name="UpdateShutdownProfileBlocked" xml:space="preserve"><value>Update restart is blocked until the current profile opens successfully.</value></data>
+  <data name="UpdateShutdownSubmissionBlocked" xml:space="preserve"><value>A message is still marked as submitting. Resolve its delivery state before restarting for an update.</value></data>
+  <data name="UpdateShutdownDraftBlocked" xml:space="preserve"><value>Update restart is blocked because a draft could not be saved. Your compose windows remain open.</value></data>
+  <data name="UpdateShutdownWorkBlocked" xml:space="preserve"><value>Postfold could not stop all local work safely. Update installation is blocked and your data has been retained.</value></data>
+  <data name="UpdateSchedule" xml:space="preserve"><value>Automatic check schedule</value></data>
+  <data name="UpdateDaily" xml:space="preserve"><value>Daily</value></data>
+  <data name="UpdateWeekly" xml:space="preserve"><value>Weekly</value></data>
+  <data name="UpdatePreferencesSaved" xml:space="preserve"><value>Update preferences saved.</value></data>
+  <data name="UpdateRestartConsent" xml:space="preserve"><value>Downloading does not install an update. Restarting requires your explicit choice and a successful work-saving check.</value></data>
+  <data name="CancelUpdate" xml:space="preserve"><value>Cancel</value></data>
+  <data name="UpdateProgress" xml:space="preserve"><value>Update download progress</value></data>
+  <data name="UpdateVersion" xml:space="preserve"><value>Update version</value></data>
+  <data name="UpdateCancelling" xml:space="preserve"><value>Cancelling the update operation…</value></data>
+  <data name="UpdateStateIdle" xml:space="preserve"><value>No update check has been performed.</value></data>
+  <data name="UpdateStateChecking" xml:space="preserve"><value>Checking for updates…</value></data>
+  <data name="UpdateStateCurrent" xml:space="preserve"><value>No newer compatible update was found.</value></data>
+  <data name="UpdateStateAvailable" xml:space="preserve"><value>An update is available to download.</value></data>
+  <data name="UpdateStateDownloading" xml:space="preserve"><value>Downloading the update…</value></data>
+  <data name="UpdateStateVerifying" xml:space="preserve"><value>Verifying the downloaded update…</value></data>
+  <data name="UpdateStateReady" xml:space="preserve"><value>The verified update is ready. Restart when you are ready.</value></data>
+  <data name="UpdateStateRestartPreparing" xml:space="preserve"><value>Saving work and preparing to restart…</value></data>
+  <data name="UpdateStateRestartBlocked" xml:space="preserve"><value>Restart is blocked. Resolve the reported work-saving issue before retrying.</value></data>
+  <data name="UpdateStateFailed" xml:space="preserve"><value>The update operation failed.</value></data>
+  <data name="UpdateStateCancelled" xml:space="preserve"><value>The update operation was cancelled. No update was installed.</value></data>
 </root>

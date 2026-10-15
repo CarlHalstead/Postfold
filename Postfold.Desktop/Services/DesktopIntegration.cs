@@ -4,6 +4,7 @@ using Avalonia.Threading;
 using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
 using Postfold.Core.Models.Appearance;
+using Postfold.Core.Models.Updates;
 using Postfold.UI.Resources;
 using SkiaSharp;
 using System;
@@ -54,6 +55,11 @@ public sealed class DesktopIntegration : IDesktopIntegration, IDisposable
                 return Failure.Unavailable;
             }
 
+            DesktopPreferences current = await _store.ReadDesktopPreferencesAsync(cancellationToken);
+            preferences = preferences with
+            {
+                Updates = current.Updates
+            };
             await _store.SaveDesktopPreferencesAsync(preferences, cancellationToken);
             _preferences = preferences;
             if (_tray is not null)
@@ -66,6 +72,34 @@ public sealed class DesktopIntegration : IDesktopIntegration, IDisposable
                 Restore();
             }
 
+            return Failure.None;
+        }
+        finally
+        {
+            _changes.Release();
+        }
+    }
+
+    public async Task<Failure> ConfigureUpdatesAsync(UpdatePreferences preferences, CancellationToken cancellationToken)
+    {
+        if (preferences.CheckIntervalHours is not (24 or 168))
+        {
+            return Failure.Validation;
+        }
+        await _changes.WaitAsync(cancellationToken);
+        try
+        {
+            if (_disposed)
+            {
+                return Failure.Unavailable;
+            }
+            DesktopPreferences current = await _store.ReadDesktopPreferencesAsync(cancellationToken);
+            DesktopPreferences changed = current with
+            {
+                Updates = preferences
+            };
+            await _store.SaveDesktopPreferencesAsync(changed, cancellationToken);
+            _preferences = changed;
             return Failure.None;
         }
         finally

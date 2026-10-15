@@ -1,5 +1,6 @@
 using Postfold.Core.Enums;
 using Postfold.Core.Models.Appearance;
+using Postfold.Core.Models.Updates;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -13,6 +14,9 @@ public interface IDesktopIntegration
     Task<DesktopPreferences> ReadPreferencesAsync(CancellationToken cancellationToken);
 
     Task<Failure> ConfigureAsync(DesktopPreferences preferences, CancellationToken cancellationToken);
+
+    /// <summary>Changes update choices atomically without overwriting tray or notification preferences.</summary>
+    Task<Failure> ConfigureUpdatesAsync(UpdatePreferences preferences, CancellationToken cancellationToken);
 
     Failure NotifyNewMail();
 }

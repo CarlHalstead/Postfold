@@ -14,6 +14,49 @@ namespace Postfold.Engine.Tests.Tests.Scheduling;
 public sealed class SchedulerTests
 {
     [Test]
+    public async Task PauseAsync_WhenWorkIsActive_ObservesWithoutCancellingAndNeverRestoresDiscardedCallbacks()
+    {
+        // Arrange
+        IWorkPolicy policy = Substitute.For<IWorkPolicy>();
+        IRetryDelayPolicy retry = Substitute.For<IRetryDelayPolicy>();
+        await using AccountScheduler scheduler = new AccountScheduler(2, 10, 1, TimeProvider.System, policy, retry);
+        AccountId account = new AccountId(1);
+        TaskCompletionSource entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken observed = default;
+        IAccountWork active = Substitute.For<IAccountWork>();
+        active.RunAsync(Arg.Any<CancellationToken>()).Returns(async call =>
+        {
+            observed = call.Arg<CancellationToken>();
+            entered.SetResult();
+            await release.Task;
+            return Failure.None;
+        });
+        IAccountWork queued = Substitute.For<IAccountWork>();
+        queued.RunAsync(Arg.Any<CancellationToken>()).Returns(Failure.None);
+        Task<Failure> running = scheduler.EnqueueAsync(account, active, WorkPriority.Interactive, CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Task<Failure> waiting = scheduler.EnqueueAsync(account, queued, WorkPriority.Interactive, CancellationToken.None);
+
+        // Act
+        Task paused = scheduler.PauseAsync(CancellationToken.None);
+        Failure denied = await scheduler.EnqueueAsync(new AccountId(2), queued, WorkPriority.Interactive, CancellationToken.None);
+        bool waitsForActive = !paused.IsCompleted;
+        release.SetResult();
+        await paused.WaitAsync(TimeSpan.FromSeconds(10));
+        scheduler.ResumeAll();
+
+        // Assert
+        Assert.That(waitsForActive, Is.True);
+        Assert.That(observed.IsCancellationRequested, Is.False);
+        Assert.That(await running, Is.EqualTo(Failure.None));
+        Assert.That(await waiting, Is.EqualTo(Failure.PolicyBlocked));
+        Assert.That(denied, Is.EqualTo(Failure.PolicyBlocked));
+        await queued.DidNotReceive().RunAsync(Arg.Any<CancellationToken>());
+        Assert.That(await scheduler.EnqueueAsync(account, queued, WorkPriority.Interactive, CancellationToken.None), Is.EqualTo(Failure.None));
+    }
+
+    [Test]
     public async Task SuspendAsync_WhenAccountHasRunningAndQueuedWork_StopsOnlyThatAccountAndCanResume()
     {
         // Arrange

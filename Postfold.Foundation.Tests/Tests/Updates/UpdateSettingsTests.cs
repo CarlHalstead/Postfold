@@ -1,0 +1,211 @@
+using Avalonia.Controls;
+using Avalonia.Headless.NUnit;
+using Avalonia.Interactivity;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
+using NSubstitute;
+using NUnit.Framework;
+using Postfold.Core.Enums;
+using Postfold.Core.Interfaces;
+using Postfold.Core.Models.Appearance;
+using Postfold.Core.Models.Updates;
+using Postfold.Desktop.Services.Updates;
+using Postfold.UI.Resources;
+using Postfold.UI.ViewModels;
+using Postfold.UI.Views;
+using System;
+using System.Linq;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Postfold.Foundation.Tests.Tests.Updates;
+
+public sealed class UpdateSettingsTests
+{
+    [AvaloniaTest]
+    public async Task Updates_WhenNativeHandoffIsUnqualified_ShowsUnavailableControlsAndRetainsUserChoices()
+    {
+        // Arrange
+        IMailApplication application = Substitute.For<IMailApplication>();
+        IDesktopIntegration desktop = Substitute.For<IDesktopIntegration>();
+        desktop.ReadPreferencesAsync(Arg.Any<CancellationToken>()).Returns(new DesktopPreferences(false, true)
+        {
+            Updates = new UpdatePreferences(false, false, true)
+            {
+                CheckIntervalHours = 168
+            }
+        });
+        MainWindowViewModel model = new MainWindowViewModel(application);
+        MainWindow main = new MainWindow
+        {
+            DataContext = model
+        };
+        main.Configure(application, null, desktop);
+        main.Show();
+        main.OpenSettings("Updates");
+        SettingsWindow settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
+        try
+        {
+            MethodInfo drain = typeof(SettingsWindow).Assembly.GetType("Postfold.UI.Controls.FormControls")!
+                .GetMethod("DrainAsync", BindingFlags.Static | BindingFlags.NonPublic)!;
+            await (Task)drain.Invoke(null, new object[] { main })!;
+
+            // Act
+            bool? checks = settings.GetVisualDescendants().OfType<CheckBox>().Single(control => control.Name == "UpdateChecksEnabled").IsChecked;
+            bool? downloads = settings.GetVisualDescendants().OfType<CheckBox>().Single(control => control.Name == "UpdateDownloadsEnabled").IsChecked;
+            bool? unmetered = settings.GetVisualDescendants().OfType<CheckBox>().Single(control => control.Name == "UpdateUnmeteredOnly").IsChecked;
+
+            // Assert
+            Assert.That(checks, Is.False);
+            Assert.That(downloads, Is.False);
+            Assert.That(unmetered, Is.True);
+            Assert.That(settings.GetVisualDescendants().OfType<ComboBox>().Single(control => control.Name == "UpdateSchedule").SelectedIndex, Is.EqualTo(1));
+            Assert.That(settings.GetVisualDescendants().OfType<TextBlock>().Single(control => control.Name == "UpdatesAvailability").Text, Is.EqualTo(Strings.Get("UpdatesUnavailable")));
+            foreach (string name in new[] { "CheckForUpdates", "DownloadUpdate", "RestartToUpdate" })
+            {
+                Assert.That(settings.GetVisualDescendants().OfType<Button>().Single(control => control.Name == name).IsEnabled, Is.False);
+            }
+        }
+        finally
+        {
+            settings.Close();
+            main.Close();
+            await model.DisposeAsync();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task Updates_WhenDownloadIsCancelled_ReportsRealProgressAndWaitsForCancellationBeforeReadmittingActions()
+    {
+        // Arrange
+        IMailApplication application = Substitute.For<IMailApplication>();
+        IDesktopIntegration desktop = Substitute.For<IDesktopIntegration>();
+        desktop.ReadPreferencesAsync(Arg.Any<CancellationToken>()).Returns(DesktopPreferences.Default);
+        IClientUpdates updates = Substitute.For<IClientUpdates>();
+        updates.Current.Returns(new UpdateStatus(UpdateStage.Available, "0.2.0"));
+        TaskCompletionSource<UpdateStatus> completion = new TaskCompletionSource<UpdateStatus>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IProgress<UpdateStatus>? progress = null;
+        CancellationToken operation = default;
+        updates.DownloadAsync(Arg.Any<IProgress<UpdateStatus>>(), Arg.Any<CancellationToken>()).Returns(call =>
+        {
+            progress = call.ArgAt<IProgress<UpdateStatus>>(0);
+            operation = call.ArgAt<CancellationToken>(1);
+            return completion.Task;
+        });
+        MainWindowViewModel model = new MainWindowViewModel(application);
+        MainWindow main = new MainWindow
+        {
+            DataContext = model
+        };
+        main.Configure(application, null, desktop, updates: updates);
+        main.Show();
+        main.OpenSettings("Updates");
+        SettingsWindow settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
+        await DrainAsync(main);
+        try
+        {
+            // Act
+            Find<Button>(settings, "DownloadUpdate").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            progress!.Report(new UpdateStatus(UpdateStage.Downloading, "0.2.0", 53));
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            Assert.That(Find<ProgressBar>(settings, "UpdateProgress").Value, Is.EqualTo(53));
+            Assert.That(Find<ProgressBar>(settings, "UpdateProgress").IsIndeterminate, Is.False);
+            Find<Button>(settings, "CancelUpdate").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            // Assert: cancellation remains pending until the owned operation acknowledges it.
+            Assert.That(operation.IsCancellationRequested, Is.True);
+            Assert.That(Find<Button>(settings, "CheckForUpdates").IsEnabled, Is.False);
+            Assert.That(Find<TextBlock>(settings, "UpdatesAvailability").Text, Is.EqualTo(Strings.Get("UpdateCancelling")));
+            completion.SetCanceled(operation);
+            await DrainAsync(main);
+            Assert.That(Find<TextBlock>(settings, "UpdatesAvailability").Text, Is.EqualTo(Strings.Get("UpdateStateCancelled")));
+            Assert.That(Find<Button>(settings, "RestartToUpdate").IsEnabled, Is.False);
+            Assert.That(Find<Button>(settings, "CheckForUpdates").IsEnabled, Is.True);
+            progress.Report(new UpdateStatus(UpdateStage.Ready, "0.2.0"));
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            Assert.That(Find<Button>(settings, "RestartToUpdate").IsEnabled, Is.False);
+            await updates.DidNotReceiveWithAnyArgs().CheckAsync(default!, default);
+            await updates.DidNotReceiveWithAnyArgs().RestartAsync(default);
+        }
+        finally
+        {
+            completion.TrySetCanceled();
+            settings.Close();
+            await DrainAsync(main);
+            main.Close();
+            await model.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task InactiveService_WhenAnyOperationIsRequested_NeverLeavesInactiveStateOrReportsSimulatedProgress()
+    {
+        // Arrange
+        InactiveClientUpdates updates = new InactiveClientUpdates();
+        IProgress<UpdateStatus> progress = Substitute.For<IProgress<UpdateStatus>>();
+
+        // Act
+        UpdateStatus check = await updates.CheckAsync(progress, CancellationToken.None);
+        UpdateStatus download = await updates.DownloadAsync(progress, CancellationToken.None);
+        UpdateStatus restart = await updates.RestartAsync(CancellationToken.None);
+
+        // Assert
+        Assert.That(check.Stage, Is.EqualTo(UpdateStage.Inactive));
+        Assert.That(download, Is.EqualTo(check));
+        Assert.That(restart, Is.EqualTo(check));
+        progress.DidNotReceiveWithAnyArgs().Report(default!);
+    }
+
+    [AvaloniaTest]
+    public async Task Updates_WhenPreferencesAreSaved_PassesWeeklyScheduleWithoutStartingDiscovery()
+    {
+        // Arrange
+        IMailApplication application = Substitute.For<IMailApplication>();
+        IDesktopIntegration desktop = Substitute.For<IDesktopIntegration>();
+        desktop.ReadPreferencesAsync(Arg.Any<CancellationToken>()).Returns(DesktopPreferences.Default);
+        IClientUpdates updates = Substitute.For<IClientUpdates>();
+        updates.Current.Returns(new UpdateStatus(UpdateStage.Inactive));
+        MainWindowViewModel model = new MainWindowViewModel(application);
+        MainWindow main = new MainWindow
+        {
+            DataContext = model
+        };
+        main.Configure(application, null, desktop, updates: updates);
+        main.Show();
+        main.OpenSettings("Updates");
+        SettingsWindow settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
+        await DrainAsync(main);
+        try
+        {
+            // Act
+            Find<ComboBox>(settings, "UpdateSchedule").SelectedIndex = 1;
+            Find<Button>(settings, "SaveUpdatePreferences").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await DrainAsync(main);
+
+            // Assert
+            await desktop.Received(1).ConfigureUpdatesAsync(Arg.Is<UpdatePreferences>(preferences => preferences.CheckIntervalHours == 168), Arg.Any<CancellationToken>());
+            await updates.DidNotReceiveWithAnyArgs().CheckAsync(default!, default);
+            await updates.DidNotReceiveWithAnyArgs().DownloadAsync(default!, default);
+            await updates.DidNotReceiveWithAnyArgs().RestartAsync(default);
+        }
+        finally
+        {
+            settings.Close();
+            main.Close();
+            await model.DisposeAsync();
+        }
+    }
+
+    private static T Find<T>(SettingsWindow settings, string name) where T : Control
+    {
+        return settings.GetVisualDescendants().OfType<T>().Single(control => control.Name == name);
+    }
+
+    private static Task DrainAsync(MainWindow main)
+    {
+        MethodInfo drain = typeof(SettingsWindow).Assembly.GetType("Postfold.UI.Controls.FormControls")!
+            .GetMethod("DrainAsync", BindingFlags.Static | BindingFlags.NonPublic)!;
+        return (Task)drain.Invoke(null, new object[] { main })!;
+    }
+}

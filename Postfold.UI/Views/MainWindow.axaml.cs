@@ -49,6 +49,7 @@ public sealed partial class MainWindow : Window
     private IAccountManagement? _management;
     private IClientIdentity? _identity;
     private IDesktopIntegration? _desktop;
+    private IClientUpdates? _updates;
     private SettingsWindow? _settingsDialog;
     private GridLength _listWidth = new GridLength(0.36, GridUnitType.Star);
     private GridLength _readerWidth = new GridLength(0.45, GridUnitType.Star);
@@ -286,13 +287,15 @@ public sealed partial class MainWindow : Window
         IMailApplication application,
         IAccountSetup? setup,
         IDesktopIntegration? desktop = null,
-        IAccountManagement? management = null
+        IAccountManagement? management = null,
+        IClientUpdates? updates = null
     )
     {
         _management = management;
         _application = application;
         _setup = setup;
         _desktop = desktop;
+        _updates = updates;
         Wire("ComposeButton", () => { OpenCompose(); return Task.CompletedTask; });
         foreach ((string name, string kind) in new[]
         {
@@ -1305,7 +1308,8 @@ public sealed partial class MainWindow : Window
                 selected => { if (_management is not null) { RenameAccount(_management, selected); } },
                 selected => { if (_management is not null) { RemoveAccount(_management, selected); } },
                 _management is not null,
-                _setup is not null
+                _setup is not null,
+                _updates
             );
             _settingsDialog = window;
             window.Closed += (_, _) => _settingsDialog = null;

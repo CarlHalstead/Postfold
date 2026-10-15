@@ -12,6 +12,7 @@ using Postfold.Core.Models.Operations;
 using Postfold.Core.Models.Outbox;
 using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
+using Postfold.Core.Models.Updates;
 using Postfold.Storage.Models;
 using Postfold.Storage.Services;
 using System;
@@ -254,7 +255,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
 
             try
             {
-                return JsonSerializer.Deserialize<DesktopPreferences>(json) ?? DesktopPreferences.Default;
+                DesktopPreferences preferences = JsonSerializer.Deserialize<DesktopPreferences>(json) ?? DesktopPreferences.Default;
+                return preferences with
+                {
+                    Updates = preferences.Updates ?? UpdatePreferences.Default
+                };
             }
             catch (JsonException)
             {

@@ -2,6 +2,7 @@ using Avalonia;
 using System;
 using System.IO;
 using System.Linq;
+using Velopack;
 
 namespace Postfold.Desktop;
 
@@ -14,6 +15,7 @@ public static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        VelopackApp.Build().SetArgs(args).SetAutoApplyOnStartup(false).Run();
         if (!TryGetLaunchArguments(args, out string? profileDirectory, out string[] activationArguments))
         {
             return;

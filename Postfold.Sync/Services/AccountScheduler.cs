@@ -38,6 +38,7 @@ public sealed class AccountScheduler : IAccountScheduler
     private int _count;
     private int _interactiveTurns;
     private bool _stopping;
+    private bool _paused;
 
     public AccountScheduler(
         int workers,
@@ -74,6 +75,10 @@ public sealed class AccountScheduler : IAccountScheduler
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_stopping, this);
+            if (_paused)
+            {
+                return Task.FromResult(Failure.PolicyBlocked);
+            }
             if (_suspended.Contains(account))
             {
                 return Task.FromResult(Failure.Unavailable);
@@ -140,6 +145,37 @@ public sealed class AccountScheduler : IAccountScheduler
         }
     }
 
+    /// <summary>Stops admissions and observes active work without cancelling a submission. Cancellation leaves admission paused until ResumeAll.</summary>
+    public async Task PauseAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Task[] running;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_stopping, this);
+            _paused = true;
+            foreach (ScheduledWork work in _queues.Values.SelectMany(queue => queue))
+            {
+                work.Completion.TrySetResult(Failure.PolicyBlocked);
+            }
+            _queues.Clear();
+            _turns.Clear();
+            _count = 0;
+            running = _running.ToArray();
+        }
+        await Task.WhenAll(running).WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Resumes admissions against current durable state; discarded scheduled callbacks are never restored.</summary>
+    public void ResumeAll()
+    {
+        lock (_gate)
+        {
+            _paused = false;
+        }
+        _signal.Writer.TryWrite(0);
+    }
+
     public async ValueTask DisposeAsync()
     {
         bool cancel;
@@ -171,6 +207,10 @@ public sealed class AccountScheduler : IAccountScheduler
                 List<ScheduledWork> ready = new List<ScheduledWork>();
                 lock (_gate)
                 {
+                    if (_paused)
+                    {
+                        continue;
+                    }
                     _running.RemoveAll(task => task.IsCompleted);
                     int turns = _turns.Count;
                     while (turns-- > 0 && _active.Count < _workers && _turns.TryDequeue(out AccountId account))
@@ -251,6 +291,13 @@ public sealed class AccountScheduler : IAccountScheduler
                     if (result != Failure.Transient || attempt == _attemptLimit)
                     {
                         break;
+                    }
+                    lock (_gate)
+                    {
+                        if (_paused)
+                        {
+                            break;
+                        }
                     }
 
                     await Task.Delay(_retry.Delay(attempt), _time, linked.Token).ConfigureAwait(false);

@@ -410,6 +410,17 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         }
     }
 
+    /// <summary>Stops new scheduled network work and waits for active work without cancelling a submission.</summary>
+    internal Task PauseWorkAsync(CancellationToken cancellationToken)
+    {
+        return _scheduler.PauseAsync(cancellationToken);
+    }
+
+    internal void ResumeWork()
+    {
+        _scheduler.ResumeAll();
+    }
+
     private (ImapAdapter Adapter, MailAccountEngine Engine) CreateRestoredAccount(
         AccountConfiguration account,
         ImmutableArray<MailboxSnapshot> mailboxes,
