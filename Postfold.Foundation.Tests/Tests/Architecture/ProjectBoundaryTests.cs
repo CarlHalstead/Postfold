@@ -11,6 +11,7 @@ namespace Postfold.Foundation.Tests.Tests.Architecture;
 public sealed class ProjectBoundaryTests
 {
     [TestCase("Postfold.Core", new string[0])]
+    [TestCase("Postfold.UpdateSigner", new[] { "Postfold.Core" })]
     [TestCase("Postfold.Protocols", new[] { "Postfold.Core" })]
     [TestCase("Postfold.Storage", new[] { "Postfold.Core" })]
     [TestCase("Postfold.Sync", new[] { "Postfold.Core" })]
@@ -43,6 +44,7 @@ public sealed class ProjectBoundaryTests
     }
 
     [TestCase("Postfold.Core")]
+    [TestCase("Postfold.UpdateSigner")]
     [TestCase("Postfold.Sync")]
     public void PackageReferences_WhenFrameworkOnlyLayerIsBuilt_ContainNoExternalDependencies(string projectName)
     {

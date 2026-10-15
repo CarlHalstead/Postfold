@@ -529,6 +529,12 @@
           "Postfold.Core": "[1.0.0, )"
         }
       },
+      "postfold.updatesigner": {
+        "type": "Project",
+        "dependencies": {
+          "Postfold.Core": "[1.0.0, )"
+        }
+      },
       "AngleSharp": {
         "type": "CentralTransitive",
         "requested": "[1.7.2, )",

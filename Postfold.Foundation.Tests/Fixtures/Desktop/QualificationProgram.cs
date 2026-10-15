@@ -1,4 +1,5 @@
 using Avalonia;
+using Postfold.Foundation.Tests.Fixtures.Updates;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -14,6 +15,11 @@ public static class QualificationProgram
     [STAThread]
     public static void Main(string[] args)
     {
+        if (args is ["--update-trust-worker", .. string[] worker])
+        {
+            UpdateTrustProcess.Run(worker);
+            return;
+        }
         StartClient = true;
         Started = Stopwatch.GetTimestamp();
         string? probeOutput = args is ["--renderer-probe" or "--renderer-security-probe" or "--qualify-renderer" or

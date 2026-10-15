@@ -5,6 +5,7 @@
     <Project Path="Postfold.Sync/Postfold.Sync.csproj" />
     <Project Path="Postfold.UI/Postfold.UI.csproj" />
     <Project Path="Postfold.Desktop/Postfold.Desktop.csproj" />
+    <Project Path="Postfold.UpdateSigner/Postfold.UpdateSigner.csproj" />
     <Project Path="Postfold.Foundation.Tests/Postfold.Foundation.Tests.csproj" />
     <Project Path="Postfold.Engine.Tests/Postfold.Engine.Tests.csproj" />
 </Solution>
