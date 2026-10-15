@@ -34,13 +34,16 @@ public sealed class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             desktop.Exit += (_, _) => _motion?.Dispose();
-            desktop.MainWindow = new MainWindow
-            {
-                DataContext = new MainWindowViewModel()
-            };
             if (Program.StartClient)
             {
-                _ = new DesktopSession(desktop, (MainWindow)desktop.MainWindow);
+                desktop.MainWindow = new DesktopSession(desktop).Window;
+            }
+            else
+            {
+                desktop.MainWindow = new MainWindow
+                {
+                    DataContext = new MainWindowViewModel()
+                };
             }
         }
 

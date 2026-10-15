@@ -25,6 +25,8 @@ internal sealed class DesktopSession
     private readonly IClassicDesktopStyleApplicationLifetime _desktop;
     private readonly MainWindow _window;
     private readonly ProfileSelectionStore _profiles;
+    private readonly Task<Outcome<DesktopMailRuntime>> _opening;
+    private string? _profileDirectory;
     private DesktopMailRuntime? _host;
     private Task _starting = Task.CompletedTask;
     private Task _synchronising = Task.CompletedTask;
@@ -39,17 +41,24 @@ internal sealed class DesktopSession
 
     internal DesktopSession(
         IClassicDesktopStyleApplicationLifetime desktop,
-        MainWindow window,
+        MainWindow? window = null,
         string? profilesDirectory = null
     )
     {
         _desktop = desktop;
-        _window = window;
         _profiles = new ProfileSelectionStore(profilesDirectory ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Postfold",
             "profiles"
         ));
+        // Admission runs off the dispatcher while the native window is constructed and shown.
+        // StartAsync still awaits the complete gate before creating account services or accessing mail.
+        _opening = OpenProfileAsync();
+        _window = window ?? new MainWindow
+        {
+            DataContext = new MainWindowViewModel()
+        };
+        window = _window;
         window.FreshProfileRequested += (_, _) =>
         {
             if (_starting.IsCompleted && !_closing && _host is null)
@@ -122,20 +131,15 @@ internal sealed class DesktopSession
 
     internal Task Startup => _starting;
 
+    internal MainWindow Window => _window;
+
     private async Task<bool> StartAsync(string? directory = null)
     {
         string[] arguments = _desktop.Args ?? [];
         try
         {
-            directory ??= Program.ProfileDirectory ?? _profiles.ReadDirectory();
-            EngineLimits limits = new EngineLimits(2, 256, 3, 200, 33554432, 200, 30, 20, 1073741824);
-            Outcome<DesktopMailRuntime> opened = await DesktopMailRuntime.OpenAsync(
-                directory,
-                new EnginePolicy(true, false, false),
-                TimeProvider.System,
-                limits,
-                CancellationToken.None
-            );
+            Outcome<DesktopMailRuntime> opened = directory is null ? await _opening : await OpenProfileAsync(directory);
+            directory = _profileDirectory!;
             if (!opened.IsSuccess)
             {
                 _window.ReportStartupFailure(opened.Failure, profilesDirectory: Path.GetDirectoryName(directory));
@@ -218,6 +222,23 @@ internal sealed class DesktopSession
             );
         }
         return false;
+    }
+
+    private Task<Outcome<DesktopMailRuntime>> OpenProfileAsync(string? directory = null)
+    {
+        // Keep path-selection IO and any admission failure on the observed startup task.
+        return Task.Run(async () =>
+        {
+            _profileDirectory = directory ?? Program.ProfileDirectory ?? _profiles.ReadDirectory();
+            EngineLimits limits = new EngineLimits(2, 256, 3, 200, 33554432, 200, 30, 20, 1073741824);
+            return await DesktopMailRuntime.OpenAsync(
+                _profileDirectory,
+                new EnginePolicy(true, false, false),
+                TimeProvider.System,
+                limits,
+                CancellationToken.None
+            ).ConfigureAwait(false);
+        });
     }
 
     private async Task StartFreshAsync()
