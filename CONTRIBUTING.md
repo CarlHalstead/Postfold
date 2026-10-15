@@ -25,6 +25,9 @@ Core is framework-only. Protocols, Storage, Sync and UI reference Core only; Des
 UI uses Core application ports implemented by Sync. Sync must not reference concrete Storage or Protocols types.
 Every injected application service has an interface; keep optional capability ports narrow.
 EF Core SQLite owns schema and migrations in Storage; existing parameterised queries remain supported.
+Windows publish restores use `-p:RuntimeIdentifier=win-x64 -p:SelfContained=true --locked-mode` and
+the separate `packages.win-x64.lock.json` graphs. Ordinary validation uses `packages.lock.json`.
+Keep both lock graphs and their LF endings current when changing dependencies.
 Do not introduce speculative abstractions, MediatR, event sourcing, a plugin framework or a custom analyzer.
 
 ## C# style

@@ -1,0 +1,53 @@
+name: Prepare unsigned Windows update draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact authorised source commit (40 hexadecimal characters)
+        required: true
+      version:
+        description: Canonical target version (no build metadata)
+        required: true
+      channel:
+        description: Update channel
+        type: choice
+        options: [beta, stable]
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  draft:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      DRAFT_VERSION: ${{ inputs.version }}
+      DRAFT_CHANNEL: ${{ inputs.channel }}
+    steps:
+      - name: Check out selected source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Validate and prepare full-only unsigned draft
+        shell: pwsh
+        run: ./eng/Build-UpdateDraft.ps1 -SourceCommit $env:SOURCE_COMMIT -Version $env:DRAFT_VERSION -Channel $env:DRAFT_CHANNEL
+      - name: Retain draft artifacts and explicit qualification gaps
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: postfold-unsigned-windows-draft
+          path: |
+            artifacts/update-draft/*/release/*
+            artifacts/update-draft/*/artifact-hashes.json
+            artifacts/update-draft/*/QUALIFICATION-GAPS.txt
+          if-no-files-found: error
+          retention-days: 7

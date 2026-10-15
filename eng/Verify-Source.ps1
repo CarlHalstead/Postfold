@@ -45,6 +45,16 @@ foreach ($relativePath in $trackedFiles)
             throw "Authored C# file is forbidden at a project root: $relativePath"
         }
     }
+    if ([System.IO.Path]::GetExtension($filePath) -eq '.ps1')
+    {
+        $scriptTokens = $null
+        $scriptErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($filePath, [ref]$scriptTokens, [ref]$scriptErrors) | Out-Null
+        if ($scriptErrors.Count -gt 0)
+        {
+            throw "PowerShell syntax errors in $relativePath : $($scriptErrors.Message -join '; ')"
+        }
+    }
 
     if ($relativePath -notmatch '\.(cs|csproj|props|targets|slnx|axaml|resx|manifest|json|ya?ml|ps1|md)$' -and
         $relativePath -notin @('LICENSE', '.editorconfig', '.gitattributes', 'NuGet.Config'))
