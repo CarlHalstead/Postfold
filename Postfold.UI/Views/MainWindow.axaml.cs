@@ -1239,12 +1239,6 @@ public sealed partial class MainWindow : Window
         }
         account.SelectionChanged += (_, _) => SelectAccount();
         SelectAccount();
-        CheckBox session = new CheckBox
-        {
-            Content = Strings.SessionOnly,
-            IsChecked = false
-        };
-        form.Children.Add(session);
         TextBlock status = new TextBlock
         {
             TextWrapping = TextWrapping.Wrap
@@ -1268,7 +1262,6 @@ public sealed partial class MainWindow : Window
                     selected.Id,
                     credentials.ReceivingPassword.Text ?? "",
                     credentials.OutgoingPassword,
-                    session.IsChecked == true,
                     credentialsToken
                 );
                 status.Text = result == Failure.None ? Strings.Get("CredentialsSaved") : Strings.Describe(result);

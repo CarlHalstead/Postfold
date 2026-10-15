@@ -6,7 +6,6 @@ public sealed record AccountSetupRequest(
     MailEndpoint Outgoing,
     string IncomingPassword,
     string OutgoingPassword,
-    bool SessionOnly,
     string? DraftMailbox,
     string? Sender = null
 )

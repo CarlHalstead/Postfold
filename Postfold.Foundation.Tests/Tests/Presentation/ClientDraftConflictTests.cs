@@ -8,7 +8,7 @@ using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Mailboxes;
 using Postfold.Core.Models.Messages;
 using Postfold.Core.Models.Synchronisation;
-using Postfold.Desktop.Stores;
+using Postfold.Engine.Tests.Fakes;
 using Postfold.Engine.Tests.Fixtures;
 using Postfold.Protocols.Adapters;
 using Postfold.Protocols.Services;
@@ -37,7 +37,7 @@ public sealed class ClientDraftConflictTests
         {
             AdvancedImap = true
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
         MailEndpoint endpoint = new MailEndpoint("localhost", server.Port, TlsMode.Implicit, "synthetic", "fixture");
         await using ImapAdapter adapter = new ImapAdapter(EngineFixture.Account, endpoint, credentials, 1048576)

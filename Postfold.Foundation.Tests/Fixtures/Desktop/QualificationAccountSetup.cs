@@ -51,7 +51,6 @@ internal sealed class QualificationAccountSetup(IClientCatalog catalog, IAccount
         AccountId account,
         string incomingPassword,
         string outgoingPassword,
-        bool sessionOnly,
         CancellationToken cancellationToken
     )
     {

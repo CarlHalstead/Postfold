@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 
 namespace Postfold.Core.Interfaces;
 
-/// <summary>Reads and writes credentials through an explicit secure or session-only store; failures do not imply plaintext fallback.</summary>
+/// <summary>Reads and writes credentials through secure storage; failures never imply an in-memory or plaintext fallback.</summary>
 public interface ICredentialStore
 {
     Task<Outcome<Credential>> ReadAsync(string key, CancellationToken cancellationToken);

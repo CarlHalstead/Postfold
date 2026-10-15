@@ -170,7 +170,6 @@ internal sealed class QualificationSession
             _host = opened.Value!;
             Stage("profile-opened");
             WindowsCredentialStore secure = new WindowsCredentialStore(Path.Combine(directory, "credentials"));
-            SessionCredentialStore session = new SessionCredentialStore();
             if (demo)
             {
                 bool populated = (await _host.Catalog.AccountsAsync(_lifetime.Token)).IsEmpty;
@@ -189,7 +188,7 @@ internal sealed class QualificationSession
                 }
             }
 
-            await _host.RestoreAccountsAsync(new CombinedCredentialStore(secure, session), CancellationToken.None);
+            await _host.RestoreAccountsAsync(secure, CancellationToken.None);
             Stage("synthetic-seed-and-account-restore");
             IMailApplication application = qualification is null ? _host.Application :
                 new QualificationMailApplication(_host.Application);
@@ -216,9 +215,9 @@ internal sealed class QualificationSession
             }
 
             QualificationAccountSetup? fixtureSetup = qualification is null ? null :
-                new QualificationAccountSetup(_host.Catalog, new AccountSetup(_host, secure, session, _host.Identity));
+                new QualificationAccountSetup(_host.Catalog, new AccountSetup(_host, secure, _host.Identity));
             _window.Configure(application, fixtureSetup is not null ? fixtureSetup :
-                demo ? null : new AccountSetup(_host, secure, session, _host.Identity), _integration, _host);
+                demo ? null : new AccountSetup(_host, secure, _host.Identity), _integration, _host);
             // Windows native isolation, reader lifetime and accessibility gates are qualified for this stage.
             // Only the authored qualification profile substitutes in-process image responses.
             _qualificationImages = qualification is null ? null : new QualificationImageTransport();

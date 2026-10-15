@@ -191,7 +191,6 @@ public sealed class AccountSetupWindow : Window
                     new MailEndpoint(outgoingHost.Text ?? "", second, (TlsMode)outgoingTls.SelectedItem!, loginEmail, ""),
                     password.Text ?? "",
                     password.Text ?? "",
-                    false,
                     null,
                     email.Text
                 ), _lifetime.Token);

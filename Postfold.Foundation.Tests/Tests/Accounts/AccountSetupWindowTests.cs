@@ -84,7 +84,7 @@ public sealed class AccountSetupWindowTests
 
             // Assert
             setup.Received(1).AddAsync(Arg.Is<AccountSetupRequest>(request =>
-                request.Name == "owner@synthetic.invalid" && !request.SessionOnly && request.Incoming.Username == "owner@synthetic.invalid" &&
+                request.Name == "owner@synthetic.invalid" && request.Incoming.Username == "owner@synthetic.invalid" &&
                 request.Outgoing.Username == "owner@synthetic.invalid" && request.Incoming.Port == 993 &&
                 request.Outgoing.Port == 465 && request.Incoming.Tls == TlsMode.Implicit &&
                 request.Outgoing.Tls == TlsMode.Implicit), Arg.Any<CancellationToken>());
@@ -258,7 +258,7 @@ public sealed class AccountSetupWindowTests
                 request.Incoming.Tls == TlsMode.RequiredStartTls && request.Incoming.Port == 993 &&
                 request.Outgoing.Host == "outgoing.synthetic.invalid" && request.Outgoing.Username == "owner@synthetic.invalid" &&
                 request.Outgoing.Port == 587 && request.IncomingPassword == "read-secret" &&
-                request.OutgoingPassword == "read-secret" && !request.SessionOnly), Arg.Any<CancellationToken>());
+                request.OutgoingPassword == "read-secret"), Arg.Any<CancellationToken>());
             Assert.That(Control<TextBox>(window, "IncomingPassword").Text, Is.Empty);
             string diagnostic = Control<TextBlock>(window, "SetupStatus").Text!;
             Assert.That(diagnostic, Does.Contain(Strings.Describe(Failure.CredentialStorageUnavailable)));

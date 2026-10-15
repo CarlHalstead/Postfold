@@ -9,6 +9,7 @@ using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.Desktop.Composition;
+using Postfold.Engine.Tests.Fakes;
 using Postfold.Engine.Tests.Fixtures;
 using Postfold.Foundation.Tests.Fixtures.Desktop;
 using Postfold.UI.ViewModels;
@@ -34,7 +35,7 @@ public sealed class AccountRemovalTests
             new EngineLimits(2, 8, 1, 100, 1048576, 100, 0, 0, 10485760), CancellationToken.None
         )).Value!;
         await host.SeedSyntheticAsync(30, CancellationToken.None);
-        await host.RestoreAccountsAsync(new Postfold.Desktop.Stores.SessionCredentialStore(), CancellationToken.None);
+        await host.RestoreAccountsAsync(new InMemoryCredentialStore(), CancellationToken.None);
         if (draftExists)
         {
             await host.Application.SaveDraftAsync(EngineFixture.Account, Guid.NewGuid(),
@@ -99,7 +100,7 @@ public sealed class AccountRemovalTests
         )).Value!)
         {
             await host.SeedSyntheticAsync(30, CancellationToken.None);
-            await host.RestoreAccountsAsync(new Postfold.Desktop.Stores.SessionCredentialStore(), CancellationToken.None);
+            await host.RestoreAccountsAsync(new InMemoryCredentialStore(), CancellationToken.None);
 
             // Act
             Failure result = await host.RemoveAsync(account, CancellationToken.None);
@@ -117,7 +118,7 @@ public sealed class AccountRemovalTests
         await using DesktopMailRuntime reopened = (await DesktopMailRuntime.OpenAsync(
             directory, policy, TimeProvider.System, new Postfold.Core.Models.Synchronisation.EngineLimits(2, 8, 1, 100, 1048576, 100, 0, 0, 10485760), CancellationToken.None
         )).Value!;
-        await reopened.RestoreAccountsAsync(new Postfold.Desktop.Stores.SessionCredentialStore(), CancellationToken.None);
+        await reopened.RestoreAccountsAsync(new InMemoryCredentialStore(), CancellationToken.None);
         Assert.That(reopened.Find(account), Is.Null);
         Assert.That(await reopened.Catalog.AccountsAsync(CancellationToken.None), Has.Length.EqualTo(2));
         Assert.That(await reopened.NextAccountIdAsync(CancellationToken.None), Is.EqualTo(new AccountId(4)));
@@ -133,7 +134,7 @@ public sealed class AccountRemovalTests
             new Postfold.Core.Models.Synchronisation.EngineLimits(2, 8, 1, 100, 1048576, 100, 0, 0, 10485760), CancellationToken.None
         )).Value!;
         await host.SeedSyntheticAsync(30, CancellationToken.None);
-        await host.RestoreAccountsAsync(new Postfold.Desktop.Stores.SessionCredentialStore(), CancellationToken.None);
+        await host.RestoreAccountsAsync(new InMemoryCredentialStore(), CancellationToken.None);
         ComposeContent content = new ComposeContent("sender@synthetic.invalid", [], "Preserve", "Draft text",
             DateTimeOffset.UnixEpoch, "draft@synthetic.invalid");
         Guid id = Guid.NewGuid();

@@ -6,10 +6,10 @@ using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Postfold.Desktop.Stores;
+namespace Postfold.Engine.Tests.Fakes;
 
-/// <summary>Construct only after an explicit caller choice to keep credentials for this session.</summary>
-public sealed class SessionCredentialStore : ICredentialStore
+/// <summary>Stores synthetic credentials for isolated protocol and account fixtures.</summary>
+internal sealed class InMemoryCredentialStore : ICredentialStore
 {
     private readonly ConcurrentDictionary<string, Credential> _credentials = new ConcurrentDictionary<string, Credential>();
 

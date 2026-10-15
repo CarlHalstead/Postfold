@@ -11,7 +11,7 @@ using Postfold.Core.Models.Operations;
 using Postfold.Core.Models.Outbox;
 using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
-using Postfold.Desktop.Stores;
+using Postfold.Engine.Tests.Fakes;
 using Postfold.Engine.Tests.Fixtures;
 using Postfold.Protocols.Adapters;
 using Postfold.Protocols.Services;
@@ -38,7 +38,7 @@ public sealed class ProtocolTests
         await using ImapAdapter adapter = new ImapAdapter(
             EngineFixture.Account,
             new MailEndpoint("localhost", server.Port, TlsMode.Implicit, "synthetic", "missing"),
-            new SessionCredentialStore(),
+            new InMemoryCredentialStore(),
             1048576
         )
         {
@@ -64,7 +64,7 @@ public sealed class ProtocolTests
             CurrentUids = [3, 4000000],
             UidNext = omitUidNext ? null : 4000001
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter adapter = new ImapAdapter(
             EngineFixture.Account,
@@ -108,7 +108,7 @@ public sealed class ProtocolTests
             OmitNativeMove = fallback,
             IncludeArchive = true
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter adapter = new ImapAdapter(
             EngineFixture.Account,
@@ -161,7 +161,7 @@ public sealed class ProtocolTests
         {
             AdvertiseStartTls = advertised
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter reader = new ImapAdapter(
             EngineFixture.Account,
@@ -204,7 +204,7 @@ public sealed class ProtocolTests
             RejectAllRecipients = rejectRecipients,
             RejectData = rejectData
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
         SmtpSubmitter submitter = new SmtpSubmitter(
             EngineFixture.Account,
@@ -251,7 +251,7 @@ public sealed class ProtocolTests
             UidValidity = validity,
             CurrentUids = present ? [1] : [2]
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter adapter = new ImapAdapter(
             EngineFixture.Account,
@@ -290,7 +290,7 @@ public sealed class ProtocolTests
     {
         // Arrange
         await using LocalMailServer server = new LocalMailServer(imap: true);
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("synthetic", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter reader = new ImapAdapter(
             EngineFixture.Account,
@@ -328,7 +328,7 @@ public sealed class ProtocolTests
             AdvancedImap = true,
             LoseAcknowledgement = true
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("synthetic", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter adapter = new ImapAdapter(
             EngineFixture.Account,
@@ -373,7 +373,7 @@ public sealed class ProtocolTests
         {
             AdvancedImap = true
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("synthetic", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter reader = new ImapAdapter(
             EngineFixture.Account,
@@ -417,7 +417,7 @@ public sealed class ProtocolTests
         {
             AdvancedImap = true
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("synthetic", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter reader = new ImapAdapter(
             EngineFixture.Account,
@@ -449,7 +449,7 @@ public sealed class ProtocolTests
         {
             AdvancedImap = true
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("synthetic", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter adapter = new ImapAdapter(
             EngineFixture.Account,
@@ -507,7 +507,7 @@ public sealed class ProtocolTests
             RejectSecondRecipient = partial,
             LoseAcknowledgement = lostAcknowledgement
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("synthetic", new Credential("synthetic-password", false), CancellationToken.None);
         SmtpSubmitter submitter = new SmtpSubmitter(
             EngineFixture.Account,
@@ -560,7 +560,7 @@ public sealed class ProtocolTests
     {
         // Arrange
         await using LocalMailServer server = new LocalMailServer(imap: false, startTls: true);
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("synthetic", new Credential("synthetic-password", false), CancellationToken.None);
         SmtpSubmitter submitter = new SmtpSubmitter(
             EngineFixture.Account,
@@ -600,7 +600,7 @@ public sealed class ProtocolTests
     {
         // Arrange
         await using LocalMailServer server = new LocalMailServer(imap: true);
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("synthetic", new Credential("synthetic-password", false), CancellationToken.None);
         await using ImapAdapter reader = new ImapAdapter(
             EngineFixture.Account,
@@ -641,7 +641,7 @@ public sealed class ProtocolTests
     {
         // Arrange
         await using LocalMailServer server = new LocalMailServer(imap: true);
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("synthetic", new Credential("synthetic-password", false), CancellationToken.None);
         await using ImapAdapter reader = new ImapAdapter(
             EngineFixture.Account,
@@ -664,7 +664,7 @@ public sealed class ProtocolTests
     {
         // Arrange
         await using LocalMailServer server = new LocalMailServer(imap: true);
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("synthetic", new Credential("synthetic-password", false), CancellationToken.None);
         await using ImapAdapter adapter = new ImapAdapter(
             EngineFixture.Account,

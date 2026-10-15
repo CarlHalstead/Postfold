@@ -17,7 +17,6 @@ public sealed class AccountSetup : IAccountSetup
 {
     private readonly IAccountProvisioner _host;
     private readonly ICredentialStore _secure;
-    private readonly ICredentialStore _session;
     private readonly IClientIdentity? _identity;
     private readonly SemaphoreSlim _additions = new SemaphoreSlim(1, 1);
     private readonly IAccountServerDiscovery _discovery;
@@ -25,14 +24,12 @@ public sealed class AccountSetup : IAccountSetup
     public AccountSetup(
         IAccountProvisioner host,
         ICredentialStore secure,
-        ICredentialStore session,
         IClientIdentity? identity = null,
         IAccountServerDiscovery? discovery = null
     )
     {
         _host = host;
         _secure = secure;
-        _session = session;
         _identity = identity;
         _discovery = discovery ?? new MailServerDiscovery();
     }
@@ -61,7 +58,6 @@ public sealed class AccountSetup : IAccountSetup
         AccountId account,
         string incomingPassword,
         string outgoingPassword,
-        bool sessionOnly,
         CancellationToken cancellationToken
     )
     {
@@ -80,13 +76,12 @@ public sealed class AccountSetup : IAccountSetup
             return Failure.NotFound;
         }
 
-        ICredentialStore store = sessionOnly ? _session : _secure;
-        Outcome<bool> incoming = await store.WriteAsync(
+        Outcome<bool> incoming = await _secure.WriteAsync(
             configuration.Incoming.CredentialKey,
             new Credential(incomingPassword, false),
             cancellationToken
         ).ConfigureAwait(false);
-        Outcome<bool> outgoing = await store.WriteAsync(
+        Outcome<bool> outgoing = await _secure.WriteAsync(
             configuration.Outgoing.CredentialKey,
             new Credential(outgoingPassword, false),
             cancellationToken
@@ -96,7 +91,7 @@ public sealed class AccountSetup : IAccountSetup
             return Failure.CredentialStorageUnavailable;
         }
 
-        return await _host.ReplaceCredentialsAsync(account, store, cancellationToken).ConfigureAwait(false);
+        return await _host.ReplaceCredentialsAsync(account, _secure, cancellationToken).ConfigureAwait(false);
     }
 
     public Task<Failure> SetRolesAsync(AccountId account, FolderRoles roles, CancellationToken cancellationToken)
@@ -131,7 +126,6 @@ public sealed class AccountSetup : IAccountSetup
         }
 
         AccountId id = await _host.NextAccountIdAsync(cancellationToken).ConfigureAwait(false);
-        ICredentialStore store = request.SessionOnly ? _session : _secure;
         string incomingKey = Guid.NewGuid().ToString("N");
         string outgoingKey = Guid.NewGuid().ToString("N");
         MailEndpoint incoming = request.Incoming with
@@ -142,12 +136,12 @@ public sealed class AccountSetup : IAccountSetup
         {
             CredentialKey = outgoingKey
         };
-        Outcome<bool> first = await store.WriteAsync(
+        Outcome<bool> first = await _secure.WriteAsync(
             incomingKey,
             new Credential(request.IncomingPassword, false),
             cancellationToken
         ).ConfigureAwait(false);
-        Outcome<bool> second = await store.WriteAsync(
+        Outcome<bool> second = await _secure.WriteAsync(
             outgoingKey,
             new Credential(request.OutgoingPassword, false),
             cancellationToken
@@ -160,7 +154,7 @@ public sealed class AccountSetup : IAccountSetup
         Failure outgoingResult = await _host.TestOutgoingConnectionAsync(
             id,
             outgoing,
-            store,
+            _secure,
             cancellationToken
         ).ConfigureAwait(false);
         Outcome<IMailAccountEngine> engine = await _host.ConnectAccountAsync(
@@ -168,7 +162,7 @@ public sealed class AccountSetup : IAccountSetup
             request.Name,
             incoming,
             outgoing,
-            store,
+            _secure,
             request.DraftMailbox,
             cancellationToken
         ).ConfigureAwait(false);

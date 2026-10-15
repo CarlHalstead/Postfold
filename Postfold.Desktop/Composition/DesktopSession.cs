@@ -264,8 +264,7 @@ internal sealed class DesktopSession : IUpdateShutdown
             }
             _host = opened.Value!;
             WindowsCredentialStore secure = new WindowsCredentialStore(Path.Combine(directory, "credentials"));
-            SessionCredentialStore session = new SessionCredentialStore();
-            await _host.RestoreAccountsAsync(new CombinedCredentialStore(secure, session), _lifetime.Token);
+            await _host.RestoreAccountsAsync(secure, _lifetime.Token);
             IMailApplication application = _host.Application;
             MainWindowViewModel model = new MainWindowViewModel(application);
             _window.DataContext = model;
@@ -285,7 +284,7 @@ internal sealed class DesktopSession : IUpdateShutdown
                     TrayEnabled = false
                 }, _lifetime.Token);
             }
-            _window.Configure(application, new AccountSetup(_host, secure, session, _host.Identity), _integration, _host, new InactiveClientUpdates());
+            _window.Configure(application, new AccountSetup(_host, secure, _host.Identity), _integration, _host, new InactiveClientUpdates());
             _html = new WindowsHtmlReadingService(
                 _window,
                 application,

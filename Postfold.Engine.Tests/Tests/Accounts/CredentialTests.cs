@@ -33,7 +33,7 @@ public sealed class CredentialTests
 
         // Act
         Outcome<bool> written = await store.WriteAsync("synthetic-key", secret, CancellationToken.None);
-        Outcome<Credential> read = await store.ReadAsync("synthetic-key", CancellationToken.None);
+        Outcome<Credential> read = await new WindowsCredentialStore(path).ReadAsync("synthetic-key", CancellationToken.None);
         string file = Directory.GetFiles(path, "*.secret")[0];
         byte[] bytes = await File.ReadAllBytesAsync(file);
         FileSecurity security = new FileInfo(file).GetAccessControl();

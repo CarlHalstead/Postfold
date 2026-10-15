@@ -7,6 +7,7 @@
         <IsPackable>false</IsPackable>
     </PropertyGroup>
     <ItemGroup>
+        <Compile Include="../Postfold.Engine.Tests/Fakes/InMemoryCredentialStore.cs" Link="Fakes/InMemoryCredentialStore.cs" />
         <Compile Include="../Postfold.Engine.Tests/Fixtures/LocalMailServer.cs" Link="Fixtures/LocalMailServer.cs" />
         <Compile Include="../Postfold.Engine.Tests/Fixtures/EngineFixture.cs" Link="Fixtures/EngineFixture.cs" />
         <ProjectReference Include="../Postfold.Desktop/Postfold.Desktop.csproj" />

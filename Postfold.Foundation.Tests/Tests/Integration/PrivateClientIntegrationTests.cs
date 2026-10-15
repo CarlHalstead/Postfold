@@ -11,7 +11,7 @@ using Postfold.Core.Models.Outbox;
 using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.Desktop.Composition;
-using Postfold.Desktop.Stores;
+using Postfold.Engine.Tests.Fakes;
 using Postfold.Engine.Tests.Fixtures;
 using Postfold.Foundation.Tests.Fixtures.Desktop;
 using Postfold.UI.ViewModels;
@@ -56,7 +56,7 @@ public sealed class PrivateClientIntegrationTests
         )).Value!)
         {
             await host.SeedSyntheticAsync(6, CancellationToken.None);
-            await host.RestoreAccountsAsync(new SessionCredentialStore(), CancellationToken.None);
+            await host.RestoreAccountsAsync(new InMemoryCredentialStore(), CancellationToken.None);
             Guid draft = Guid.NewGuid();
             await host.Application.SaveDraftAsync(account, draft, content, CancellationToken.None);
             FrozenSubmission frozen = (await host.Application.SendAsync(account, content, draft, null, CancellationToken.None)).Value!;
@@ -88,9 +88,9 @@ public sealed class PrivateClientIntegrationTests
         Assert.That(editable.Value!.PlainText, Is.EqualTo(content.PlainText + Environment.NewLine));
         Assert.That(editable.Value.Predecessor, Is.EqualTo(submission));
         Guid replacementDraft = Guid.NewGuid();
-        await reopened.RestoreAccountsAsync(new SessionCredentialStore(), CancellationToken.None);
+        await reopened.RestoreAccountsAsync(new InMemoryCredentialStore(), CancellationToken.None);
         IMailAccountEngine originalEngine = reopened.Find(account)!;
-        SessionCredentialStore renewed = new SessionCredentialStore();
+        InMemoryCredentialStore renewed = new InMemoryCredentialStore();
         Assert.That(await reopened.ReplaceCredentialsAsync(account, renewed, CancellationToken.None), Is.EqualTo(Failure.None));
         Assert.That(reopened.Find(account), Is.Not.SameAs(originalEngine));
         Assert.That(
@@ -144,7 +144,7 @@ public sealed class PrivateClientIntegrationTests
         )).Value!)
         {
             await host.SeedSyntheticAsync(360, CancellationToken.None);
-            await host.RestoreAccountsAsync(new SessionCredentialStore(), CancellationToken.None);
+            await host.RestoreAccountsAsync(new InMemoryCredentialStore(), CancellationToken.None);
             MainWindowViewModel model = new MainWindowViewModel(host.Application);
             MainWindow window = new MainWindow
             {

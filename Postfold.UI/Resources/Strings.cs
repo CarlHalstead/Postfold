@@ -89,7 +89,6 @@ public static class Strings
     public static string Saving => Get("Saving");
     public static string DraftFailed => Get("DraftFailed");
     public static string Conflict => Get("Conflict");
-    public static string SessionOnly => Get("SessionOnly");
     public static string TestEndpoints => Get("TestEndpoints");
     public static string IncomingHost => Get("IncomingHost");
     public static string OutgoingHost => Get("OutgoingHost");

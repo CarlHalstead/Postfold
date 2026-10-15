@@ -9,7 +9,7 @@ using Postfold.Core.Models.Messages;
 using Postfold.Core.Models.Outbox;
 using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
-using Postfold.Desktop.Stores;
+using Postfold.Engine.Tests.Fakes;
 using Postfold.Engine.Tests.Fixtures;
 using Postfold.Protocols.Adapters;
 using Postfold.Protocols.Services;
@@ -45,7 +45,7 @@ public sealed class IntegrationTests
             RejectSecondRecipient = partial,
             LoseAcknowledgement = loseAcknowledgement
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter reader = new ImapAdapter(
             EngineFixture.Account,
@@ -105,7 +105,7 @@ public sealed class IntegrationTests
         // Arrange
         string directory = EngineFixture.DirectoryPath();
         await using LocalMailServer incoming = new LocalMailServer(imap: true);
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter reader = new ImapAdapter(
             EngineFixture.Account,
@@ -169,7 +169,7 @@ public sealed class IntegrationTests
         {
             AdvancedImap = true
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
         await using ImapAdapter reader = new ImapAdapter(
             EngineFixture.Account,

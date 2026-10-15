@@ -8,7 +8,7 @@ using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Mailboxes;
 using Postfold.Core.Models.Outbox;
 using Postfold.Core.Models.Synchronisation;
-using Postfold.Desktop.Stores;
+using Postfold.Engine.Tests.Fakes;
 using Postfold.Engine.Tests.Fixtures;
 using Postfold.Protocols.Adapters;
 using Postfold.Protocols.Services;
@@ -46,7 +46,7 @@ public sealed class ClientProtocolFlowTests
             RejectSecondRecipient = partial,
             LoseAcknowledgement = lostAcknowledgement
         };
-        SessionCredentialStore credentials = new SessionCredentialStore();
+        InMemoryCredentialStore credentials = new InMemoryCredentialStore();
         await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
         MailEndpoint incomingEndpoint = new MailEndpoint("localhost", incoming.Port, TlsMode.Implicit, "synthetic", "fixture");
         MailEndpoint outgoingEndpoint = new MailEndpoint("localhost", outgoing.Port, TlsMode.Implicit, "synthetic", "fixture");

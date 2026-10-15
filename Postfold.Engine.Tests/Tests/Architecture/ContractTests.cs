@@ -1,10 +1,10 @@
 using NUnit.Framework;
-using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
-using Postfold.Core.Models;
 using Postfold.Core.Models.Accounts;
+using Postfold.Core.Models.Mailboxes;
 using Postfold.Core.Models.Messages;
-using Postfold.Desktop.Stores;
+using Postfold.Engine.Tests.Fixtures;
+using Postfold.Storage.Stores;
 using System;
 using System.Linq;
 using System.Threading;
@@ -50,21 +50,19 @@ public sealed class ContractTests
     }
 
     [Test]
-    public async Task ReadAsync_WhenCancelled_PropagatesCancellationRatherThanTypedFailure()
+    public async Task ReadRolesAsync_WhenCancelled_PropagatesCancellationRatherThanTypedFailure()
     {
         // Arrange
-        SessionCredentialStore store = new SessionCredentialStore();
+        await using SqliteProfile profile = await EngineFixture.OpenAsync(EngineFixture.DirectoryPath());
         using CancellationTokenSource cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await
-
                 // Act
                 Assert.ThrowsAsync(Is.InstanceOf<OperationCanceledException>(), async () =>
-            await store.ReadAsync("synthetic", cancellation.Token));
-        Outcome<Credential> missing = await store.ReadAsync("synthetic", CancellationToken.None);
+            await profile.ReadRolesAsync(EngineFixture.Account, cancellation.Token));
+        FolderRoles? missing = await profile.ReadRolesAsync(EngineFixture.Account, CancellationToken.None);
 
         // Assert
-        Assert.That(missing.Failure, Is.EqualTo(Failure.NotFound));
-        Assert.That(missing.Value, Is.Null);
+        Assert.That(missing, Is.Null);
     }
 }

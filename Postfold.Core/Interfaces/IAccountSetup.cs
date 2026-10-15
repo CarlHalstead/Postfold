@@ -20,7 +20,6 @@ public interface IAccountSetup
         AccountId account,
         string incomingPassword,
         string outgoingPassword,
-        bool sessionOnly,
         CancellationToken cancellationToken
     );
 }

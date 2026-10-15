@@ -75,7 +75,6 @@
   <data name="DraftAutosaveHint" xml:space="preserve"><value>Your draft saves automatically when you pause typing.</value></data>
   <data name="DraftFailed" xml:space="preserve"><value>Save failed. Keep this window open to preserve your edits.</value></data>
   <data name="Conflict" xml:space="preserve"><value>Conflicting draft versions are preserved. Sending is disabled until reviewed.</value></data>
-  <data name="SessionOnly" xml:space="preserve"><value>Session only — do not persist passwords</value></data>
   <data name="TestEndpoints" xml:space="preserve"><value>Test both endpoints and add account</value></data>
   <data name="IncomingHost" xml:space="preserve"><value>Incoming IMAP host</value></data>
   <data name="OutgoingHost" xml:space="preserve"><value>Outgoing SMTP host</value></data>
@@ -157,7 +156,7 @@
   <data name="TlsMode.RequiredStartTls" xml:space="preserve"><value>Mandatory STARTTLS; no fallback</value></data>
   <data name="Failure.TlsRejected" xml:space="preserve"><value>TLS or certificate validation failed; a secure connection is required</value></data>
   <data name="Failure.PolicyBlocked" xml:space="preserve"><value>Connection blocked by this profile's network policy</value></data>
-  <data name="Failure.CredentialStorageUnavailable" xml:space="preserve"><value>Secure credential storage is unavailable; explicitly choose session-only storage to continue</value></data>
+  <data name="Failure.CredentialStorageUnavailable" xml:space="preserve"><value>Secure credential storage is unavailable; account passwords could not be saved.</value></data>
   <data name="DestinationDenied" xml:space="preserve"><value>Access to the selected destination was denied</value></data>
   <data name="IncomingPort" xml:space="preserve"><value>Port</value></data>
   <data name="OutgoingPort" xml:space="preserve"><value>Port</value></data>
@@ -217,7 +216,7 @@
   <data name="NavigationResize" xml:space="preserve"><value>Resize navigation pane</value></data>
   <data name="PreviewResize" xml:space="preserve"><value>Resize preview pane</value></data>
   <data name="Credentials" xml:space="preserve"><value>Account credentials</value></data>
-  <data name="CredentialsHint" xml:space="preserve"><value>Re-enter the password for this account. Sending can share it or use a separate password. Session-only passwords need re-entry after restart. Previously stored secure credentials are not removed.</value></data>
+  <data name="CredentialsHint" xml:space="preserve"><value>Re-enter the password for this account. Sending can share it or use a separate password. Passwords are saved in secure storage.</value></data>
   <data name="SaveCredentials" xml:space="preserve"><value>Save account credentials</value></data>
   <data name="CredentialsSaved" xml:space="preserve"><value>Credentials saved. Synchronise checks incoming TLS and authentication; submitting queued mail checks outgoing TLS and authentication.</value></data>
   <data name="NewMail" xml:space="preserve"><value>New mail</value></data>

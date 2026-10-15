@@ -6,7 +6,7 @@ using Postfold.Core.Models;
 using Postfold.Core.Models.Accounts;
 using Postfold.Core.Models.Mailboxes;
 using Postfold.Desktop.Services;
-using Postfold.Desktop.Stores;
+using Postfold.Engine.Tests.Fakes;
 using Postfold.Engine.Tests.Fixtures;
 using Postfold.Protocols.Adapters;
 using Postfold.Protocols.Services;
@@ -45,11 +45,8 @@ public sealed class AccountSetupTests
                 call.ArgAt<MailEndpoint>(2), call.ArgAt<MailEndpoint>(3)));
             return Outcome<IMailAccountEngine>.Success(engine);
         });
-        AccountSetup setup = new AccountSetup(host, Substitute.For<ICredentialStore>(), new SessionCredentialStore());
-        AccountSetupRequest request = Request(465) with
-        {
-            SessionOnly = true
-        };
+        AccountSetup setup = new AccountSetup(host, new InMemoryCredentialStore());
+        AccountSetupRequest request = Request(465);
 
         // Act
         Task<AccountSetupResult> first = setup.AddAsync(request, CancellationToken.None);
@@ -146,16 +143,14 @@ public sealed class AccountSetupTests
                 });
                 return Outcome<IMailAccountEngine>.Success(engine);
             });
-        ICredentialStore secure = Substitute.For<ICredentialStore>();
-        SessionCredentialStore session = new SessionCredentialStore();
-        AccountSetup setup = new AccountSetup(provisioner, secure, session, new ClientIdentity(profile));
+        InMemoryCredentialStore secure = new InMemoryCredentialStore();
+        AccountSetup setup = new AccountSetup(provisioner, secure, new ClientIdentity(profile));
         AccountSetupRequest request = new AccountSetupRequest(
             "Authored setup",
             new MailEndpoint("localhost", incomingServer.Port, TlsMode.Implicit, "incoming-synthetic", ""),
             new MailEndpoint("localhost", outgoingServer.Port, TlsMode.Implicit, "outgoing-synthetic", ""),
             "incoming-secret",
             "outgoing-secret",
-            true,
             null,
             "sender@synthetic.invalid"
         );
@@ -178,11 +173,11 @@ public sealed class AccountSetupTests
             Assert.That(accounts[0].Outgoing.Port, Is.EqualTo(outgoingServer.Port));
             Assert.That(accounts[0].Identity!.Sender, Is.EqualTo("sender@synthetic.invalid"));
             Assert.That(
-                (await session.ReadAsync(accounts[0].Incoming.CredentialKey, CancellationToken.None)).Value!.Secret,
+                (await secure.ReadAsync(accounts[0].Incoming.CredentialKey, CancellationToken.None)).Value!.Secret,
                 Is.EqualTo("incoming-secret")
             );
             Assert.That(
-                (await session.ReadAsync(accounts[0].Outgoing.CredentialKey, CancellationToken.None)).Value!.Secret,
+                (await secure.ReadAsync(accounts[0].Outgoing.CredentialKey, CancellationToken.None)).Value!.Secret,
                 Is.EqualTo("outgoing-secret")
             );
         }
@@ -194,7 +189,6 @@ public sealed class AccountSetupTests
             Is.EqualTo(outgoingTrusted)
         );
         Assert.That(outgoingServer.SubmissionCount, Is.Zero);
-        await secure.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
     }
 
     [Test]
@@ -222,8 +216,7 @@ public sealed class AccountSetupTests
                 Identity: existingSender is null ? null : new Postfold.Core.Models.Drafts.ComposeIdentity(existingSender))
         ));
         ICredentialStore secure = Substitute.For<ICredentialStore>();
-        ICredentialStore session = Substitute.For<ICredentialStore>();
-        AccountSetup setup = new AccountSetup(host, secure, session, Substitute.For<IClientIdentity>());
+        AccountSetup setup = new AccountSetup(host, secure, Substitute.For<IClientIdentity>());
 
         // Act
         AccountSetupResult result = await setup.AddAsync(request, CancellationToken.None);
@@ -231,7 +224,6 @@ public sealed class AccountSetupTests
         // Assert
         Assert.That(result.Duplicate, Is.True);
         await secure.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
-        await session.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
         await host.DidNotReceiveWithAnyArgs().TestOutgoingConnectionAsync(default, default!, default!, default);
         await host.DidNotReceiveWithAnyArgs().ConnectAccountAsync(default, default!, default!, default!, default!, default, default);
     }
@@ -250,14 +242,10 @@ public sealed class AccountSetupTests
         host.ConnectAccountAsync(Arg.Any<AccountId>(), Arg.Any<string>(), Arg.Any<MailEndpoint>(), Arg.Any<MailEndpoint>(),
             Arg.Any<ICredentialStore>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Outcome<IMailAccountEngine>.Success(engine));
-        SessionCredentialStore session = new SessionCredentialStore();
-        AccountSetup setup = new AccountSetup(host, Substitute.For<ICredentialStore>(), session);
+        AccountSetup setup = new AccountSetup(host, new InMemoryCredentialStore());
 
         // Act
-        AccountSetupResult result = await setup.AddAsync(Request(465) with
-        {
-            SessionOnly = true
-        }, CancellationToken.None);
+        AccountSetupResult result = await setup.AddAsync(Request(465), CancellationToken.None);
 
         // Assert
         Assert.That(result.Incoming, Is.EqualTo(Failure.None));
@@ -268,11 +256,13 @@ public sealed class AccountSetupTests
     }
 
     [Test]
+    [TestCase(true, true)]
     [TestCase(true, false)]
     [TestCase(false, true)]
-    public async Task RestoreCredentialsAsync_WhenStorageChoiceIsExplicit_UsesOnlyChosenStore(
-        bool sessionOnly,
-        bool storageFails
+    [TestCase(false, false)]
+    public async Task RestoreCredentialsAsync_WhenSecureWritesComplete_ReplacesCredentialsOnlyIfBothWereStored(
+        bool incomingStored,
+        bool outgoingStored
     )
     {
         // Arrange
@@ -286,36 +276,36 @@ public sealed class AccountSetupTests
             new AccountConfiguration(account, "Preserved account", incoming, outgoing)
         ));
         ICredentialStore secure = Substitute.For<ICredentialStore>();
-        ICredentialStore session = Substitute.For<ICredentialStore>();
-        ICredentialStore chosen = sessionOnly ? session : secure;
-        chosen.WriteAsync(Arg.Any<string>(), Arg.Any<Credential>(), Arg.Any<CancellationToken>()).Returns(
-            storageFails ? Outcome<bool>.Fail(Failure.Unavailable) : Outcome<bool>.Success(true)
+        secure.WriteAsync("incoming-key", Arg.Any<Credential>(), Arg.Any<CancellationToken>()).Returns(
+            incomingStored ? Outcome<bool>.Success(true) : Outcome<bool>.Fail(Failure.Unavailable)
         );
-        AccountSetup setup = new AccountSetup(host, secure, session);
+        secure.WriteAsync("outgoing-key", Arg.Any<Credential>(), Arg.Any<CancellationToken>()).Returns(
+            outgoingStored ? Outcome<bool>.Success(true) : Outcome<bool>.Fail(Failure.Unavailable)
+        );
+        AccountSetup setup = new AccountSetup(host, secure);
 
         // Act
         Failure result = await setup.RestoreCredentialsAsync(
             account,
             "incoming-secret",
             "outgoing-secret",
-            sessionOnly,
             CancellationToken.None
         );
 
         // Assert
-        Assert.That(result, Is.EqualTo(storageFails ? Failure.CredentialStorageUnavailable : Failure.None));
-        await chosen.Received(1).WriteAsync(
+        bool stored = incomingStored && outgoingStored;
+        Assert.That(result, Is.EqualTo(stored ? Failure.None : Failure.CredentialStorageUnavailable));
+        await secure.Received(1).WriteAsync(
             "incoming-key",
             Arg.Is<Credential>(value => value.Secret == "incoming-secret"),
             Arg.Any<CancellationToken>()
         );
-        await chosen.Received(1).WriteAsync(
+        await secure.Received(1).WriteAsync(
             "outgoing-key",
             Arg.Is<Credential>(value => value.Secret == "outgoing-secret"),
             Arg.Any<CancellationToken>()
         );
-        await (sessionOnly ? secure : session).DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
-        await host.Received(storageFails ? 0 : 1).ReplaceCredentialsAsync(account, chosen, Arg.Any<CancellationToken>());
+        await host.Received(stored ? 1 : 0).ReplaceCredentialsAsync(account, secure, Arg.Any<CancellationToken>());
         await host.DidNotReceiveWithAnyArgs().ConnectAccountAsync(
             default,
             default!,
@@ -333,8 +323,7 @@ public sealed class AccountSetupTests
         // Arrange
         IAccountProvisioner provisioner = Substitute.For<IAccountProvisioner>();
         ICredentialStore secure = Substitute.For<ICredentialStore>();
-        ICredentialStore session = Substitute.For<ICredentialStore>();
-        AccountSetup setup = new AccountSetup(provisioner, secure, session);
+        AccountSetup setup = new AccountSetup(provisioner, secure);
 
         // Act
         AccountSetupResult result = await setup.AddAsync(Request(993), CancellationToken.None);
@@ -343,11 +332,10 @@ public sealed class AccountSetupTests
         Assert.That(result.Incoming, Is.EqualTo(Failure.PolicyBlocked));
         Assert.That(result.Outgoing, Is.EqualTo(Failure.PolicyBlocked));
         await secure.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
-        await session.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
     }
 
     [Test]
-    public async Task AddAsync_WhenSecureStorageFails_RequiresExplicitSessionChoice()
+    public async Task AddAsync_WhenSecureStorageFails_RefusesAccountCreationWithoutContactingServers()
     {
         // Arrange
         IAccountProvisioner provisioner = Substitute.For<IAccountProvisioner>();
@@ -357,15 +345,14 @@ public sealed class AccountSetupTests
         ICredentialStore secure = Substitute.For<ICredentialStore>();
         secure.WriteAsync(Arg.Any<string>(), Arg.Any<Credential>(), Arg.Any<CancellationToken>())
             .Returns(Outcome<bool>.Fail(Failure.Unavailable));
-        ICredentialStore session = Substitute.For<ICredentialStore>();
-        AccountSetup setup = new AccountSetup(provisioner, secure, session);
+        AccountSetup setup = new AccountSetup(provisioner, secure);
 
         // Act
         AccountSetupResult result = await setup.AddAsync(Request(993), CancellationToken.None);
 
         // Assert
         Assert.That(result.Credentials, Is.EqualTo(Failure.CredentialStorageUnavailable));
-        await session.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
+        await provisioner.DidNotReceiveWithAnyArgs().TestOutgoingConnectionAsync(default, default!, default!, default);
         await provisioner.DidNotReceiveWithAnyArgs().ConnectAccountAsync(
             default,
             default!,
@@ -407,22 +394,16 @@ public sealed class AccountSetupTests
             Arg.Any<CancellationToken>()
         )
             .Returns(Outcome<IMailAccountEngine>.Fail(Failure.NeedsAuthentication));
-        ICredentialStore secure = Substitute.For<ICredentialStore>();
-        SessionCredentialStore session = new SessionCredentialStore();
-        AccountSetup setup = new AccountSetup(provisioner, secure, session);
+        AccountSetup setup = new AccountSetup(provisioner, new InMemoryCredentialStore());
 
         // Act
-        AccountSetupResult result = await setup.AddAsync(Request(outgoing.Port) with
-        {
-            SessionOnly = true
-        }, CancellationToken.None);
+        AccountSetupResult result = await setup.AddAsync(Request(outgoing.Port), CancellationToken.None);
 
         // Assert
         Assert.That(result.Credentials, Is.EqualTo(Failure.None));
         Assert.That(result.Outgoing, Is.EqualTo(Failure.TlsRejected));
         Assert.That(result.Incoming, Is.EqualTo(Failure.NeedsAuthentication));
         Assert.That(outgoing.Commands.Any(command => command.Contains("AUTH", StringComparison.Ordinal)), Is.False);
-        await secure.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
     }
 
     private static AccountSetupRequest Request(int outgoingPort)
@@ -439,6 +420,6 @@ public sealed class AccountSetupTests
     TlsMode.Implicit,
     "outgoing-synthetic",
     ""
-), "incoming-secret", "outgoing-secret", false, null);
+), "incoming-secret", "outgoing-secret", null);
     }
 }

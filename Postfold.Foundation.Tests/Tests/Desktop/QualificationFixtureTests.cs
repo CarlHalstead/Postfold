@@ -12,7 +12,7 @@ using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.Desktop.Composition;
 using Postfold.Desktop.Services;
-using Postfold.Desktop.Stores;
+using Postfold.Engine.Tests.Fakes;
 using Postfold.Engine.Tests.Fixtures;
 using Postfold.Foundation.Tests.Fixtures.Desktop;
 using System;
@@ -155,7 +155,7 @@ public sealed class QualificationFixtureTests
             CancellationToken.None
         )).Value!;
         await host.SeedSyntheticAsync(3, CancellationToken.None);
-        await host.RestoreAccountsAsync(new SessionCredentialStore(), CancellationToken.None);
+        await host.RestoreAccountsAsync(new InMemoryCredentialStore(), CancellationToken.None);
         QualificationMailApplication application = new QualificationMailApplication(host.Application);
         AccountId account = new AccountId(1);
         Guid id = Guid.NewGuid();
@@ -240,7 +240,6 @@ public sealed class QualificationFixtureTests
             endpoint,
             "synthetic",
             "synthetic",
-            false,
             null
         ), CancellationToken.None);
 
@@ -248,6 +247,6 @@ public sealed class QualificationFixtureTests
         Assert.That(result.Outgoing, Is.EqualTo(Failure.TlsRejected));
         Assert.That(result.Mailboxes, Is.EqualTo(new[] { first }));
         await rolePort.DidNotReceiveWithAnyArgs().AddAsync(default!, default);
-        await rolePort.DidNotReceiveWithAnyArgs().RestoreCredentialsAsync(default, default!, default!, default, default);
+        await rolePort.DidNotReceiveWithAnyArgs().RestoreCredentialsAsync(default, default!, default!, default);
     }
 }
