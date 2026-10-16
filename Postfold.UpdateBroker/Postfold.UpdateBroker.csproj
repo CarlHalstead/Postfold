@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+        <PublishSingleFile Condition="'$(RuntimeIdentifier)' != ''">true</PublishSingleFile>
+        <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="../Postfold.Core/Postfold.Core.csproj" />
+        <Compile Include="../Postfold.Desktop/Stores/UpdateTrustStore.cs" Link="Stores/UpdateTrustStore.cs" />
+    </ItemGroup>
+</Project>

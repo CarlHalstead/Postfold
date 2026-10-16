@@ -39,7 +39,7 @@ internal sealed class UpdateTrustStore : IDisposable
         }
     }
 
-    internal static Outcome<UpdateTrustStore> Open(string path, string pinnedRoot, string channel)
+    internal static Outcome<UpdateTrustStore> Open(string path, string pinnedRoot, string channel, bool allowCreate = true)
     {
         FileStream? journal = null;
         try
@@ -53,6 +53,10 @@ internal sealed class UpdateTrustStore : IDisposable
             VerifyPath(path);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             bool exists = File.Exists(path);
+            if (!exists && !allowCreate)
+            {
+                throw new InvalidDataException("Native apply requires existing update trust evidence.");
+            }
             if (!exists && (File.Exists(path + ".head") || Directory.EnumerateFiles(
                 Path.GetDirectoryName(path)!,
                 Path.GetFileName(path) + ".head.*.tmp"

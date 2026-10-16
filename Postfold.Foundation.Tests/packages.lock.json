@@ -530,6 +530,12 @@
           "Postfold.Core": "[1.0.0, )"
         }
       },
+      "postfold.updatebroker": {
+        "type": "Project",
+        "dependencies": {
+          "Postfold.Core": "[1.0.0, )"
+        }
+      },
       "postfold.updatesigner": {
         "type": "Project",
         "dependencies": {

@@ -178,3 +178,18 @@ clear an error. An OS principal replacing both files with an older pair is outsi
 Application binaries and profile migration have separate owners: only admitted application startup may run
 shipped forward EF migrations under the exclusive profile lease. Neither binary rollback nor trust recovery
 authorises database restoration or stale outbox replay.
+
+`Postfold.UpdateBroker` is an independent Windows x64 full-package boundary, currently available only to
+controlled qualification. Normal application composition and Restart remain inactive. Publish it with
+`dotnet publish Postfold.UpdateBroker -c Release -r win-x64 --self-contained true -p:PublishTrimmed=false`;
+its RID build is a self-contained single file. Restore that graph using the same publish properties and its
+separate RID lock. Do not propagate single-file publishing into the desktop or Core lock graphs.
+The launcher requires a trusted exact broker digest before execution. Broker/helper digests, root pin,
+selected manifest digest, compatibility and process identity are trusted composition inputs delivered through
+a private inherited pipe; adjacent hash files and discovered metadata cannot establish executable trust.
+The launcher clears CLR injection/runtime overrides and selects a fresh single-file extraction directory;
+retain those private runtime files with failed-operation evidence rather than reusing a mutable shared cache.
+The broker replays existing durable trust, authenticates metadata and holds inheritable Windows file and
+ancestor locks through native apply. The native helper receives an explicit package path and cannot select
+an alternate cached package. A kill-on-close job owns native descendants. Production deployment of the
+trusted inventory and safe restart integration belong to their separate acceptance slices.
