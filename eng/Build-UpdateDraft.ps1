@@ -1,7 +1,9 @@
 param(
     [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit,
     [Parameter(Mandatory)][ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.(0|[1-9][0-9]*))?$')][string]$Version,
-    [Parameter(Mandatory)][ValidateSet('stable', 'beta')][string]$Channel
+    [Parameter(Mandatory)][ValidateSet('stable', 'beta')][string]$Channel,
+    [string]$SourceExportManifest,
+    [string]$SourceExportSha256
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,17 +29,14 @@ if (@(Get-ChildItem Env:VPK_*).Count -ne 0)
     throw 'Inherited VPK options are forbidden in the unsigned draft workflow.'
 }
 Set-Location -LiteralPath $repositoryRoot
-$actualCommit = git rev-parse HEAD
-if ($LASTEXITCODE -ne 0 -or $actualCommit -cne $SourceCommit)
+$sourceArguments = @{ SourceCommit = $SourceCommit; SourceExportManifest = $SourceExportManifest; SourceExportSha256 = $SourceExportSha256 }
+$sourceFiles = @(& (Join-Path $PSScriptRoot 'Test-DraftSource.ps1') @sourceArguments)
+& (Join-Path $PSScriptRoot 'Verify-Source.ps1') -SourceFiles $sourceFiles
+$sdk = (Get-Content -LiteralPath (Join-Path $repositoryRoot 'global.json') -Raw | ConvertFrom-Json).sdk.version
+if ((dotnet --version) -cne $sdk)
 {
-    throw 'The checkout must match the explicitly selected source commit.'
+    throw 'The exact pinned SDK is required.'
 }
-$sourceStatus = @(git status --porcelain)
-if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -ne 0)
-{
-    throw 'Use a clean checkout; the draft workflow never stages, resets or commits source.'
-}
-& (Join-Path $PSScriptRoot 'Verify-Source.ps1') -IncludeUntracked
 
 function Invoke-Dotnet([string[]]$Arguments)
 {
@@ -51,18 +50,19 @@ function Invoke-Dotnet([string[]]$Arguments)
 Invoke-Dotnet -Arguments @('restore', 'Postfold.slnx', '--locked-mode')
 Invoke-Dotnet -Arguments @('restore', 'Postfold.Desktop/Postfold.Desktop.csproj', '-p:RuntimeIdentifier=win-x64', '-p:SelfContained=true', '--locked-mode')
 Invoke-Dotnet -Arguments @('tool', 'restore')
+$localTools = @(dotnet tool list --local)
+if ($LASTEXITCODE -ne 0 -or @($localTools | Where-Object { $_ -cmatch '^vpk\s+1\.2\.161\s+' }).Count -ne 1)
+{
+    throw 'The exact pinned vpk tool is required.'
+}
 # NuGet serialises regenerated locks with native Windows newlines; preserve the repository's exact LF convention.
-foreach ($relativePath in (git ls-files '*packages*.lock.json'))
+foreach ($relativePath in ($sourceFiles | Where-Object { $_ -match '(^|/)packages.*\.lock\.json$' }))
 {
     $lockPath = Join-Path $repositoryRoot $relativePath
     $lockText = [System.IO.File]::ReadAllText($lockPath).Replace("`r`n", "`n").TrimEnd() + "`n"
     [System.IO.File]::WriteAllText($lockPath, $lockText, [System.Text.UTF8Encoding]::new($false))
 }
-$sourceStatus = @(git status --porcelain)
-if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -ne 0)
-{
-    throw 'Locked restore changed source; refuse to package a different source tree.'
-}
+& (Join-Path $PSScriptRoot 'Test-DraftSource.ps1') @sourceArguments | Out-Null
 Invoke-Dotnet -Arguments @('build', 'Postfold.slnx', '-c', 'Release', '--no-restore')
 Invoke-Dotnet -Arguments @('format', 'Postfold.slnx', '--verify-no-changes', '--no-restore')
 Invoke-Dotnet -Arguments @('format', 'style', 'Postfold.slnx', '--verify-no-changes', '--no-restore', '--severity', 'info', '--diagnostics', 'IDE0005')
@@ -77,9 +77,11 @@ if (Test-Path -LiteralPath $draftRoot)
 $publishDirectory = Join-Path $draftRoot 'publish'
 $releaseDirectory = Join-Path $draftRoot 'release'
 [System.IO.Directory]::CreateDirectory($draftRoot) | Out-Null
-Invoke-Dotnet -Arguments @('publish', 'Postfold.Desktop/Postfold.Desktop.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-p:PublishTrimmed=false', '-p:PublishAot=false', "-p:Version=$Version", "-p:SourceRevisionId=$SourceCommit", '-o', $publishDirectory)
+Invoke-Dotnet -Arguments @('publish', 'Postfold.Desktop/Postfold.Desktop.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-p:RuntimeFrameworkVersion=10.0.13', '-p:PublishTrimmed=false', '-p:PublishAot=false', "-p:Version=$Version", "-p:SourceRevisionId=$SourceCommit", '-o', $publishDirectory)
 [System.IO.File]::Copy((Join-Path $repositoryRoot 'LICENSE'), (Join-Path $publishDirectory 'POSTFOLD-LICENSE.txt'))
 [System.IO.File]::Copy((Join-Path $repositoryRoot 'THIRD-PARTY-NOTICES.md'), (Join-Path $publishDirectory 'POSTFOLD-NOTICES.md'))
+Copy-Item -LiteralPath (Join-Path $repositoryRoot 'ThirdPartyNotices') -Destination $publishDirectory -Recurse
+& (Join-Path $PSScriptRoot 'Test-PublishInventory.ps1') -PublishDirectory $publishDirectory
 foreach ($file in (Get-ChildItem -LiteralPath $publishDirectory -Recurse -File))
 {
     if ($file.FullName -match '(?i)(Postfold-Planning|AGENTS\.md|SKILL\.md|\.agents|\.codex|Microsoft\.EntityFrameworkCore\.Design|Microsoft\.CodeAnalysis)')
@@ -92,7 +94,8 @@ if ($managedVersion -notmatch '^1\.2\.161(\+|$)')
 {
     throw 'The shipping Velopack library must match the pinned CLI/native updater family.'
 }
-Invoke-Dotnet -Arguments @('vpk', 'pack', '--packId', 'Postfold', '--packVersion', $Version, '--packDir', $publishDirectory, '--mainExe', 'Postfold.exe', '--channel', "win-x64-$Channel", '--runtime', 'win-x64', '--delta', 'None', '--noPortable', '--outputDir', $releaseDirectory)
+Invoke-Dotnet -Arguments @('vpk', 'pack', '--packId', 'Postfold', '--packVersion', $Version, '--packDir', $publishDirectory, '--mainExe', 'Postfold.exe', '--icon', (Join-Path $repositoryRoot 'Postfold.UI/Resources/Postfold.ico'), '--channel', "win-x64-$Channel", '--runtime', 'win-x64', '--delta', 'None', '--noPortable', '--outputDir', $releaseDirectory)
+& (Join-Path $PSScriptRoot 'Test-DraftSource.ps1') @sourceArguments | Out-Null
 if (@(Get-ChildItem -LiteralPath $releaseDirectory -Filter '*-delta.nupkg').Count -ne 0)
 {
     throw 'Delta artifacts are forbidden in v1.'
@@ -106,14 +109,18 @@ $artifacts = @(Get-ChildItem -LiteralPath $releaseDirectory -File | ForEach-Obje
 })
 $receipt = [ordered]@{
     sourceCommit = $SourceCommit
+    sourceKind = $(if ($SourceExportManifest) { 'qualification-export' } else { 'git-commit' })
+    sourceExportSha256 = $SourceExportSha256
+    sdk = $sdk
     version = $Version
     channel = $Channel
     rid = 'win-x64'
     velopack = $managedVersion
+    vpk = '1.2.161'
     authenticated = $false
     distributionApproved = $false
     artifacts = $artifacts
 }
 [System.IO.File]::WriteAllText((Join-Path $draftRoot 'artifact-hashes.json'), ($receipt | ConvertTo-Json -Depth 5) + "`n", [System.Text.UTF8Encoding]::new($false))
-[System.IO.File]::WriteAllText((Join-Path $draftRoot 'QUALIFICATION-GAPS.txt'), "Unsigned draft only. Native handoff, packaged migration, installer acceptance and complete shipping notice inventory remain release gates. No trusted manifest or signature is produced by CI.`n", [System.Text.UTF8Encoding]::new($false))
+[System.IO.File]::WriteAllText((Join-Path $draftRoot 'QUALIFICATION-GAPS.txt'), "Unsigned draft only; distribution is not approved. Installer lifecycle requires separate local evidence. Authenticated native update handoff and packaged N-to-N+1 migration remain U04-U06 gates. No trusted manifest or signature is produced by CI.`n", [System.Text.UTF8Encoding]::new($false))
 Write-Output "Draft artifacts prepared at $draftRoot. Offline signing and publication require their separate explicit approvals."

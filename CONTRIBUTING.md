@@ -138,6 +138,17 @@ Reviewed pull requests use squash merges. Passing validation does not itself aut
 
 ## Offline update tooling
 
+`eng/Build-UpdateDraft.ps1` builds an unsigned, full-only Windows x64 draft from a clean selected commit.
+It uses the exact `global.json` SDK, locked ordinary/RID graphs and an exact publish-file allowlist.
+When qualifying uncommitted changes without creating a commit, use an isolated public-source export:
+pass `-SourceExportManifest <external-file>` and `-SourceExportSha256 <uppercase-SHA256>` as well as
+the approved base `-SourceCommit`. The manifest has kind `PostfoldQualificationSourceExport`, `baseCommit`
+and `files` containing each relative `path` and uppercase `sha256`. It must enumerate the entire source;
+changed bytes, additional inputs, reparse points and Git metadata are refused. Source is rechecked after
+restore and packaging. The receipt distinguishes this export identity from a committed source build.
+Export qualification does not authorise a commit, distribution or publication. Keep manifests and local
+installer evidence private. A local execution of the workflow's command is not a remote CI run.
+
 `Postfold.UpdateSigner` is an explicitly invoked, framework-only tool. It is not part of the desktop package
 and ordinary builds do not run it. The current tooling does not enable application updates or qualify an installer.
 

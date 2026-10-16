@@ -6,9 +6,7 @@ using Postfold.Core.Interfaces;
 using Postfold.Core.Models.Appearance;
 using Postfold.Core.Models.Updates;
 using Postfold.UI.Resources;
-using SkiaSharp;
 using System;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -152,25 +150,9 @@ public sealed class DesktopIntegration : IDesktopIntegration, IDisposable
         exit.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(open);
         menu.Items.Add(exit);
-        using SKBitmap bitmap = new SKBitmap(16, 16);
-        using SKCanvas canvas = new SKCanvas(bitmap);
-        canvas.Clear(SKColors.DimGray);
-        using SKPaint paint = new SKPaint
-        {
-            Color = SKColors.White,
-            Style = SKPaintStyle.Stroke,
-            StrokeWidth = 1
-        };
-        canvas.DrawRect(2, 4, 12, 9, paint);
-        canvas.DrawLine(2, 4, 8, 9, paint);
-        canvas.DrawLine(8, 9, 14, 4, paint);
-        using SKImage image = SKImage.FromBitmap(bitmap);
-        using SKData data = image.Encode(SKEncodedImageFormat.Png, 100);
-        using MemoryStream source = new MemoryStream(data.ToArray(), false);
-        // Temporary development placeholder; release branding remains separately reviewed.
         _tray = new TrayIcon
         {
-            Icon = new WindowIcon(source),
+            Icon = _window.Icon,
             Menu = menu,
             ToolTipText = "Postfold",
             IsVisible = false

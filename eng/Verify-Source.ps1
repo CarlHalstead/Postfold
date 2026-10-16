@@ -1,9 +1,13 @@
-param([switch]$IncludeUntracked)
+param([switch]$IncludeUntracked, [string[]]$SourceFiles)
 
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$trackedFiles = if ($IncludeUntracked)
+$trackedFiles = if ($SourceFiles)
+{
+    $SourceFiles
+}
+elseif ($IncludeUntracked)
 {
     git -C $repositoryRoot ls-files --cached --others --exclude-standard
 }
@@ -11,7 +15,7 @@ else
 {
     git -C $repositoryRoot ls-files
 }
-if ($LASTEXITCODE -ne 0)
+if (-not $SourceFiles -and $LASTEXITCODE -ne 0)
 {
     throw 'Cannot inspect tracked source.'
 }

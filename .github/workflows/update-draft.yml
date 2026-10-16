@@ -37,7 +37,7 @@ jobs:
       - name: Install .NET 10 SDK
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
       - name: Validate and prepare full-only unsigned draft
         shell: pwsh
         run: ./eng/Build-UpdateDraft.ps1 -SourceCommit $env:SOURCE_COMMIT -Version $env:DRAFT_VERSION -Channel $env:DRAFT_CHANNEL

@@ -3,6 +3,7 @@
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     </PropertyGroup>
     <ItemGroup>
+        <AvaloniaResource Include="Resources/Postfold.ico" />
         <ProjectReference Include="../Postfold.Core/Postfold.Core.csproj" />
         <PackageReference Include="Avalonia" />
         <PackageReference Include="HtmlSanitizer" />
