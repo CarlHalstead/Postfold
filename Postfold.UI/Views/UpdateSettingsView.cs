@@ -20,6 +20,7 @@ internal sealed class UpdateSettingsView : UserControl
 {
     private readonly IDesktopIntegration? _desktop;
     private readonly IClientUpdates? _updates;
+    private readonly IClientUpdateActivity? _activity;
     private readonly CancellationToken _lifetime;
     private readonly StackPanel _preferences = new StackPanel
     {
@@ -74,6 +75,11 @@ internal sealed class UpdateSettingsView : UserControl
     {
         _desktop = desktop;
         _updates = updates;
+        _activity = updates as IClientUpdateActivity;
+        if (_activity is not null)
+        {
+            _activity.Changed += OnActivityChanged;
+        }
         _lifetime = lifetime;
         _status = updates?.Current ?? new UpdateStatus(UpdateStage.Inactive);
         StackPanel form = new StackPanel
@@ -125,6 +131,10 @@ internal sealed class UpdateSettingsView : UserControl
         _cancel.Click += (_, _) =>
         {
             _active?.Cancel();
+            if (_activity is not null)
+            {
+                Track(_activity.CancelAsync);
+            }
             Render();
         };
         _save.Click += (_, _) => Track(SaveAsync);
@@ -160,6 +170,10 @@ internal sealed class UpdateSettingsView : UserControl
     {
         _closed = true;
         _active?.Cancel();
+        if (_activity is not null)
+        {
+            _activity.Changed -= OnActivityChanged;
+        }
     }
 
     private async Task SaveAsync()
@@ -218,7 +232,7 @@ internal sealed class UpdateSettingsView : UserControl
         {
             if (!_closed && _active == active && !active.IsCancellationRequested)
             {
-                _status = status;
+                _status = _activity is null ? status : _updates.Current;
                 Render();
             }
         }));
@@ -231,11 +245,11 @@ internal sealed class UpdateSettingsView : UserControl
                 _ => await _updates.RestartAsync(active.Token)
             };
             active.Token.ThrowIfCancellationRequested();
-            _status = result;
+            _status = _activity is null ? result : _updates.Current;
         }
         catch (OperationCanceledException) when (active.IsCancellationRequested)
         {
-            _status = new UpdateStatus(UpdateStage.Cancelled);
+            _status = _activity is null ? new UpdateStatus(UpdateStage.Cancelled) : _updates.Current;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -244,6 +258,10 @@ internal sealed class UpdateSettingsView : UserControl
         finally
         {
             _active = null;
+            if (_activity is not null)
+            {
+                _status = _updates.Current;
+            }
             Render();
         }
     }
@@ -254,21 +272,26 @@ internal sealed class UpdateSettingsView : UserControl
         {
             return;
         }
-        bool busy = _active is not null || _saving;
-        bool cancelling = _active?.IsCancellationRequested == true;
-        _preferences.IsEnabled = _loaded && !busy;
-        _save.IsEnabled = _loaded && !busy;
+        bool operating = _active is not null || _activity?.IsBusy == true;
+        bool busy = operating || _saving;
+        bool cancelling = _active?.IsCancellationRequested == true || _activity?.IsCancelling == true;
+        _preferences.IsEnabled = _loaded && !_saving;
+        _save.IsEnabled = _loaded && !_saving;
         _schedule.IsEnabled = _checks.IsChecked == true;
         _unmetered.IsEnabled = _downloads.IsChecked == true;
-        _check.IsEnabled = _loaded && !busy && _status.Stage is UpdateStage.Idle or UpdateStage.Current or UpdateStage.Available or UpdateStage.Ready or UpdateStage.Cancelled or UpdateStage.Failed;
+        _check.IsEnabled = _loaded && !busy && _checks.IsChecked == true && _status.Stage is UpdateStage.Idle or UpdateStage.Current or UpdateStage.Available or UpdateStage.Ready or UpdateStage.Cancelled or UpdateStage.Failed;
         _download.IsEnabled = _loaded && !busy && _downloads.IsChecked == true && _status.Stage == UpdateStage.Available;
         _restart.IsEnabled = _loaded && !busy && _status.CanRestart && _status.Stage is UpdateStage.Ready or UpdateStage.RestartBlocked;
-        _cancel.IsVisible = _active is not null;
-        _cancel.IsEnabled = _active is not null && !cancelling;
+        _cancel.IsVisible = operating;
+        _cancel.IsEnabled = operating && !cancelling;
         _availability.Text = Strings.Get(cancelling ? "UpdateCancelling" : _status.Stage == UpdateStage.Inactive ? "UpdatesUnavailable" : "UpdateState" + _status.Stage);
         if (_status.Failure != Failure.None)
         {
             _availability.Text += " " + Strings.Describe(_status.Failure);
+        }
+        if (_status.RetryAt is DateTimeOffset retry)
+        {
+            _availability.Text += " " + Strings.Get("UpdateRetryAt") + " " + retry.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
         }
         _version.Text = _status.Version is null ? "" : Strings.Get("UpdateVersion") + ": " + _status.Version;
         _version.IsVisible = _status.Version is not null;
@@ -288,6 +311,19 @@ internal sealed class UpdateSettingsView : UserControl
         {
             FormControls.Track(window, task);
         }
+    }
+
+    private void OnActivityChanged(object? sender, EventArgs args)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_closed)
+            {
+                // Read the latest owner snapshot: queued callbacks from old operations carry no state.
+                _status = _updates!.Current;
+                Render();
+            }
+        });
     }
 
     private static CheckBox Choice(string key)

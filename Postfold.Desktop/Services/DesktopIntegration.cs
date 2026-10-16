@@ -17,16 +17,18 @@ public sealed class DesktopIntegration : IDesktopIntegration, IDisposable
     private readonly Window _window;
     private readonly IDesktopPreferenceStore _store;
     private readonly INewMailNotification _notifications;
+    private readonly IClientUpdateActivity? _updates;
     private readonly SemaphoreSlim _changes = new SemaphoreSlim(1, 1);
     private DesktopPreferences _preferences = DesktopPreferences.Default;
     private TrayIcon? _tray;
     private bool _disposed;
 
-    public DesktopIntegration(Window window, IDesktopPreferenceStore store, INewMailNotification notifications)
+    public DesktopIntegration(Window window, IDesktopPreferenceStore store, INewMailNotification notifications, IClientUpdateActivity? updates = null)
     {
         _window = window;
         _store = store;
         _notifications = notifications;
+        _updates = updates;
     }
 
     public bool TrayEnabled => !_disposed && _tray is not null && _preferences.TrayEnabled;
@@ -98,6 +100,7 @@ public sealed class DesktopIntegration : IDesktopIntegration, IDisposable
             };
             await _store.SaveDesktopPreferencesAsync(changed, cancellationToken);
             _preferences = changed;
+            _updates?.Configure(preferences);
             return Failure.None;
         }
         finally

@@ -1,4 +1,5 @@
 using Postfold.Core.Enums;
+using System;
 
 namespace Postfold.Core.Models.Updates;
 
@@ -7,4 +8,7 @@ public sealed record UpdateStatus(UpdateStage Stage, string? Version = null, dou
 {
     /// <summary>Only a separately qualified native handoff may grant restart capability.</summary>
     public bool CanRestart { get; init; }
+
+    /// <summary>Earliest retry admission after a bounded transport/scheduler failure; null means no cooldown.</summary>
+    public DateTimeOffset? RetryAt { get; init; }
 }

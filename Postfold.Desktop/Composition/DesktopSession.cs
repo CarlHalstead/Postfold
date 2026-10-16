@@ -8,7 +8,9 @@ using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.Core.Services;
 using Postfold.Desktop.Interfaces;
+using Postfold.Desktop.Models.Updates;
 using Postfold.Desktop.Services;
+using Postfold.Desktop.Services.Updates;
 using Postfold.Desktop.Stores;
 using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
@@ -16,6 +18,7 @@ using Postfold.UI.Views;
 using System;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -31,6 +34,7 @@ internal sealed class DesktopSession : IUpdateShutdown
     private DesktopMailRuntime? _host;
     private Task _starting = Task.CompletedTask;
     private Task _synchronising = Task.CompletedTask;
+    private Task _resumingUpdates = Task.CompletedTask;
     private bool _closing;
     private bool _finished;
     private bool _started;
@@ -38,15 +42,29 @@ internal sealed class DesktopSession : IUpdateShutdown
     private DesktopIntegration? _integration;
     private WindowsNewMailNotification? _notifications;
     private WindowsHtmlReadingService? _html;
+    private IClientUpdates? _updates;
+    private readonly ClientUpdateConfiguration? _updateConfiguration;
+    private readonly TimeProvider? _updateTime;
+    private readonly HttpMessageHandler? _updateHandler;
+    private readonly IUpdateConnection? _updateConnection;
+    private bool _powerHook;
     private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
 
     internal DesktopSession(
         IClassicDesktopStyleApplicationLifetime desktop,
         MainWindow? window = null,
-        string? profilesDirectory = null
+        string? profilesDirectory = null,
+        ClientUpdateConfiguration? updateConfiguration = null,
+        TimeProvider? updateTime = null,
+        HttpMessageHandler? updateHandler = null,
+        IUpdateConnection? updateConnection = null
     )
     {
         _desktop = desktop;
+        _updateConfiguration = updateConfiguration;
+        _updateTime = updateTime;
+        _updateHandler = updateHandler;
+        _updateConnection = updateConnection;
         _profiles = new ProfileSelectionStore(profilesDirectory ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Postfold",
@@ -60,6 +78,7 @@ internal sealed class DesktopSession : IUpdateShutdown
             DataContext = new MainWindowViewModel()
         };
         window = _window;
+        window.Activated += (_, _) => ResumeUpdates();
         window.FreshProfileRequested += (_, _) =>
         {
             if (_starting.IsCompleted && !_closing && _host is null)
@@ -100,6 +119,7 @@ internal sealed class DesktopSession : IUpdateShutdown
             await _lifetime.CancelAsync();
             await _starting;
             await _synchronising;
+            await StopUpdatesAsync();
             if (!await window.FlushComposeAsync())
             {
                 _closing = false;
@@ -133,6 +153,17 @@ internal sealed class DesktopSession : IUpdateShutdown
     internal Task Startup => _starting;
 
     internal MainWindow Window => _window;
+
+    /// <summary>Windows automatic resume wakes policy evaluation without input injection or immediate network work.</summary>
+    internal Task ObservePowerMessage(uint message, IntPtr reason)
+    {
+        if (message == 0x0218 && reason == new IntPtr(0x12))
+        {
+            ResumeUpdates();
+            return _resumingUpdates;
+        }
+        return Task.CompletedTask;
+    }
 
     /// <summary>No apply process may be launched unless this barrier succeeds. Native handoff remains separately disabled.</summary>
     public async Task<Failure> PrepareUpdateShutdownAsync(CancellationToken cancellationToken)
@@ -219,6 +250,7 @@ internal sealed class DesktopSession : IUpdateShutdown
         {
             await _lifetime.CancelAsync();
             await _synchronising;
+            await StopUpdatesAsync();
             if (_html is not null)
             {
                 await _html.DisposeAsync();
@@ -268,7 +300,17 @@ internal sealed class DesktopSession : IUpdateShutdown
             MainWindowViewModel model = new MainWindowViewModel(application);
             _window.DataContext = model;
             _notifications = new WindowsNewMailNotification(_window, TimeProvider.System);
-            _integration = new DesktopIntegration(_window, _host.DesktopPreferences, _notifications);
+            _updates = ClientUpdatesComposition.Create(_updateConfiguration, _updateTime, _updateHandler, _host.DesktopPreferences, _updateConnection);
+            _integration = new DesktopIntegration(_window, _host.DesktopPreferences, _notifications, _updates as IClientUpdateActivity);
+            if (_updates is ScheduledClientUpdates scheduled)
+            {
+                await scheduled.StartAsync(_lifetime.Token);
+                if (_window.TryGetPlatformHandle()?.HandleDescriptor == "HWND")
+                {
+                    Win32Properties.AddWndProcHookCallback(_window, OnPowerMessage);
+                    _powerHook = true;
+                }
+            }
             _integration.ExitRequested += (_, _) =>
             {
                 _exitRequested = true;
@@ -283,7 +325,7 @@ internal sealed class DesktopSession : IUpdateShutdown
                     TrayEnabled = false
                 }, _lifetime.Token);
             }
-            _window.Configure(application, new AccountSetup(_host, secure, _host.Identity), _integration, _host, ClientUpdatesComposition.Create());
+            _window.Configure(application, new AccountSetup(_host, secure, _host.Identity), _integration, _host, _updates);
             _html = new WindowsHtmlReadingService(
                 _window,
                 application,
@@ -337,6 +379,34 @@ internal sealed class DesktopSession : IUpdateShutdown
             );
         }
         return false;
+    }
+
+    private async Task StopUpdatesAsync()
+    {
+        if (_powerHook)
+        {
+            Win32Properties.RemoveWndProcHookCallback(_window, OnPowerMessage);
+            _powerHook = false;
+        }
+        if (_updates is IAsyncDisposable owner)
+        {
+            await owner.DisposeAsync();
+            await _resumingUpdates;
+        }
+    }
+
+    private void ResumeUpdates()
+    {
+        if (_updates is ScheduledClientUpdates scheduled && !_closing)
+        {
+            _resumingUpdates = scheduled.ResumeAsync();
+        }
+    }
+
+    private IntPtr OnPowerMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        ObservePowerMessage(message, wParam);
+        return IntPtr.Zero;
     }
 
     private Task<Outcome<DesktopMailRuntime>> OpenProfileAsync(string? directory = null)

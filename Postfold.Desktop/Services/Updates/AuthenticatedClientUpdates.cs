@@ -63,6 +63,8 @@ internal sealed class AuthenticatedClientUpdates : IClientUpdates, IDisposable
 
     public UpdateStatus Current => Volatile.Read(ref _current);
 
+    internal DateTimeOffset RetryAt => _transport.RetryAt;
+
     public Task<UpdateStatus> CheckAsync(IProgress<UpdateStatus> progress, CancellationToken cancellationToken)
     {
         return RunAsync(download: false, progress, cancellationToken);

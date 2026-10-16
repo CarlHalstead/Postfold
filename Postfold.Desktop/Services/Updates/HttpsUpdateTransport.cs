@@ -4,6 +4,7 @@ using Postfold.Core.Models.Updates;
 using Postfold.Core.Policies.Updates;
 using Postfold.Desktop.Interfaces;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -21,6 +22,9 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
     private readonly TimeProvider _time;
     private readonly SemaphoreSlim _requests = new SemaphoreSlim(1, 1);
     private int _failures;
+    private readonly Dictionary<string, (DateTimeOffset Stored, byte[] Bytes)> _metadata = new Dictionary<string, (DateTimeOffset, byte[])>(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _metadataGate = new SemaphoreSlim(1, 1);
+    private int _metadataBytes;
 
     internal HttpsUpdateTransport(Uri release, TimeProvider time, HttpMessageHandler? fixtureHandler = null)
     {
@@ -53,9 +57,44 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
         {
             return Outcome<byte[]>.Fail(Failure.Validation);
         }
-        using MemoryStream destination = new MemoryStream();
-        Failure failure = await TransferAsync(name, maximumBytes, null, destination, cancellationToken).ConfigureAwait(false);
-        return failure == Failure.None ? Outcome<byte[]>.Success(destination.ToArray()) : Outcome<byte[]>.Fail(failure);
+        await _metadataGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            DateTimeOffset now = _time.GetUtcNow();
+            if (now < RetryAt)
+            {
+                return Outcome<byte[]>.Fail(Failure.Transient);
+            }
+            if (_metadata.TryGetValue(name, out (DateTimeOffset Stored, byte[] Bytes) cached) &&
+                now >= cached.Stored && now - cached.Stored < TimeSpan.FromMinutes(5) && cached.Bytes.Length <= maximumBytes)
+            {
+                // Exact cached bytes pass through signature/feed verification again; callers cannot mutate the cache.
+                return Outcome<byte[]>.Success((byte[])cached.Bytes.Clone());
+            }
+            using MemoryStream destination = new MemoryStream();
+            Failure failure = await TransferAsync(name, maximumBytes, null, destination, cancellationToken).ConfigureAwait(false);
+            if (failure != Failure.None)
+            {
+                return Outcome<byte[]>.Fail(failure);
+            }
+            byte[] bytes = destination.ToArray();
+            if (_metadata.Remove(name, out (DateTimeOffset Stored, byte[] Bytes) previous))
+            {
+                _metadataBytes -= previous.Bytes.Length;
+            }
+            if (_metadata.Count >= 80 || _metadataBytes + bytes.Length > 4194304)
+            {
+                _metadata.Clear();
+                _metadataBytes = 0;
+            }
+            _metadata[name] = (_time.GetUtcNow(), (byte[])bytes.Clone());
+            _metadataBytes += bytes.Length;
+            return Outcome<byte[]>.Success(bytes);
+        }
+        finally
+        {
+            _metadataGate.Release();
+        }
     }
 
     public Task<Failure> DownloadAsync(UpdateArtifact artifact, Stream destination, CancellationToken cancellationToken)

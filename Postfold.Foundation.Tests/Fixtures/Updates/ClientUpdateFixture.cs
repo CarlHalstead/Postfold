@@ -1,5 +1,8 @@
+using Avalonia.Controls.ApplicationLifetimes;
 using NUnit.Framework;
+using Postfold.Core.Interfaces;
 using Postfold.Desktop.Composition;
+using Postfold.Desktop.Interfaces;
 using Postfold.Desktop.Models.Updates;
 using Postfold.Desktop.Services.Updates;
 using System;
@@ -41,7 +44,35 @@ internal sealed class ClientUpdateFixture : HttpMessageHandler
 
     internal AuthenticatedClientUpdates Create(string? root = null, string version = "1.0.0", int format = 2, string migration = UpdateFixture.InitialMigration)
     {
-        ClientUpdateConfiguration configuration = new ClientUpdateConfiguration(
+        return (AuthenticatedClientUpdates)ClientUpdatesComposition.Create(Configuration(root, version, format, migration), Clock, new ForwardingHandler(this));
+    }
+
+    internal ScheduledClientUpdates CreateScheduled(IDesktopPreferenceStore preferences, IUpdateConnection connection, TimeProvider clock)
+    {
+        return (ScheduledClientUpdates)ClientUpdatesComposition.Create(
+            Configuration(null, "1.0.0", 2, UpdateFixture.InitialMigration),
+            clock,
+            new ForwardingHandler(this),
+            preferences,
+            connection
+        );
+    }
+
+    internal DesktopSession CreateSession(IClassicDesktopStyleApplicationLifetime lifetime, string profilesDirectory, TimeProvider time, IUpdateConnection connection)
+    {
+        return new DesktopSession(
+            lifetime,
+            profilesDirectory: profilesDirectory,
+            updateConfiguration: Configuration(null, "1.0.0", 2, UpdateFixture.InitialMigration),
+            updateTime: time,
+            updateHandler: new ForwardingHandler(this),
+            updateConnection: connection
+        );
+    }
+
+    private ClientUpdateConfiguration Configuration(string? root, string version, int format, string migration)
+    {
+        return new ClientUpdateConfiguration(
             new Uri("https://github.com/CarlHalstead/Postfold/releases/download/synthetic-u02/"),
             root ?? _signer.PublicKey,
             "stable",
@@ -50,7 +81,6 @@ internal sealed class ClientUpdateFixture : HttpMessageHandler
             migration,
             Directory
         );
-        return (AuthenticatedClientUpdates)ClientUpdatesComposition.Create(configuration, Clock, new ForwardingHandler(this));
     }
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

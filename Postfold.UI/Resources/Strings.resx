@@ -293,6 +293,7 @@
   <data name="UpdateDaily" xml:space="preserve"><value>Daily</value></data>
   <data name="UpdateWeekly" xml:space="preserve"><value>Weekly</value></data>
   <data name="UpdatePreferencesSaved" xml:space="preserve"><value>Update preferences saved.</value></data>
+  <data name="UpdateRetryAt" xml:space="preserve"><value>Retry available after</value></data>
   <data name="UpdateRestartConsent" xml:space="preserve"><value>Downloading does not install an update. Restarting requires your explicit choice and a successful work-saving check.</value></data>
   <data name="CancelUpdate" xml:space="preserve"><value>Cancel</value></data>
   <data name="UpdateProgress" xml:space="preserve"><value>Update download progress</value></data>
