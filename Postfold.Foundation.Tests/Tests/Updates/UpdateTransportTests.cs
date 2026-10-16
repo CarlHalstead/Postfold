@@ -16,6 +16,9 @@ public sealed class UpdateTransportTests
     [TestCase("https://other.invalid/CarlHalstead/Postfold/releases/download/v1/")]
     [TestCase("https://github.com/other/Postfold/releases/download/v1/")]
     [TestCase("https://github.com/CarlHalstead/Postfold/releases/latest/")]
+    [TestCase("https://github.com/CarlHalstead/Postfold/releases/download/v1/nested/")]
+    [TestCase("https://github.com/CarlHalstead/Postfold/releases/download/v1/?hint=key")]
+    [TestCase("https://github.com/CarlHalstead/Postfold/releases/download/v..1/")]
     public void Construct_WhenLocationIsNotAnImmutableApprovedRepository_RejectsIt(string uri)
     {
         // Arrange / Act / Assert

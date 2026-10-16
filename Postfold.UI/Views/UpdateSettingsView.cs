@@ -260,9 +260,9 @@ internal sealed class UpdateSettingsView : UserControl
         _save.IsEnabled = _loaded && !busy;
         _schedule.IsEnabled = _checks.IsChecked == true;
         _unmetered.IsEnabled = _downloads.IsChecked == true;
-        _check.IsEnabled = _loaded && !busy && _status.Stage is UpdateStage.Idle or UpdateStage.Current or UpdateStage.Available or UpdateStage.Cancelled or UpdateStage.Failed;
+        _check.IsEnabled = _loaded && !busy && _status.Stage is UpdateStage.Idle or UpdateStage.Current or UpdateStage.Available or UpdateStage.Ready or UpdateStage.Cancelled or UpdateStage.Failed;
         _download.IsEnabled = _loaded && !busy && _downloads.IsChecked == true && _status.Stage == UpdateStage.Available;
-        _restart.IsEnabled = _loaded && !busy && _status.Stage is UpdateStage.Ready or UpdateStage.RestartBlocked;
+        _restart.IsEnabled = _loaded && !busy && _status.CanRestart && _status.Stage is UpdateStage.Ready or UpdateStage.RestartBlocked;
         _cancel.IsVisible = _active is not null;
         _cancel.IsEnabled = _active is not null && !cancelling;
         _availability.Text = Strings.Get(cancelling ? "UpdateCancelling" : _status.Stage == UpdateStage.Inactive ? "UpdatesUnavailable" : "UpdateState" + _status.Stage);

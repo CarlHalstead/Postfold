@@ -25,7 +25,8 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
     internal HttpsUpdateTransport(Uri release, TimeProvider time, HttpMessageHandler? fixtureHandler = null)
     {
         if (!Allowed(release) || release.Host != "github.com" ||
-            !release.AbsolutePath.StartsWith("/CarlHalstead/Postfold/releases/download/", StringComparison.Ordinal) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(release.AbsolutePath, @"\A/CarlHalstead/Postfold/releases/download/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant) ||
+            release.AbsolutePath.Contains("..", StringComparison.Ordinal) ||
             !release.AbsolutePath.EndsWith('/') || release.Query.Length != 0)
         {
             throw new ArgumentException("An immutable Postfold GitHub release location is required.", nameof(release));

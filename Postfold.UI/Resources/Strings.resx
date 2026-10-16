@@ -304,7 +304,7 @@
   <data name="UpdateStateAvailable" xml:space="preserve"><value>An update is available to download.</value></data>
   <data name="UpdateStateDownloading" xml:space="preserve"><value>Downloading the update…</value></data>
   <data name="UpdateStateVerifying" xml:space="preserve"><value>Verifying the downloaded update…</value></data>
-  <data name="UpdateStateReady" xml:space="preserve"><value>The verified update is ready. Restart when you are ready.</value></data>
+  <data name="UpdateStateReady" xml:space="preserve"><value>The download is verified. Update installation is unavailable in this build.</value></data>
   <data name="UpdateStateRestartPreparing" xml:space="preserve"><value>Saving work and preparing to restart…</value></data>
   <data name="UpdateStateRestartBlocked" xml:space="preserve"><value>Restart is blocked. Resolve the reported work-saving issue before retrying.</value></data>
   <data name="UpdateStateFailed" xml:space="preserve"><value>The update operation failed.</value></data>

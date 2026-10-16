@@ -7,6 +7,7 @@ using Postfold.Desktop.Stores;
 using System;
 using System.Collections.Immutable;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,15 +28,17 @@ internal sealed class VerifiedUpdateSource : IUpdateSource
     private readonly string _cache;
     private readonly SemaphoreSlim _downloads = new SemaphoreSlim(1, 1);
 
-    private VerifiedUpdateSource(IUpdateTransport transport, UpdateManifest manifest, byte[] feed, string cache)
+    private VerifiedUpdateSource(IUpdateTransport transport, UpdateManifest manifest, byte[] feed, string cache, byte[] document)
     {
         _transport = transport;
         Manifest = manifest;
         _feed = [.. feed];
         _cache = Path.GetFullPath(cache);
+        ManifestSha256 = Convert.ToHexString(SHA256.HashData(document));
     }
 
     internal UpdateManifest Manifest { get; }
+    internal string ManifestSha256 { get; }
 
     public Task<VelopackAssetFeed> GetReleaseFeed(IVelopackLogger logger, string? appId, string channel, Guid? stagingId = null, VelopackAsset? latestLocalRelease = null)
     {
@@ -105,7 +108,7 @@ internal sealed class VerifiedUpdateSource : IUpdateSource
                 }
                 cancellationToken.ThrowIfCancellationRequested();
                 Outcome<UpdateTrustState> accepted = await Task.Run(() => trust.Accept(fetched.Value!, signed.Value!), cancellationToken).ConfigureAwait(false);
-                return accepted.IsSuccess ? Outcome<VerifiedUpdateSource>.Success(new VerifiedUpdateSource(transport, manifest, feed.Value!, cache)) :
+                return accepted.IsSuccess ? Outcome<VerifiedUpdateSource>.Success(new VerifiedUpdateSource(transport, manifest, feed.Value!, cache, fetched.Value!)) :
                     Outcome<VerifiedUpdateSource>.Fail(accepted.Failure);
             }
             if (link == 16)
@@ -122,7 +125,12 @@ internal sealed class VerifiedUpdateSource : IUpdateSource
     }
 
     /// <summary>Independently rechecks existing files and atomically promotes only exact freshly verified bytes.</summary>
-    internal async Task<Outcome<string>> DownloadFullAsync(string path, CancellationToken cancellationToken)
+    internal Task<Outcome<string>> DownloadFullAsync(string path, CancellationToken cancellationToken)
+    {
+        return DownloadFullAsync(path, null, cancellationToken);
+    }
+
+    internal async Task<Outcome<string>> DownloadFullAsync(string path, Action? verifying, CancellationToken cancellationToken)
     {
         string full = Path.GetFullPath(path);
         if (full != Path.Combine(_cache, Manifest.Package.Name) && full != Path.Combine(_cache, Manifest.Package.Name + ".partial"))
@@ -136,6 +144,7 @@ internal sealed class VerifiedUpdateSource : IUpdateSource
             Directory.CreateDirectory(_cache);
             if (File.Exists(full))
             {
+                verifying?.Invoke();
                 using FileStream cached = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
                 Failure checkedCache = await UpdateArtifacts.VerifyAsync(cached, Manifest.Package, cancellationToken).ConfigureAwait(false);
                 return checkedCache == Failure.None ? Outcome<string>.Success(full) : Outcome<string>.Fail(Failure.Corrupt);
@@ -161,6 +170,7 @@ internal sealed class VerifiedUpdateSource : IUpdateSource
                     return Outcome<string>.Fail(downloaded);
                 }
                 staging.Position = 0;
+                verifying?.Invoke();
                 Failure verified = await UpdateArtifacts.VerifyAsync(staging, Manifest.Package, cancellationToken).ConfigureAwait(false);
                 if (verified != Failure.None)
                 {

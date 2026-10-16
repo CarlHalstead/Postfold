@@ -9,7 +9,6 @@ using Postfold.Core.Models.Synchronisation;
 using Postfold.Core.Services;
 using Postfold.Desktop.Interfaces;
 using Postfold.Desktop.Services;
-using Postfold.Desktop.Services.Updates;
 using Postfold.Desktop.Stores;
 using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
@@ -284,7 +283,7 @@ internal sealed class DesktopSession : IUpdateShutdown
                     TrayEnabled = false
                 }, _lifetime.Token);
             }
-            _window.Configure(application, new AccountSetup(_host, secure, _host.Identity), _integration, _host, new InactiveClientUpdates());
+            _window.Configure(application, new AccountSetup(_host, secure, _host.Identity), _integration, _host, ClientUpdatesComposition.Create());
             _html = new WindowsHtmlReadingService(
                 _window,
                 application,

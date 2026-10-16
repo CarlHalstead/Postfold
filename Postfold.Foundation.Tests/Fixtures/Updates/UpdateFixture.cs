@@ -20,7 +20,9 @@ internal sealed class UpdateFixture : IDisposable
         using MemoryStream stream = new MemoryStream();
         using (ZipArchive archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
         {
-            using Stream specification = archive.CreateEntry("Postfold.nuspec").Open();
+            ZipArchiveEntry entry = archive.CreateEntry("Postfold.nuspec");
+            entry.LastWriteTime = new DateTimeOffset(2026, 10, 16, 0, 0, 0, TimeSpan.Zero);
+            using Stream specification = entry.Open();
             specification.Write(Encoding.UTF8.GetBytes("<package><metadata><id>Postfold</id><version>1.1.0</version></metadata></package>"));
         }
         Package = stream.ToArray();
