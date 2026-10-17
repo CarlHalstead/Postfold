@@ -312,6 +312,11 @@ internal static class ProfileMigration
         {
             await plan.ApplyAsync(connection, target, deadline.Token).ConfigureAwait(false);
         }
+        catch (SqliteException exception) when (exception.SqliteErrorCode == 19)
+        {
+            // Constraint failures need review of the migration/data, rather than a transient access retry.
+            throw new ProfileAdmissionException(Failure.NeedsReview);
+        }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new ProfileAdmissionException(Failure.Unavailable);

@@ -398,7 +398,7 @@ public sealed partial class MainWindow : Window
         if (DataContext is MainWindowViewModel model)
         {
             model.Title = "Postfold — " + Strings.Get("ProfileUnavailable");
-            model.ReportSendStatus(Strings.Get("ProfileStartupHint"));
+            model.ReportSendStatus(Strings.Get(failure == Failure.NewerSchema ? "ProfileNewerHint" : "ProfileStartupHint"));
         }
         this.FindControl<Button>("SetupButton")!.IsEnabled = true;
         this.FindControl<Button>("SettingsButton")!.IsEnabled = true;
@@ -1329,7 +1329,7 @@ public sealed partial class MainWindow : Window
         StackPanel form = new StackPanel();
         form.Children.Add(new TextBlock
         {
-            Text = Strings.Get("ProfileStartupHint"),
+            Text = Strings.Get(_startupFailure == Failure.NewerSchema ? "ProfileNewerHint" : "ProfileStartupHint"),
             TextWrapping = TextWrapping.Wrap
         });
         TextBlock status = new TextBlock { Name = "ProfileStartupStatus", TextWrapping = TextWrapping.Wrap };

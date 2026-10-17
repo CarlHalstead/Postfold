@@ -20,9 +20,9 @@ namespace Postfold.Engine.Tests.Tests.Storage;
 
 public sealed class MigrationFailureTests
 {
-    [TestCase(false, 19)]
-    [TestCase(true, 13)]
-    public async Task AdmitAsync_WhenSqliteUpgradeFails_RollsBackRowsHistoryAndFormat(bool diskFull, int expectedCode)
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task AdmitAsync_WhenSqliteUpgradeFails_RollsBackRowsHistoryAndFormat(bool diskFull)
     {
         // Arrange
         string directory = EngineFixture.DirectoryPath();
@@ -49,11 +49,20 @@ public sealed class MigrationFailureTests
         };
 
         // Act
-        SqliteException? exception = await Assert.ThrowsAsync<SqliteException>(async () =>
+        Exception? exception = await Assert.CatchAsync(async () =>
             await ProfileMigration.AdmitAsync(database, plan, CancellationToken.None));
 
         // Assert
-        Assert.That(exception!.SqliteErrorCode, Is.EqualTo(expectedCode));
+        if (diskFull)
+        {
+            Assert.That(exception, Is.TypeOf<SqliteException>());
+            Assert.That(((SqliteException)exception!).SqliteErrorCode, Is.EqualTo(13));
+        }
+        else
+        {
+            Assert.That(exception, Is.TypeOf<ProfileAdmissionException>());
+            Assert.That(((ProfileAdmissionException)exception!).Failure, Is.EqualTo(Failure.NeedsReview));
+        }
         Assert.That(ProfileEvidence.Rows(database), Is.EqualTo(original));
         using SqliteConnection read = ProfileMigration.Connect(database, readOnly: true);
         Assert.That(ProfileMigration.Scalar(read, "PRAGMA user_version;"), Is.EqualTo(2L));

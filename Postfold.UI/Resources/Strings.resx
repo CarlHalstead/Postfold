@@ -139,6 +139,7 @@
   <data name="Failure.Unavailable" xml:space="preserve"><value>Unavailable or offline</value></data>
   <data name="Failure.Corrupt" xml:space="preserve"><value>Stored content could not be read safely</value></data>
   <data name="Failure.NewerSchema" xml:space="preserve"><value>This profile requires a newer Postfold version</value></data>
+  <data name="ProfileNewerHint" xml:space="preserve"><value>This profile requires a newer Postfold version. Close this version and reopen the profile with the newer version. Your mail, drafts and queued sends are preserved.</value></data>
   <data name="Failure.CursorExpired" xml:space="preserve"><value>Search changed; refresh the first page</value></data>
   <data name="ContentAvailability.Missing" xml:space="preserve"><value>Unavailable</value></data>
   <data name="ContentAvailability.Available" xml:space="preserve"><value>Available</value></data>

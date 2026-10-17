@@ -74,10 +74,10 @@ public sealed class ProfileStartupTests
     }
 
     [AvaloniaTest]
-    [TestCase(Failure.NeedsReview)]
-    [TestCase(Failure.Unavailable)]
-    [TestCase(Failure.NewerSchema)]
-    public async Task ReportStartupFailure_WhenProfileCannotOpen_ExplainsRecoveryAndKeepsSettingsUsable(Failure failure)
+    [TestCase(Failure.NeedsReview, "ProfileStartupHint")]
+    [TestCase(Failure.Unavailable, "ProfileStartupHint")]
+    [TestCase(Failure.NewerSchema, "ProfileNewerHint")]
+    public async Task ReportStartupFailure_WhenProfileCannotOpen_ExplainsRecoveryAndKeepsSettingsUsable(Failure failure, string hintKey)
     {
         // Arrange
         await using MainWindowViewModel model = new MainWindowViewModel();
@@ -103,9 +103,9 @@ public sealed class ProfileStartupTests
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
             // Assert
-            Assert.That(model.Status, Is.EqualTo(Strings.Get("ProfileStartupHint")));
+            Assert.That(model.Status, Is.EqualTo(Strings.Get(hintKey)));
             Assert.That(main.OwnedWindows.Single(window => window is not SettingsWindow).GetVisualDescendants()
-                .OfType<TextBlock>().Any(block => block.Text == Strings.Describe(failure)), Is.False);
+                .OfType<TextBlock>().Any(block => block.Text == Strings.Get(hintKey)), Is.True);
             Assert.That(model.HasStatus, Is.True);
             Assert.That(settings.GetVisualDescendants().OfType<TextBlock>().Any(block =>
                 block.Text == Strings.Get("AppearanceSessionOnly")), Is.True);
