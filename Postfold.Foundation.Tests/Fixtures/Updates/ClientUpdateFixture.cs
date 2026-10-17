@@ -5,6 +5,7 @@ using Postfold.Desktop.Composition;
 using Postfold.Desktop.Interfaces;
 using Postfold.Desktop.Models.Updates;
 using Postfold.Desktop.Services.Updates;
+using Postfold.Engine.Tests.Fixtures;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -25,7 +26,8 @@ internal sealed class ClientUpdateFixture : HttpMessageHandler
 
     internal ClientUpdateFixture()
     {
-        Directory = Path.Combine(Path.GetTempPath(), "Postfold-U02-" + Guid.NewGuid().ToString("N"));
+        // macOS temporary paths can contain symlink ancestors, which the real stores must reject.
+        Directory = Path.Combine(EngineFixture.DirectoryPath(), "updates");
         byte[] manifest = _signer.Manifest();
         Documents["Postfold.win-x64-stable.manifest.json"] = manifest;
         Documents["Postfold.win-x64-stable.manifest.sig"] = _signer.Sign(manifest);
