@@ -455,6 +455,7 @@
           "Postfold.Storage": "[1.0.0, )",
           "Postfold.Sync": "[1.0.0, )",
           "Postfold.UI": "[1.0.0, )",
+          "Postfold.UpdateBroker": "[1.0.0, )",
           "SkiaSharp": "[3.119.4, )",
           "System.Security.Cryptography.ProtectedData": "[10.0.12, )",
           "Velopack": "[1.2.161, )"
@@ -493,6 +494,12 @@
           "Avalonia": "[12.1.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
           "HtmlSanitizer": "[9.2.1039, )",
+          "Postfold.Core": "[1.0.0, )"
+        }
+      },
+      "postfold.updatebroker": {
+        "type": "Project",
+        "dependencies": {
           "Postfold.Core": "[1.0.0, )"
         }
       },

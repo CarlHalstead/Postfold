@@ -37,7 +37,7 @@ public sealed class MigrationProcessTests
         Outcome<SqliteProfile> reopened = await SqliteProfile.OpenAsync(database, TimeProvider.System, CancellationToken.None);
 
         // Assert
-        Assert.That(reopened.IsSuccess, Is.True);
+        Assert.That(reopened.IsSuccess, Is.True, $"Admission failed with {reopened.Failure} after {stage}: {database}");
         if (reopened.Value is not null)
         {
             await reopened.Value.DisposeAsync();

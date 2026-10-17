@@ -23,4 +23,8 @@ public sealed record NativeUpdateRequest(
     byte[] Signature,
     byte[] Feed,
     string PackagePath
-);
+)
+{
+    /// <summary>Explicit admitted profile for normal reopening; null preserves the apply-only U04 boundary.</summary>
+    public string? RestartProfile { get; init; }
+}

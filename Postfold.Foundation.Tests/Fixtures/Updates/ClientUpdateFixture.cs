@@ -47,18 +47,19 @@ internal sealed class ClientUpdateFixture : HttpMessageHandler
         return (AuthenticatedClientUpdates)ClientUpdatesComposition.Create(Configuration(root, version, format, migration), Clock, new ForwardingHandler(this));
     }
 
-    internal ScheduledClientUpdates CreateScheduled(IDesktopPreferenceStore preferences, IUpdateConnection connection, TimeProvider clock)
+    internal ScheduledClientUpdates CreateScheduled(IDesktopPreferenceStore preferences, IUpdateConnection connection, TimeProvider clock, IUpdateRestart? restart = null)
     {
         return (ScheduledClientUpdates)ClientUpdatesComposition.Create(
             Configuration(null, "1.0.0", 2, UpdateFixture.InitialMigration),
             clock,
             new ForwardingHandler(this),
             preferences,
-            connection
+            connection,
+            restart
         );
     }
 
-    internal DesktopSession CreateSession(IClassicDesktopStyleApplicationLifetime lifetime, string profilesDirectory, TimeProvider time, IUpdateConnection connection)
+    internal DesktopSession CreateSession(IClassicDesktopStyleApplicationLifetime lifetime, string profilesDirectory, TimeProvider time, IUpdateConnection connection, NativeRestartConfiguration? nativeRestart = null)
     {
         return new DesktopSession(
             lifetime,
@@ -66,7 +67,8 @@ internal sealed class ClientUpdateFixture : HttpMessageHandler
             updateConfiguration: Configuration(null, "1.0.0", 2, UpdateFixture.InitialMigration),
             updateTime: time,
             updateHandler: new ForwardingHandler(this),
-            updateConnection: connection
+            updateConnection: connection,
+            nativeRestart: nativeRestart
         );
     }
 

@@ -16,6 +16,27 @@ namespace Postfold.Foundation.Tests.Tests.Updates;
 public sealed class NativeUpdateBoundaryTests
 {
     [Test]
+    [Platform("Win")]
+    public void PreventInheritance_WhenNormalChildWillStart_RetainsLocksWithoutTransferringTheirLifetime()
+    {
+        // Arrange
+        string path = Path.Combine(Path.GetTempPath(), "Postfold-U05-inheritance-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllBytes(path, [1, 2, 3]);
+        using LockedUpdateFiles locks = new LockedUpdateFiles();
+        using FileStream pinned = locks.OpenRead(path);
+        Assert.That(GetHandleInformation(pinned.SafeFileHandle, out uint before), Is.True);
+        Assert.That(before & 1, Is.EqualTo(1));
+
+        // Act
+        locks.PreventInheritance();
+
+        // Assert
+        Assert.That(GetHandleInformation(pinned.SafeFileHandle, out uint after), Is.True);
+        Assert.That(after & 1, Is.Zero);
+        Assert.Throws<IOException>(() => File.WriteAllBytes(path, [4, 5, 6]));
+    }
+
+    [Test]
     public void Open_WhenNativeTrustIsMissing_DoesNotInitializeAReplacementJournal()
     {
         // Arrange
@@ -145,4 +166,8 @@ public sealed class NativeUpdateBoundaryTests
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetHandleInformation(SafeFileHandle handle, out uint flags);
 }

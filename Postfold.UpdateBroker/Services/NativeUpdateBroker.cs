@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -19,7 +20,7 @@ using System.Xml.Linq;
 
 namespace Postfold.UpdateBroker.Services;
 
-/// <summary>Independent full-only Windows apply owner. No normal application composition calls this boundary.</summary>
+/// <summary>Independent full-only Windows apply owner, available only through explicitly trusted composition.</summary>
 public static class NativeUpdateBroker
 {
     /// <summary>
@@ -85,6 +86,7 @@ public static class NativeUpdateBroker
                 throw new InvalidDataException("Incomplete trusted request.");
             }
             using LockedUpdateFiles locks = new LockedUpdateFiles();
+            using LockedUpdateFiles profileLease = new LockedUpdateFiles();
             string self = Environment.ProcessPath!;
             string root = LockedUpdateFiles.CanonicalPath(request.InstallRoot);
             if (self.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase) ||
@@ -97,6 +99,15 @@ public static class NativeUpdateBroker
             using FileStream boundary = locks.Verify(self, request.BrokerSha256);
             using FileStream helper = locks.Verify(request.HelperPath, request.HelperSha256, 33554432);
             locks.PinDirectory(root);
+            string? profile = request.RestartProfile is null ? null : LockedUpdateFiles.CanonicalPath(request.RestartProfile);
+            if (profile is not null)
+            {
+                if (profile.Equals(root, StringComparison.OrdinalIgnoreCase) || profile.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException("Profile must survive installation replacement.");
+                }
+                locks.PinDirectory(profile);
+            }
             locks.PinDirectory(Path.GetDirectoryName(request.TrustJournal)!);
             output.Attach(request.TrustJournal + ".apply-" + Guid.NewGuid().ToString("N") + ".log");
             using (Process owner = Process.GetCurrentProcess())
@@ -146,6 +157,12 @@ public static class NativeUpdateBroker
             }
             VerifyInstalled(request);
             cancellationToken.ThrowIfCancellationRequested();
+            if (profile is not null)
+            {
+                // This lease must already exist; never create or repair profile state at the native boundary.
+                using FileStream lease = profileLease.OpenRead(Path.Combine(profile, "profile.db.lease"));
+                await ReportAsync(output, "profile-released").ConfigureAwait(false);
+            }
             locks.AllowChildRenames(root);
             await ReportAsync(output, "applying").ConfigureAwait(false);
             int exit = await NativeApplyProcess.RunAsync(
@@ -153,7 +170,7 @@ public static class NativeUpdateBroker
                 root,
                 request.PackagePath,
                 request.TrustJournal + ".native.log",
-                locks.Handles,
+                locks.Handles.Concat(profileLease.Handles).ToArray(),
                 value =>
                 {
                     output.WriteLine(value);
@@ -167,6 +184,40 @@ public static class NativeUpdateBroker
             }
             VerifyInstalledVersion(root, manifest.Version);
             await ReportAsync(output, "installed:" + manifest.Version).ConfigureAwait(false);
+            if (profile is not null)
+            {
+                profileLease.Dispose();
+                package.Position = 0;
+                using ZipArchive archive = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
+                ZipArchiveEntry entry = archive.GetEntry("lib/app/Postfold.exe") ?? throw new InvalidDataException("Missing normal application.");
+                using Stream payload = entry.Open();
+                string digest = Convert.ToHexString(await SHA256.HashDataAsync(payload, cancellationToken).ConfigureAwait(false));
+                using LockedUpdateFiles startup = new LockedUpdateFiles();
+                string executable = Path.Combine(root, "current", "Postfold.exe");
+                using FileStream verified = startup.Verify(executable, digest);
+                // Native consumption is complete. The normal app must not inherit update/trust guards
+                // and accidentally prevent its next update.
+                locks.PreventInheritance();
+                startup.PreventInheritance();
+                PreventObserverInheritance();
+                ProcessStartInfo start = new ProcessStartInfo(executable)
+                {
+                    UseShellExecute = false,
+                    WorkingDirectory = Path.GetDirectoryName(executable)!
+                };
+                start.ArgumentList.Add("--profile");
+                start.ArgumentList.Add(profile);
+                foreach (string name in start.Environment.Keys.Where(name =>
+                    name.StartsWith("DOTNET_", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("CORECLR_", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("COR_", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("COMPlus_", StringComparison.OrdinalIgnoreCase)).ToArray())
+                {
+                    start.Environment.Remove(name);
+                }
+                using Process reopened = Process.Start(start) ?? throw new IOException("Normal reopening failed.");
+                await ReportAsync(output, "reopened:" + reopened.Id + ":" + reopened.StartTime.ToUniversalTime().Ticks).ConfigureAwait(false);
+            }
             return 0;
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or Win32Exception or
@@ -182,6 +233,25 @@ public static class NativeUpdateBroker
         await events.WriteLineAsync(value).ConfigureAwait(false);
         await events.FlushAsync().ConfigureAwait(false);
     }
+
+    private static void PreventObserverInheritance()
+    {
+        foreach (int standard in new[] { -10, -11, -12 })
+        {
+            IntPtr handle = GetStdHandle(standard);
+            if (handle != IntPtr.Zero && handle != new IntPtr(-1) && !SetHandleInformation(handle, 1, 0))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GetStdHandle(int standard);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
 
     private static void VerifyInstalled(NativeUpdateRequest request)
     {

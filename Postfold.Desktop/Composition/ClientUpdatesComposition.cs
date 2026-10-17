@@ -15,7 +15,8 @@ internal static class ClientUpdatesComposition
         TimeProvider? time = null,
         HttpMessageHandler? fixtureHandler = null,
         IDesktopPreferenceStore? preferences = null,
-        IUpdateConnection? connection = null
+        IUpdateConnection? connection = null,
+        IUpdateRestart? restart = null
     )
     {
         if (configuration is null)
@@ -32,7 +33,8 @@ internal static class ClientUpdatesComposition
                 configuration.InstalledVersion,
                 configuration.ProfileFormat,
                 configuration.Migration,
-                configuration.StateDirectory
+                configuration.StateDirectory,
+                restart
             );
             return preferences is null ? client : new ScheduledClientUpdates(
                 client,

@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace Postfold.UpdateBroker.Services;
 
-/// <summary>Controlled boundary launcher; no production discovery, Settings or restart call site is connected.</summary>
+/// <summary>Controlled boundary launcher; executable trust is always an explicit composition input.</summary>
 public static class NativeUpdateLauncher
 {
     /// <summary>
@@ -24,8 +24,37 @@ public static class NativeUpdateLauncher
         CancellationToken cancellationToken
     )
     {
+        return await RunCoreAsync(broker, request, observe, restart: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Verifies first, awaits the real shutdown barrier, then authorizes apply and reports authorized.
+    /// Only the authorized callback may request application exit. Cancellation after shutdown commitment
+    /// must come from the handoff deadline, never a closed Settings window.
+    /// </summary>
+    public static Task<int> RunRestartAsync(
+        string broker,
+        NativeUpdateRequest request,
+        Func<string, CancellationToken, Task> observe,
+        CancellationToken cancellationToken
+    )
+    {
+        return RunCoreAsync(broker, request, observe, restart: true, cancellationToken);
+    }
+
+    private static async Task<int> RunCoreAsync(
+        string broker,
+        NativeUpdateRequest request,
+        Func<string, CancellationToken, Task> observe,
+        bool restart,
+        CancellationToken cancellationToken
+    )
+    {
         using LockedUpdateFiles locks = new LockedUpdateFiles();
         using FileStream executable = locks.Verify(broker, request.BrokerSha256);
+        // Process.Start inherits ambient inheritable handles on the pinned runtime. The broker acquires
+        // its own guards; it must not retain hidden duplicates of the launcher's installation ancestors.
+        locks.PreventInheritance();
         ProcessStartInfo start = new ProcessStartInfo(broker)
         {
             UseShellExecute = false,
@@ -61,9 +90,18 @@ public static class NativeUpdateLauncher
             {
                 if (milestone == "verified")
                 {
+                    if (restart)
+                    {
+                        await observe(milestone, cancellationToken).ConfigureAwait(false);
+                    }
                     // Send before the callback may release the old application. Pipe EOF cannot authorize apply.
                     await process.StandardInput.BaseStream.WriteAsync(new byte[] { 1 }, cancellationToken).ConfigureAwait(false);
                     await process.StandardInput.BaseStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    if (restart)
+                    {
+                        await observe("authorized", cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
                 }
                 await observe(milestone, cancellationToken).ConfigureAwait(false);
             }

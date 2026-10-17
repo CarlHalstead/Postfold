@@ -68,6 +68,9 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         _profile
     );
 
+    internal int ProfileFormat => _profile.AdmittedFormat;
+    internal string ProfileMigration => _profile.AdmittedMigration;
+
     public IMailAccountEngine? Find(AccountId account)
     {
         return _accounts.TryGetValue(account, out (ImapAdapter Adapter, MailAccountEngine Engine) entry) ? entry.Engine : null;
@@ -419,6 +422,11 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
     internal void ResumeWork()
     {
         _scheduler.ResumeAll();
+    }
+
+    internal Task<bool> HasActiveSubmissionsAsync(CancellationToken cancellationToken)
+    {
+        return _profile.HasActiveSubmissionsAsync(cancellationToken);
     }
 
     private (ImapAdapter Adapter, MailAccountEngine Engine) CreateRestoredAccount(

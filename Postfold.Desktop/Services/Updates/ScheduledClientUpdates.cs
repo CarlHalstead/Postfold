@@ -26,11 +26,15 @@ internal sealed class ScheduledClientUpdates : IClientUpdates, IClientUpdateActi
     private Task _scheduler = Task.CompletedTask;
     private Task? _disposal;
     private Task<UpdateStatus>? _operation;
+    private Task<UpdateStatus>? _restart;
+    private CancellationTokenSource? _restartCancellation;
+    private bool _restartCommitted;
     private CancellationTokenSource? _cancellation;
     private bool _download;
     private bool _started;
     private bool _ready;
     private bool _stopped;
+    private bool _paused;
     private DateTimeOffset? _lastCheck;
     private DateTimeOffset _retryAt;
     private int _failures;
@@ -69,7 +73,7 @@ internal sealed class ScheduledClientUpdates : IClientUpdates, IClientUpdateActi
         {
             lock (_gate)
             {
-                return _operation is not null;
+                return _operation is not null || _restart is not null;
             }
         }
     }
@@ -80,7 +84,7 @@ internal sealed class ScheduledClientUpdates : IClientUpdates, IClientUpdateActi
         {
             lock (_gate)
             {
-                return _cancellation?.IsCancellationRequested == true;
+                return _cancellation?.IsCancellationRequested == true || !_restartCommitted && _restartCancellation?.IsCancellationRequested == true;
             }
         }
     }
@@ -99,7 +103,24 @@ internal sealed class ScheduledClientUpdates : IClientUpdates, IClientUpdateActi
 
     public Task<UpdateStatus> RestartAsync(CancellationToken cancellationToken)
     {
-        return _client.RestartAsync(cancellationToken);
+        lock (_gate)
+        {
+            if (_restart is not null)
+            {
+                return _restart;
+            }
+            if (_stopped || _paused || _operation is not null || !_current.CanRestart)
+            {
+                return Task.FromResult(new UpdateStatus(UpdateStage.RestartBlocked, Failure: Failure.PolicyBlocked));
+            }
+            _current = new UpdateStatus(UpdateStage.RestartPreparing, _current.Version);
+            _restartCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            CancellationTokenSource owner = _restartCancellation;
+            _restartCommitted = false;
+            _restart = Task.Run(() => RestartCoreAsync(owner), CancellationToken.None);
+            Changed?.Invoke(this, EventArgs.Empty);
+            return _restart;
+        }
     }
 
     public void Configure(UpdatePreferences preferences)
@@ -129,8 +150,12 @@ internal sealed class ScheduledClientUpdates : IClientUpdates, IClientUpdateActi
         lock (_gate)
         {
             _cancellation?.Cancel();
+            if (!_restartCommitted)
+            {
+                _restartCancellation?.Cancel();
+            }
             Changed?.Invoke(this, EventArgs.Empty);
-            return _operation ?? Task.CompletedTask;
+            return _restart ?? _operation ?? Task.CompletedTask;
         }
     }
 
@@ -184,6 +209,76 @@ internal sealed class ScheduledClientUpdates : IClientUpdates, IClientUpdateActi
         }
     }
 
+    /// <summary>Stops new update work and observes cancellation without disposing resources needed after a blocked save.</summary>
+    internal Task PauseForShutdownAsync(bool observeRestart)
+    {
+        lock (_gate)
+        {
+            _paused = true;
+            _cancellation?.Cancel();
+            Wake();
+            return Task.WhenAll(_operation ?? Task.CompletedTask, observeRestart ? _restart ?? Task.CompletedTask : Task.CompletedTask);
+        }
+    }
+
+    internal void ResumeAfterShutdownRefusal()
+    {
+        lock (_gate)
+        {
+            if (!_stopped)
+            {
+                _paused = false;
+                Changed?.Invoke(this, EventArgs.Empty);
+                Wake();
+            }
+        }
+    }
+
+    internal bool TryCommitRestart()
+    {
+        lock (_gate)
+        {
+            if (_stopped || _restart is null || _restartCancellation!.IsCancellationRequested)
+            {
+                return false;
+            }
+            _restartCommitted = true;
+            Changed?.Invoke(this, EventArgs.Empty);
+            return true;
+        }
+    }
+
+    private async Task<UpdateStatus> RestartCoreAsync(CancellationTokenSource owner)
+    {
+        UpdateStatus result = new UpdateStatus(UpdateStage.RestartBlocked, Failure: Failure.Unavailable);
+        try
+        {
+            result = await _client.RestartAsync(owner.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested)
+        {
+            result = _restartCommitted ? new UpdateStatus(UpdateStage.RestartCommitted, Failure: Failure.NeedsReview) : new UpdateStatus(UpdateStage.Cancelled);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                if (owner.IsCancellationRequested && !_restartCommitted)
+                {
+                    result = new UpdateStatus(UpdateStage.Cancelled);
+                }
+                _current = result;
+                _restart = null;
+                _restartCancellation = null;
+                _restartCommitted = false;
+                owner.Dispose();
+                Changed?.Invoke(this, EventArgs.Empty);
+                Wake();
+            }
+        }
+        return result;
+    }
+
     private async Task StopAsync()
     {
         Task? operation;
@@ -224,7 +319,7 @@ internal sealed class ScheduledClientUpdates : IClientUpdates, IClientUpdateActi
         lock (_gate)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (_stopped || !_ready || _operation is not null)
+            if (_stopped || _paused || !_ready || _operation is not null || _restart is not null)
             {
                 return Task.FromResult(new UpdateStatus(UpdateStage.Failed, Failure: Failure.PolicyBlocked));
             }
@@ -368,8 +463,8 @@ internal sealed class ScheduledClientUpdates : IClientUpdates, IClientUpdateActi
                     }
                     DateTimeOffset due = _retryAt != default ? _retryAt :
                         (_lastCheck ?? DateTimeOffset.MinValue).AddHours(_preferences.CheckIntervalHours);
-                    check = _operation is null && Allowed(download: false) && now >= due;
-                    if (_operation is null && Allowed(download: false) && !check)
+                    check = !_paused && _operation is null && _restart is null && Allowed(download: false) && now >= due;
+                    if (!_paused && _operation is null && _restart is null && Allowed(download: false) && !check)
                     {
                         delay = due - now;
                     }

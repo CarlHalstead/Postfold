@@ -307,7 +307,10 @@
   <data name="UpdateStateVerifying" xml:space="preserve"><value>Verifying the downloaded update…</value></data>
   <data name="UpdateStateReady" xml:space="preserve"><value>The download is verified. Update installation is unavailable in this build.</value></data>
   <data name="UpdateStateRestartPreparing" xml:space="preserve"><value>Saving work and preparing to restart…</value></data>
-  <data name="UpdateStateRestartBlocked" xml:space="preserve"><value>Restart is blocked. Resolve the reported work-saving issue before retrying.</value></data>
+  <data name="UpdateStateRestartBlocked" xml:space="preserve"><value>Restart could not complete. Review the reported failure and retained work before checking again or retrying.</value></data>
+  <data name="UpdateReadyToRestart" xml:space="preserve"><value>The download is verified. Choose Restart to save your work and install this update.</value></data>
+  <data name="UpdateStateRestartCommitted" xml:space="preserve"><value>The restart handoff was authorized. If Postfold remains open, close it and review the retained update result before trying again.</value></data>
+  <data name="UpdateShutdownStopped" xml:space="preserve"><value>Update installation is blocked. Your drafts are saved, but Postfold could not finish closing its services. Close and reopen Postfold before trying again; retained work and evidence will be preserved.</value></data>
   <data name="UpdateStateFailed" xml:space="preserve"><value>The update operation failed.</value></data>
   <data name="UpdateStateCancelled" xml:space="preserve"><value>The update operation was cancelled. No update was installed.</value></data>
 </root>

@@ -53,6 +53,12 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
 
     public IBlobStore Blobs => _blobs;
 
+    /// <summary>Compatibility of this successfully admitted profile; admission requires the shipped final migration.</summary>
+    public int AdmittedFormat => ProfileMigrationManifest.Versions[^1].Format;
+
+    /// <summary>Final shipped migration validated by profile admission.</summary>
+    public string AdmittedMigration => ProfileMigrationManifest.Versions[^1].Id;
+
     public Task<AccountId> NextAccountIdAsync(CancellationToken cancellationToken)
     {
         return ReadAsync(connection => new AccountId(Convert.ToInt64(
@@ -580,6 +586,17 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
 
             return entries.ToImmutable();
         }, cancellationToken);
+    }
+
+    /// <summary>Checks every account and row; presentation page limits must never admit an unsafe shutdown.</summary>
+    public Task<bool> HasActiveSubmissionsAsync(CancellationToken cancellationToken)
+    {
+        return ReadAsync(connection => Convert.ToInt64(Scalar(
+            connection,
+            null,
+            "SELECT EXISTS(SELECT 1 FROM OutboxSubmissions WHERE State=$submitting);",
+            ("$submitting", (int)SubmissionState.Submitting)
+        ), CultureInfo.InvariantCulture) != 0, cancellationToken);
     }
 
     public static async Task<Outcome<SqliteProfile>> OpenAsync(

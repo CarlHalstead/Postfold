@@ -1,11 +1,13 @@
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Threading;
 using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
 using Postfold.Core.Models;
 using Postfold.Core.Models.Appearance;
 using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Synchronisation;
+using Postfold.Core.Models.Updates;
 using Postfold.Core.Services;
 using Postfold.Desktop.Interfaces;
 using Postfold.Desktop.Models.Updates;
@@ -15,7 +17,10 @@ using Postfold.Desktop.Stores;
 using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
 using Postfold.UI.Views;
+using Postfold.UpdateBroker.Models;
+using Postfold.UpdateBroker.Services;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -24,7 +29,7 @@ using System.Threading.Tasks;
 
 namespace Postfold.Desktop.Composition;
 
-internal sealed class DesktopSession : IUpdateShutdown
+internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
 {
     private readonly IClassicDesktopStyleApplicationLifetime _desktop;
     private readonly MainWindow _window;
@@ -47,6 +52,8 @@ internal sealed class DesktopSession : IUpdateShutdown
     private readonly TimeProvider? _updateTime;
     private readonly HttpMessageHandler? _updateHandler;
     private readonly IUpdateConnection? _updateConnection;
+    private readonly NativeRestartConfiguration? _nativeRestart;
+    private bool _restartPending;
     private bool _powerHook;
     private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
 
@@ -57,7 +64,8 @@ internal sealed class DesktopSession : IUpdateShutdown
         ClientUpdateConfiguration? updateConfiguration = null,
         TimeProvider? updateTime = null,
         HttpMessageHandler? updateHandler = null,
-        IUpdateConnection? updateConnection = null
+        IUpdateConnection? updateConnection = null,
+        NativeRestartConfiguration? nativeRestart = null
     )
     {
         _desktop = desktop;
@@ -65,6 +73,7 @@ internal sealed class DesktopSession : IUpdateShutdown
         _updateTime = updateTime;
         _updateHandler = updateHandler;
         _updateConnection = updateConnection;
+        _nativeRestart = nativeRestart;
         _profiles = new ProfileSelectionStore(profilesDirectory ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Postfold",
@@ -78,6 +87,9 @@ internal sealed class DesktopSession : IUpdateShutdown
             DataContext = new MainWindowViewModel()
         };
         window = _window;
+        // This session owns child saves and task draining. Avalonia's children-first default can cancel
+        // the owner close before our asynchronous barrier is reached.
+        window.ClosingBehavior = WindowClosingBehavior.OwnerWindowOnly;
         window.Activated += (_, _) => ResumeUpdates();
         window.FreshProfileRequested += (_, _) =>
         {
@@ -110,49 +122,148 @@ internal sealed class DesktopSession : IUpdateShutdown
             }
 
             args.Cancel = true;
+            if (_restartPending)
+            {
+                return;
+            }
             if (_closing)
             {
                 return;
             }
 
-            _closing = true;
-            await _lifetime.CancelAsync();
-            await _starting;
-            await _synchronising;
-            await StopUpdatesAsync();
-            if (!await window.FlushComposeAsync())
+            try
             {
-                _closing = false;
-                _exitRequested = false;
-                return;
-            }
-
-            if (window.DataContext is MainWindowViewModel model)
-            {
-                if (_html is not null)
+                if (await PrepareUpdateShutdownCoreAsync(CancellationToken.None, null, ordinaryClose: true) == Failure.None)
                 {
-                    await _html.DisposeAsync();
+                    _desktop.Shutdown();
                 }
-
-                await model.DisposeAsync();
             }
-
-            if (_host is not null)
+            catch (OperationCanceledException)
             {
-                await _host.DisposeAsync();
+                _exitRequested = false;
             }
-
-            _integration?.Dispose();
-            _notifications?.Dispose();
-
-            _finished = true;
-            _desktop.Shutdown();
         };
     }
 
     internal Task Startup => _starting;
 
     internal MainWindow Window => _window;
+
+    public async Task<UpdateStatus> RestartAsync(VerifiedUpdateSource release, CancellationToken cancellationToken)
+    {
+        bool admitted = await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (_closing || _finished || _restartPending || _nativeRestart is null || _updateConfiguration is null)
+            {
+                return false;
+            }
+            _restartPending = true;
+            return true;
+        });
+        if (!admitted)
+        {
+            return new UpdateStatus(UpdateStage.RestartBlocked, Failure: Failure.PolicyBlocked);
+        }
+        Failure failure = Failure.NeedsReview;
+        bool committed = false;
+        bool authorized = false;
+        using CancellationTokenSource deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        CancellationTokenRegistration cancellation = cancellationToken.Register(() => deadline.Cancel());
+        try
+        {
+            ClientUpdateConfiguration configuration = _updateConfiguration!;
+            NativeRestartConfiguration native = _nativeRestart!;
+            if (_host is null || configuration.ProfileFormat != _host.ProfileFormat || configuration.Migration != _host.ProfileMigration)
+            {
+                return new UpdateStatus(UpdateStage.RestartBlocked, Failure: Failure.NeedsReview);
+            }
+            using Process current = Process.GetCurrentProcess();
+            NativeUpdateRequest request = new NativeUpdateRequest(
+                current.Id,
+                current.StartTime.ToUniversalTime().Ticks,
+                native.BrokerSha256,
+                native.HelperPath,
+                native.HelperSha256,
+                native.InstallRoot,
+                configuration.InstalledVersion,
+                native.InstalledManifestSha256,
+                configuration.Channel,
+                configuration.ProfileFormat,
+                configuration.Migration,
+                configuration.PinnedRoot,
+                Path.Combine(configuration.StateDirectory, "trust.journal"),
+                release.ManifestSha256,
+                release.Document.ToArray(),
+                release.Signature.ToArray(),
+                release.Feed.ToArray(),
+                Path.Combine(configuration.StateDirectory, "packages", release.Manifest.Package.Name)
+            )
+            {
+                RestartProfile = _profileDirectory
+            };
+            await NativeUpdateLauncher.RunRestartAsync(native.BrokerPath, request, async (milestone, token) =>
+            {
+                if (milestone == "verified")
+                {
+                    failure = await Dispatcher.UIThread.InvokeAsync(() => PrepareUpdateShutdownCoreAsync(token, () =>
+                    {
+                        cancellation.Dispose();
+                        token.ThrowIfCancellationRequested();
+                        if (_updates is ScheduledClientUpdates owner && !owner.TryCommitRestart())
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            throw new IOException("Restart admission stopped before shutdown commitment.");
+                        }
+                        committed = true;
+                    }));
+                    if (failure != Failure.None)
+                    {
+                        throw new IOException("Safe shutdown blocked native apply.");
+                    }
+                }
+                else if (milestone == "authorized")
+                {
+                    authorized = true;
+                    await Dispatcher.UIThread.InvokeAsync(() => _desktop.Shutdown());
+                }
+            }, deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!committed && cancellationToken.IsCancellationRequested)
+            {
+                return new UpdateStatus(UpdateStage.Cancelled);
+            }
+            failure = Failure.Unavailable;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or ArgumentException)
+        {
+            if (failure == Failure.None)
+            {
+                failure = Failure.Unavailable;
+            }
+        }
+        finally
+        {
+            cancellation.Dispose();
+            await Dispatcher.UIThread.InvokeAsync(() => _restartPending = false);
+        }
+        // If native ownership could not transfer, retain stopped state/evidence and permit ordinary close.
+        return new UpdateStatus(
+            authorized ? UpdateStage.RestartCommitted : UpdateStage.RestartBlocked,
+            release.Manifest.Version,
+            Failure: authorized ? Failure.NeedsReview : failure == Failure.None ? Failure.Unavailable : failure
+        )
+        {
+            CanRestart = !_finished && !authorized
+        };
+    }
+
+    /// <summary>No native apply may be authorized unless this owned session barrier succeeds.</summary>
+    public Task<Failure> PrepareUpdateShutdownAsync(CancellationToken cancellationToken)
+    {
+        return PrepareUpdateShutdownCoreAsync(cancellationToken, null);
+    }
 
     /// <summary>Windows automatic resume wakes policy evaluation without input injection or immediate network work.</summary>
     internal Task ObservePowerMessage(uint message, IntPtr reason)
@@ -165,8 +276,7 @@ internal sealed class DesktopSession : IUpdateShutdown
         return Task.CompletedTask;
     }
 
-    /// <summary>No apply process may be launched unless this barrier succeeds. Native handoff remains separately disabled.</summary>
-    public async Task<Failure> PrepareUpdateShutdownAsync(CancellationToken cancellationToken)
+    private async Task<Failure> PrepareUpdateShutdownCoreAsync(CancellationToken cancellationToken, Action? commit, bool ordinaryClose = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (_closing || _finished)
@@ -186,25 +296,48 @@ internal sealed class DesktopSession : IUpdateShutdown
             await _starting;
             if (_host is null)
             {
+                if (ordinaryClose)
+                {
+                    await _lifetime.CancelAsync();
+                    await StopUpdatesAsync();
+                    if (!await _window.FlushComposeAsync())
+                    {
+                        _closing = false;
+                        _window.IsEnabled = true;
+                        RestoreChildren();
+                        return Blocked(Failure.Unavailable, "UpdateShutdownDraftBlocked");
+                    }
+                    if (_window.DataContext is MainWindowViewModel unopenedModel)
+                    {
+                        await unopenedModel.DisposeAsync();
+                    }
+                    _finished = true;
+                    return Failure.None;
+                }
                 _closing = false;
                 _window.IsEnabled = true;
                 RestoreChildren();
                 return Blocked(Failure.PolicyBlocked, "UpdateShutdownProfileBlocked");
             }
-            // Active SMTP work is observed, never cancelled to satisfy a restart deadline.
-            await _host.PauseWorkAsync(cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            foreach (Postfold.Core.Models.Accounts.AccountConfiguration account in await _host.Catalog.AccountsAsync(cancellationToken))
+            if (_updates is ScheduledClientUpdates scheduled)
             {
-                if ((await _host.Catalog.OutboxAsync(account.Id, cancellationToken)).Any(entry => entry.State == SubmissionState.Submitting))
-                {
-                    _host.ResumeWork();
-                    _closing = false;
-                    _window.IsEnabled = true;
-                    RestoreChildren();
-                    return Blocked(Failure.NeedsReview, "UpdateShutdownSubmissionBlocked");
-                }
+                await scheduled.PauseForShutdownAsync(observeRestart: !_restartPending);
             }
+            // Active SMTP work is observed, never cancelled to satisfy a restart deadline.
+            using CancellationTokenSource drain = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            drain.CancelAfter(TimeSpan.FromSeconds(30));
+            await _host.PauseWorkAsync(drain.Token);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!ordinaryClose && await _host.HasActiveSubmissionsAsync(cancellationToken))
+            {
+                _host.ResumeWork();
+                _closing = false;
+                _window.IsEnabled = true;
+                RestoreChildren();
+                return Blocked(Failure.NeedsReview, "UpdateShutdownSubmissionBlocked");
+            }
+            commit?.Invoke();
+            cancellationToken.ThrowIfCancellationRequested();
             confirmingDrafts = true;
             if (!await _window.FlushComposeAsync())
             {
@@ -225,27 +358,27 @@ internal sealed class DesktopSession : IUpdateShutdown
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            if (confirmingDrafts)
-            {
-                return Blocked(Failure.Unavailable, "UpdateShutdownDraftBlocked");
-            }
             _host?.ResumeWork();
             _closing = false;
             _window.IsEnabled = true;
             RestoreChildren();
-            return Blocked(Failure.Unavailable, "UpdateShutdownWorkBlocked");
+            return Blocked(Failure.Unavailable, confirmingDrafts ? "UpdateShutdownDraftBlocked" : "UpdateShutdownWorkBlocked");
         }
 
         void RestoreChildren()
         {
+            if (_updates is ScheduledClientUpdates scheduled)
+            {
+                scheduled.ResumeAfterShutdownRefusal();
+            }
             foreach ((Window child, bool enabled) in children)
             {
                 child.IsEnabled = enabled;
             }
         }
 
-        // Draft confirmation is the irreversible UI boundary. Finish closing safely even if the request is cancelled.
-        // The caller must still recheck cancellation before any native handoff.
+        // Draft confirmation commits shutdown. Request cancellation no longer abandons owned closure;
+        // only the independent handoff deadline may now refuse apply. Never restore stopped services.
         try
         {
             await _lifetime.CancelAsync();
@@ -268,7 +401,9 @@ internal sealed class DesktopSession : IUpdateShutdown
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             // Mail remains stopped if closure is incomplete; never re-admit services or launch an updater.
-            return Blocked(Failure.Unavailable, "UpdateShutdownWorkBlocked");
+            // Drafts are confirmed durable. Permit ordinary process exit through the native title bar.
+            _finished = true;
+            return Blocked(Failure.Unavailable, "UpdateShutdownStopped");
         }
 
         Failure Blocked(Failure failure, string key)
@@ -300,7 +435,7 @@ internal sealed class DesktopSession : IUpdateShutdown
             MainWindowViewModel model = new MainWindowViewModel(application);
             _window.DataContext = model;
             _notifications = new WindowsNewMailNotification(_window, TimeProvider.System);
-            _updates = ClientUpdatesComposition.Create(_updateConfiguration, _updateTime, _updateHandler, _host.DesktopPreferences, _updateConnection);
+            _updates = ClientUpdatesComposition.Create(_updateConfiguration, _updateTime, _updateHandler, _host.DesktopPreferences, _updateConnection, _nativeRestart is null ? null : this);
             _integration = new DesktopIntegration(_window, _host.DesktopPreferences, _notifications, _updates as IClientUpdateActivity);
             if (_updates is ScheduledClientUpdates scheduled)
             {

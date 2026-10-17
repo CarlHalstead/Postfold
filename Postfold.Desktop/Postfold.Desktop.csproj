@@ -14,6 +14,7 @@
         <ProjectReference Include="../Postfold.Storage/Postfold.Storage.csproj" />
         <ProjectReference Include="../Postfold.Sync/Postfold.Sync.csproj" />
         <ProjectReference Include="../Postfold.UI/Postfold.UI.csproj" />
+        <ProjectReference Include="../Postfold.UpdateBroker/Postfold.UpdateBroker.csproj" />
         <PackageReference Include="Avalonia.Desktop" />
         <PackageReference Include="SkiaSharp" />
         <PackageReference Include="Avalonia.Controls.WebView" />

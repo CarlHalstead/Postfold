@@ -21,7 +21,8 @@ Test classes belong under `Tests/<Subject>`. Supporting types belong under `Fixt
 Linked test sources retain their originating namespace and use the corresponding folder in their link path.
 Generated exceptions are limited to generated sources in `obj`, not whole projects.
 
-Core is framework-only. Protocols, Storage, Sync and UI reference Core only; Desktop composes them.
+Core is framework-only. Protocols, Storage, Sync and UI reference Core only; Desktop composes them and the
+independent UpdateBroker launcher. The broker references Core only and links its durable trust-store source.
 UI uses Core application ports implemented by Sync. Sync must not reference concrete Storage or Protocols types.
 Every injected application service has an interface; keep optional capability ports narrow.
 EF Core SQLite owns schema and migrations in Storage; existing parameterised queries remain supported.
@@ -179,8 +180,13 @@ Application binaries and profile migration have separate owners: only admitted a
 shipped forward EF migrations under the exclusive profile lease. Neither binary rollback nor trust recovery
 authorises database restoration or stale outbox replay.
 
-`Postfold.UpdateBroker` is an independent Windows x64 full-package boundary, currently available only to
-controlled qualification. Normal application composition and Restart remain inactive. Publish it with
+`Postfold.UpdateBroker` is an independent Windows x64 full-package boundary, available only to controlled
+qualification. Unconfigured production activity and Restart remain inactive. Explicit trusted restart
+composition verifies the broker before saving/draining the actual DesktopSession; only successful shutdown
+authorizes apply after process exit. The broker holds the released profile lease through native apply, then
+opens the exact installed application normally with that profile. A closed Settings window can cancel
+admission, but cannot abandon committed shutdown. The normal application supplies no configuration.
+Publish the trusted single-file broker separately with
 `dotnet publish Postfold.UpdateBroker -c Release -r win-x64 --self-contained true -p:PublishTrimmed=false`;
 its RID build is a self-contained single file. Restore that graph using the same publish properties and its
 separate RID lock. Do not propagate single-file publishing into the desktop or Core lock graphs.

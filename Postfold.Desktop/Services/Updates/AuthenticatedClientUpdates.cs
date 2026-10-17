@@ -3,6 +3,7 @@ using Postfold.Core.Interfaces;
 using Postfold.Core.Models;
 using Postfold.Core.Models.Updates;
 using Postfold.Core.Policies.Updates;
+using Postfold.Desktop.Interfaces;
 using Postfold.Desktop.Stores;
 using System;
 using System.IO;
@@ -13,7 +14,7 @@ using System.Threading.Tasks;
 namespace Postfold.Desktop.Services.Updates;
 
 /// <summary>
-/// Explicit discovery and full-package staging, with no scheduler or native apply dependency.
+/// Explicit discovery and full-package staging, with optional owned safe restart admission.
 /// Each operation reopens and replays user-owned trust before accepting or reusing a release.
 /// </summary>
 internal sealed class AuthenticatedClientUpdates : IClientUpdates, IDisposable
@@ -25,6 +26,7 @@ internal sealed class AuthenticatedClientUpdates : IClientUpdates, IDisposable
     private readonly int _profileFormat;
     private readonly string _migration;
     private readonly string _stateDirectory;
+    private readonly IUpdateRestart? _restart;
     private int _active;
     private bool _disposed;
     private VerifiedUpdateSource? _source;
@@ -37,7 +39,8 @@ internal sealed class AuthenticatedClientUpdates : IClientUpdates, IDisposable
         string installedVersion,
         int profileFormat,
         string migration,
-        string stateDirectory
+        string stateDirectory,
+        IUpdateRestart? restart = null
     )
     {
         UpdateTrust.KeyId(pinnedRoot);
@@ -53,6 +56,7 @@ internal sealed class AuthenticatedClientUpdates : IClientUpdates, IDisposable
         _profileFormat = profileFormat;
         _migration = migration;
         _stateDirectory = Path.GetFullPath(stateDirectory);
+        _restart = restart;
         string installation = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
         if (_stateDirectory.Equals(installation, StringComparison.OrdinalIgnoreCase) ||
             _stateDirectory.StartsWith(installation + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
@@ -75,15 +79,32 @@ internal sealed class AuthenticatedClientUpdates : IClientUpdates, IDisposable
         return RunAsync(download: true, progress, cancellationToken);
     }
 
-    public Task<UpdateStatus> RestartAsync(CancellationToken cancellationToken)
+    public async Task<UpdateStatus> RestartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(new UpdateStatus(UpdateStage.RestartBlocked, Failure: Failure.PolicyBlocked));
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_restart is null || _source is null || !Current.CanRestart || Interlocked.CompareExchange(ref _active, 2, 0) != 0)
+        {
+            return new UpdateStatus(UpdateStage.RestartBlocked, Failure: Failure.PolicyBlocked);
+        }
+        try
+        {
+            Volatile.Write(ref _current, new UpdateStatus(UpdateStage.RestartPreparing, _source.Manifest.Version));
+            UpdateStatus result = await _restart.RestartAsync(_source, cancellationToken).ConfigureAwait(false);
+            Volatile.Write(ref _current, result);
+            return result;
+        }
+        finally
+        {
+            Volatile.Write(ref _active, 0);
+        }
     }
 
     public void Dispose()
     {
-        if (Volatile.Read(ref _active) != 0)
+        // Restart uses only its immutable selected bytes and the session/native owners. Disposing its
+        // idle transport is safe and must not make session shutdown await the Restart that requested it.
+        if (Volatile.Read(ref _active) == 1)
         {
             throw new InvalidOperationException("Observe cancellation before disposing update operations.");
         }
@@ -147,8 +168,14 @@ internal sealed class AuthenticatedClientUpdates : IClientUpdates, IDisposable
                 cancellationToken
             ).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            return Publish(staged.IsSuccess ? new UpdateStatus(UpdateStage.Ready, selected.Manifest.Version) :
-                new UpdateStatus(UpdateStage.Failed, Failure: staged.Failure), progress);
+            if (staged.IsSuccess)
+            {
+                _source = selected;
+            }
+            return Publish(staged.IsSuccess ? new UpdateStatus(UpdateStage.Ready, selected.Manifest.Version)
+            {
+                CanRestart = _restart is not null
+            } : new UpdateStatus(UpdateStage.Failed, Failure: staged.Failure), progress);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

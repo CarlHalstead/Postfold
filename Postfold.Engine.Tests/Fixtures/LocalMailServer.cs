@@ -90,6 +90,7 @@ internal sealed class LocalMailServer : IAsyncDisposable
     internal List<string> Commands { get; } = new List<string>();
     internal string? SubmittedMime { get; private set; }
     internal int SubmissionCount { get; private set; }
+    internal Func<string, Task>? SmtpBoundary { get; set; }
 
     public async ValueTask DisposeAsync()
     {
@@ -159,6 +160,10 @@ internal sealed class LocalMailServer : IAsyncDisposable
 
     private async Task SmtpAsync(Stream stream)
     {
+        if (SmtpBoundary is not null)
+        {
+            await SmtpBoundary("connected");
+        }
         await ReplyAsync(stream, "220 localhost synthetic SMTP\r\n");
         int recipients = 0;
         while (await LineAsync(stream) is string line)
@@ -202,6 +207,10 @@ internal sealed class LocalMailServer : IAsyncDisposable
 
                 SubmittedMime = mime.ToString();
                 SubmissionCount++;
+                if (SmtpBoundary is not null)
+                {
+                    await SmtpBoundary("awaiting-acknowledgement");
+                }
                 if (LoseAcknowledgement)
                 {
                     await stream.DisposeAsync();
@@ -210,6 +219,10 @@ internal sealed class LocalMailServer : IAsyncDisposable
 
                 await ReplyAsync(stream, RejectData ? "550 Synthetic data rejection\r\n" :
                     "250 Accepted synthetic receipt\r\n");
+                if (SmtpBoundary is not null)
+                {
+                    await SmtpBoundary("accepted");
+                }
             }
             else if (line == "QUIT")
             {

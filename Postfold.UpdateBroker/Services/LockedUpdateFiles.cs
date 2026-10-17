@@ -28,6 +28,18 @@ public sealed class LockedUpdateFiles : IDisposable
         }
     }
 
+    /// <summary>Retains guards but prevents an ordinary managed child launch from inheriting their ownership.</summary>
+    public void PreventInheritance()
+    {
+        foreach (SafeFileHandle handle in _handles)
+        {
+            if (!SetHandleInformation(handle, 1, 0))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
+    }
+
     /// <summary>Rejects aliases/reparse paths and pins a file against write/delete through every alias.</summary>
     public FileStream OpenRead(string path)
     {
@@ -145,6 +157,10 @@ public sealed class LockedUpdateFiles : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandle(SafeFileHandle file, out FileInformation information);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetHandleInformation(SafeFileHandle handle, uint mask, uint flags);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SecurityAttributes

@@ -18,7 +18,7 @@ public sealed class ProjectBoundaryTests
     [TestCase("Postfold.UI", new[] { "Postfold.Core" })]
     [TestCase("Postfold.Desktop", new[]
     {
-        "Postfold.Core", "Postfold.Protocols", "Postfold.Storage", "Postfold.Sync", "Postfold.UI"
+        "Postfold.Core", "Postfold.Protocols", "Postfold.Storage", "Postfold.Sync", "Postfold.UI", "Postfold.UpdateBroker"
     })]
     public void ProjectReferences_WhenFoundationIsBuilt_RespectApprovedGraph(string projectName, string[] expected)
     {

@@ -1879,16 +1879,26 @@ public sealed partial class MainWindow : Window
             {
                 await action();
             }
-            catch (IOException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                ShowWindow(new Window
+                if (_stopping)
                 {
-                    Title = Strings.DraftFailed,
-                    Content = new TextBlock
+                    if (DataContext is MainWindowViewModel model)
                     {
-                        Text = Strings.DraftFailed
+                        model.ReportSendStatus(Strings.DraftFailed);
                     }
-                });
+                }
+                else
+                {
+                    ShowWindow(new Window
+                    {
+                        Title = Strings.DraftFailed,
+                        Content = new TextBlock
+                        {
+                            Text = Strings.DraftFailed
+                        }
+                    });
+                }
             }
             catch (OperationCanceledException)
             {

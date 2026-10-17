@@ -127,7 +127,9 @@ internal sealed class UpdateSettingsView : UserControl
         Content = FormControls.Page("", form, footer);
         _check.Click += (_, _) => Track(() => RunAsync(UpdateStage.Checking));
         _download.Click += (_, _) => Track(() => RunAsync(UpdateStage.Downloading));
-        _restart.Click += (_, _) => Track(() => RunAsync(UpdateStage.RestartPreparing));
+        // The application update owner observes Restart. Tracking it among the actions it must drain
+        // would make safe shutdown await itself. The event still observes completion and failures.
+        _restart.Click += async (_, _) => await RunAsync(UpdateStage.RestartPreparing);
         _cancel.Click += (_, _) =>
         {
             _active?.Cancel();
@@ -279,12 +281,13 @@ internal sealed class UpdateSettingsView : UserControl
         _save.IsEnabled = _loaded && !_saving;
         _schedule.IsEnabled = _checks.IsChecked == true;
         _unmetered.IsEnabled = _downloads.IsChecked == true;
-        _check.IsEnabled = _loaded && !busy && _checks.IsChecked == true && _status.Stage is UpdateStage.Idle or UpdateStage.Current or UpdateStage.Available or UpdateStage.Ready or UpdateStage.Cancelled or UpdateStage.Failed;
+        _check.IsEnabled = _loaded && !busy && _checks.IsChecked == true && _status.Stage is UpdateStage.Idle or UpdateStage.Current or UpdateStage.Available or UpdateStage.Ready or UpdateStage.Cancelled or UpdateStage.Failed or UpdateStage.RestartBlocked;
         _download.IsEnabled = _loaded && !busy && _downloads.IsChecked == true && _status.Stage == UpdateStage.Available;
         _restart.IsEnabled = _loaded && !busy && _status.CanRestart && _status.Stage is UpdateStage.Ready or UpdateStage.RestartBlocked;
         _cancel.IsVisible = operating;
-        _cancel.IsEnabled = operating && !cancelling;
-        _availability.Text = Strings.Get(cancelling ? "UpdateCancelling" : _status.Stage == UpdateStage.Inactive ? "UpdatesUnavailable" : "UpdateState" + _status.Stage);
+        _cancel.IsEnabled = operating && !cancelling && _status.Stage is not (UpdateStage.RestartPreparing or UpdateStage.RestartCommitted);
+        _availability.Text = Strings.Get(cancelling ? "UpdateCancelling" : _status.Stage == UpdateStage.Inactive ? "UpdatesUnavailable" :
+            _status.Stage == UpdateStage.Ready && _status.CanRestart ? "UpdateReadyToRestart" : "UpdateState" + _status.Stage);
         if (_status.Failure != Failure.None)
         {
             _availability.Text += " " + Strings.Describe(_status.Failure);

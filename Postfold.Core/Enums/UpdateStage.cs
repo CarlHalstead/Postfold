@@ -14,5 +14,6 @@ public enum UpdateStage
     RestartPreparing,
     RestartBlocked,
     Failed,
-    Cancelled
+    Cancelled,
+    RestartCommitted
 }

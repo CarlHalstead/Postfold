@@ -28,17 +28,22 @@ internal sealed class VerifiedUpdateSource : IUpdateSource
     private readonly string _cache;
     private readonly SemaphoreSlim _downloads = new SemaphoreSlim(1, 1);
 
-    private VerifiedUpdateSource(IUpdateTransport transport, UpdateManifest manifest, byte[] feed, string cache, byte[] document)
+    private VerifiedUpdateSource(IUpdateTransport transport, UpdateManifest manifest, byte[] feed, string cache, byte[] document, byte[] signature)
     {
         _transport = transport;
         Manifest = manifest;
         _feed = [.. feed];
         _cache = Path.GetFullPath(cache);
         ManifestSha256 = Convert.ToHexString(SHA256.HashData(document));
+        Document = [.. document];
+        Signature = [.. signature];
     }
 
     internal UpdateManifest Manifest { get; }
     internal string ManifestSha256 { get; }
+    internal ImmutableArray<byte> Document { get; }
+    internal ImmutableArray<byte> Signature { get; }
+    internal ImmutableArray<byte> Feed => _feed;
 
     public Task<VelopackAssetFeed> GetReleaseFeed(IVelopackLogger logger, string? appId, string channel, Guid? stagingId = null, VelopackAsset? latestLocalRelease = null)
     {
@@ -108,7 +113,7 @@ internal sealed class VerifiedUpdateSource : IUpdateSource
                 }
                 cancellationToken.ThrowIfCancellationRequested();
                 Outcome<UpdateTrustState> accepted = await Task.Run(() => trust.Accept(fetched.Value!, signed.Value!), cancellationToken).ConfigureAwait(false);
-                return accepted.IsSuccess ? Outcome<VerifiedUpdateSource>.Success(new VerifiedUpdateSource(transport, manifest, feed.Value!, cache, fetched.Value!)) :
+                return accepted.IsSuccess ? Outcome<VerifiedUpdateSource>.Success(new VerifiedUpdateSource(transport, manifest, feed.Value!, cache, fetched.Value!, signed.Value!)) :
                     Outcome<VerifiedUpdateSource>.Fail(accepted.Failure);
             }
             if (link == 16)
