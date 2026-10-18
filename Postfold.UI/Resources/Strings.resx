@@ -280,7 +280,7 @@
   <data name="UpdateChecksEnabled" xml:space="preserve"><value>Automatically check for updates</value></data>
   <data name="UpdateDownloadsEnabled" xml:space="preserve"><value>Allow update downloads</value></data>
   <data name="UpdateUnmeteredOnly" xml:space="preserve"><value>Download only on unmetered connections</value></data>
-  <data name="UpdatesUnavailable" xml:space="preserve"><value>Updates are inactive in this build. Your preferences are saved, but no update checks, downloads or installation will run.</value></data>
+  <data name="UpdatesUnavailable" xml:space="preserve"><value>Updates are inactive in this build. You can save preferences for future use. No update checks, downloads or installation will run.</value></data>
   <data name="CheckForUpdates" xml:space="preserve"><value>Check now</value></data>
   <data name="DownloadUpdate" xml:space="preserve"><value>Download update</value></data>
   <data name="RestartToUpdate" xml:space="preserve"><value>Restart to update</value></data>
@@ -300,7 +300,7 @@
   <data name="UpdateProgress" xml:space="preserve"><value>Update download progress</value></data>
   <data name="UpdateVersion" xml:space="preserve"><value>Update version</value></data>
   <data name="UpdateCancelling" xml:space="preserve"><value>Cancelling the update operation…</value></data>
-  <data name="UpdateStateIdle" xml:space="preserve"><value>No update check has been performed.</value></data>
+  <data name="UpdateStateIdle" xml:space="preserve"><value>No update check has been performed in this session.</value></data>
   <data name="UpdateStateChecking" xml:space="preserve"><value>Checking for updates…</value></data>
   <data name="UpdateStateCurrent" xml:space="preserve"><value>No newer compatible update was found.</value></data>
   <data name="UpdateStateAvailable" xml:space="preserve"><value>An update is available to download.</value></data>
@@ -314,4 +314,7 @@
   <data name="UpdateShutdownStopped" xml:space="preserve"><value>Update installation is blocked. Your drafts are saved, but Postfold could not finish closing its services. Close and reopen Postfold before trying again; retained work and evidence will be preserved.</value></data>
   <data name="UpdateStateFailed" xml:space="preserve"><value>The update operation failed.</value></data>
   <data name="UpdateStateCancelled" xml:space="preserve"><value>The update operation was cancelled. No update was installed.</value></data>
+  <data name="UpdateVerificationFailed" xml:space="preserve"><value>The update could not be verified. Nothing will be installed. Check again later; if this continues, retain the update files for review.</value></data>
+  <data name="UpdateConnectionFailed" xml:space="preserve"><value>The update service could not be reached or local files were unavailable. Check your connection and try again when retry is available.</value></data>
+  <data name="UpdatePolicyBlocked" xml:space="preserve"><value>This operation is not permitted by the saved update preferences, connection policy or release compatibility. Review your preferences and connection before checking again.</value></data>
 </root>

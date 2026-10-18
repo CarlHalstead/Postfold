@@ -69,6 +69,49 @@ public sealed class AuthenticatedClientUpdatesTests
     }
 
     [AvaloniaTest]
+    [TestCase("current")]
+    [TestCase("signature")]
+    [TestCase("feed")]
+    [TestCase("replay")]
+    [TestCase("format")]
+    public async Task Settings_WhenReleaseMatchesInstalledVersion_ReportsCurrentOnlyAfterAuthenticationAndDurableAcceptance(string fault)
+    {
+        // Arrange
+        using ClientUpdateFixture fixture = new ClientUpdateFixture();
+        if (fault == "replay")
+        {
+            using AuthenticatedClientUpdates earlier = fixture.Create();
+            Assert.That((await earlier.CheckAsync(new Progress<UpdateStatus>(), CancellationToken.None)).Stage, Is.EqualTo(UpdateStage.Available));
+            byte[] changed = fixture.Signer.Manifest(change: document => document["sourceCommit"] = new string('b', 40));
+            fixture.Documents["Postfold.win-x64-stable.manifest.json"] = changed;
+            fixture.Documents["Postfold.win-x64-stable.manifest.sig"] = fixture.Signer.Sign(changed);
+        }
+        if (fault is "signature" or "feed")
+        {
+            string name = fault == "signature" ? "Postfold.win-x64-stable.manifest.sig" : "releases.win-x64-stable.json";
+            fixture.Documents[name] = [.. fixture.Documents[name], 32];
+        }
+        using AuthenticatedClientUpdates service = fixture.Create(version: "1.1.0", format: fault == "format" ? 3 : 2);
+        await using SettingsHarness ui = await SettingsHarness.OpenAsync(service);
+
+        // Act
+        await ui.ClickAsync("CheckForUpdates");
+
+        // Assert
+        Assert.That(service.Current.Stage, Is.EqualTo(fault == "current" ? UpdateStage.Current : UpdateStage.Failed));
+        Assert.That(ui.Button("DownloadUpdate").IsEnabled, Is.False);
+        Assert.That(ui.Button("RestartToUpdate").IsEnabled, Is.False);
+        Assert.That(fixture.Requests, Does.Not.Contain(ClientUpdateFixture.PackageName));
+        if (fault == "current")
+        {
+            Assert.That(service.Current.Failure, Is.EqualTo(Failure.None));
+            Assert.That(ui.Button("CheckForUpdates").IsEnabled, Is.True);
+            using AuthenticatedClientUpdates reopened = fixture.Create(version: "1.1.0");
+            Assert.That((await reopened.CheckAsync(new Progress<UpdateStatus>(), CancellationToken.None)).Stage, Is.EqualTo(UpdateStage.Current));
+        }
+    }
+
+    [AvaloniaTest]
     [TestCase("manifest")]
     [TestCase("signature")]
     [TestCase("feed")]
@@ -78,7 +121,6 @@ public sealed class AuthenticatedClientUpdatesTests
     [TestCase("minimumApp")]
     [TestCase("format")]
     [TestCase("migration")]
-    [TestCase("installed")]
     [TestCase("missing")]
     [TestCase("oversize")]
     public async Task Settings_WhenDiscoveryFailsTrustOrCompatibility_NeverEnablesDownloadOrRestart(string fault)
@@ -128,7 +170,7 @@ public sealed class AuthenticatedClientUpdatesTests
             };
         }
         using AuthenticatedClientUpdates service = fixture.Create(
-            version: fault == "installed" ? "1.1.0" : "1.0.0",
+            version: "1.0.0",
             format: fault == "format" ? 3 : 2,
             migration: fault == "migration" ? UpdateFixture.TargetMigration : UpdateFixture.InitialMigration
         );

@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
+using Avalonia.Input;
 using Avalonia.Media;
 using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
@@ -68,7 +69,10 @@ public sealed class SettingsWindow : Window
         _tabs = new TabControl
         {
             Name = "SettingsSections",
-            ItemsPanel = new FuncTemplate<Panel?>(() => new WrapPanel())
+            ItemsPanel = new FuncTemplate<Panel?>(() => new WrapPanel
+            {
+                [KeyboardNavigation.TabNavigationProperty] = KeyboardNavigationMode.Continue
+            })
         };
         _tabs.ItemsSource = new[]
         {

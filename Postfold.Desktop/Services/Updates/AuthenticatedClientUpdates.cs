@@ -139,7 +139,7 @@ internal sealed class AuthenticatedClientUpdates : IClientUpdates, IDisposable
             }
             if (!download)
             {
-                Outcome<VerifiedUpdateSource> discovered = await VerifiedUpdateSource.OpenAsync(
+                Outcome<VerifiedUpdateSource?> discovered = await VerifiedUpdateSource.DiscoverAsync(
                     _transport,
                     trust!,
                     _installedVersion,
@@ -154,6 +154,10 @@ internal sealed class AuthenticatedClientUpdates : IClientUpdates, IDisposable
                     return Publish(new UpdateStatus(UpdateStage.Failed, Failure: discovered.Failure), progress);
                 }
                 _source = discovered.Value;
+                if (_source is null)
+                {
+                    return Publish(new UpdateStatus(UpdateStage.Current), progress);
+                }
                 return Publish(new UpdateStatus(UpdateStage.Available, _source!.Manifest.Version), progress);
             }
             // The admitted snapshot must still be the durable head, including its exact signed digest.

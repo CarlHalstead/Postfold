@@ -115,16 +115,12 @@ internal sealed class UpdateSettingsView : UserControl
             Text = Strings.Get("UpdateRestartConsent"),
             TextWrapping = TextWrapping.Wrap
         });
-        StackPanel footer = new StackPanel
-        {
-            Spacing = 8
-        };
-        footer.Children.Add(_save);
-        footer.Children.Add(_saved);
+        form.Children.Add(_save);
+        form.Children.Add(_saved);
         AutomationProperties.SetLiveSetting(_availability, AutomationLiveSetting.Polite);
         AutomationProperties.SetLiveSetting(_saved, AutomationLiveSetting.Polite);
         AutomationProperties.SetName(_progress, Strings.Get("UpdateProgress"));
-        Content = FormControls.Page("", form, footer);
+        Content = FormControls.Page("", form);
         _check.Click += (_, _) => Track(() => RunAsync(UpdateStage.Checking));
         _download.Click += (_, _) => Track(() => RunAsync(UpdateStage.Downloading));
         // The application update owner observes Restart. Tracking it among the actions it must drain
@@ -290,7 +286,13 @@ internal sealed class UpdateSettingsView : UserControl
             _status.Stage == UpdateStage.Ready && _status.CanRestart ? "UpdateReadyToRestart" : "UpdateState" + _status.Stage);
         if (_status.Failure != Failure.None)
         {
-            _availability.Text += " " + Strings.Describe(_status.Failure);
+            _availability.Text += " " + (_status.Stage == UpdateStage.RestartCommitted ? Strings.Describe(_status.Failure) : _status.Explanation ?? (_status.Failure switch
+            {
+                Failure.Validation or Failure.Corrupt or Failure.NeedsReview => Strings.Get("UpdateVerificationFailed"),
+                Failure.Unavailable or Failure.Transient => Strings.Get("UpdateConnectionFailed"),
+                Failure.PolicyBlocked => Strings.Get("UpdatePolicyBlocked"),
+                _ => Strings.Describe(_status.Failure)
+            }));
         }
         if (_status.RetryAt is DateTimeOffset retry)
         {
@@ -334,7 +336,9 @@ internal sealed class UpdateSettingsView : UserControl
         CheckBox choice = new CheckBox
         {
             Name = key,
-            Content = Strings.Get(key)
+            Content = Strings.Get(key),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch
         };
         AutomationProperties.SetName(choice, Strings.Get(key));
         return choice;
@@ -345,7 +349,11 @@ internal sealed class UpdateSettingsView : UserControl
         Button button = new Button
         {
             Name = key,
-            Content = Strings.Get(key),
+            Content = new TextBlock
+            {
+                Text = Strings.Get(key),
+                TextWrapping = TextWrapping.Wrap
+            },
             Margin = new Avalonia.Thickness(0, 0, 8, 8)
         };
         AutomationProperties.SetName(button, Strings.Get(key));

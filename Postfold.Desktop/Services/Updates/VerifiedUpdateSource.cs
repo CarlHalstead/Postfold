@@ -81,11 +81,27 @@ internal sealed class VerifiedUpdateSource : IUpdateSource
         CancellationToken cancellationToken
     )
     {
+        Outcome<VerifiedUpdateSource?> discovered = await DiscoverAsync(transport, trust, installedVersion, profileFormat, migration, cache, cancellationToken).ConfigureAwait(false);
+        return discovered.IsSuccess && discovered.Value is not null ? Outcome<VerifiedUpdateSource>.Success(discovered.Value) :
+            Outcome<VerifiedUpdateSource>.Fail(discovered.IsSuccess ? Failure.PolicyBlocked : discovered.Failure);
+    }
+
+    /// <summary>A successful null selection means the authenticated release is already installed, never a transport or trust refusal.</summary>
+    internal static async Task<Outcome<VerifiedUpdateSource?>> DiscoverAsync(
+        IUpdateTransport transport,
+        UpdateTrustStore trust,
+        string installedVersion,
+        int profileFormat,
+        string migration,
+        string cache,
+        CancellationToken cancellationToken
+    )
+    {
         Outcome<byte[]> fetched = await transport.FetchAsync("Postfold.win-x64-" + trust.State.Channel + ".manifest.json", 65536, cancellationToken).ConfigureAwait(false);
         Outcome<byte[]> signed = await transport.FetchAsync("Postfold.win-x64-" + trust.State.Channel + ".manifest.sig", UpdateTrust.SignatureLength, cancellationToken).ConfigureAwait(false);
         if (!fetched.IsSuccess || !signed.IsSuccess)
         {
-            return Outcome<VerifiedUpdateSource>.Fail(!fetched.IsSuccess ? fetched.Failure : signed.Failure);
+            return Outcome<VerifiedUpdateSource?>.Fail(!fetched.IsSuccess ? fetched.Failure : signed.Failure);
         }
         for (int link = 0; link <= 16; link++)
         {
@@ -95,38 +111,42 @@ internal sealed class VerifiedUpdateSource : IUpdateSource
                 Failure activated = await AcceptDocumentAsync(transport, trust, identity, transition: false, cancellationToken).ConfigureAwait(false);
                 if (activated != Failure.None)
                 {
-                    return Outcome<VerifiedUpdateSource>.Fail(activated);
+                    return Outcome<VerifiedUpdateSource?>.Fail(activated);
                 }
             }
             Outcome<UpdateManifest> verified = UpdateTrust.VerifyManifest(fetched.Value!, signed.Value!, trust.State.PublicKey);
             if (verified.IsSuccess)
             {
                 UpdateManifest manifest = verified.Value!;
-                if (!UpdateTrust.Compatible(manifest, trust.State.Channel, installedVersion, profileFormat, migration))
+                bool current = manifest.Version == installedVersion && manifest.Channel == trust.State.Channel &&
+                    UpdateVersion.Parse(manifest.MinimumApp).CompareTo(UpdateVersion.Parse(installedVersion)) <= 0 &&
+                    profileFormat >= manifest.MinimumFormat && profileFormat <= manifest.MaximumFormat &&
+                    manifest.OriginMigrations.Contains(migration);
+                if (!current && !UpdateTrust.Compatible(manifest, trust.State.Channel, installedVersion, profileFormat, migration))
                 {
-                    return Outcome<VerifiedUpdateSource>.Fail(Failure.PolicyBlocked);
+                    return Outcome<VerifiedUpdateSource?>.Fail(Failure.PolicyBlocked);
                 }
                 Outcome<byte[]> feed = await transport.FetchAsync(manifest.Feed.Name, 262144, cancellationToken).ConfigureAwait(false);
                 if (!feed.IsSuccess || UpdateArtifacts.VerifyFeed(feed.Value!, manifest) != Failure.None)
                 {
-                    return Outcome<VerifiedUpdateSource>.Fail(feed.IsSuccess ? Failure.Validation : feed.Failure);
+                    return Outcome<VerifiedUpdateSource?>.Fail(feed.IsSuccess ? Failure.Validation : feed.Failure);
                 }
                 cancellationToken.ThrowIfCancellationRequested();
                 Outcome<UpdateTrustState> accepted = await Task.Run(() => trust.Accept(fetched.Value!, signed.Value!), cancellationToken).ConfigureAwait(false);
-                return accepted.IsSuccess ? Outcome<VerifiedUpdateSource>.Success(new VerifiedUpdateSource(transport, manifest, feed.Value!, cache, fetched.Value!, signed.Value!)) :
-                    Outcome<VerifiedUpdateSource>.Fail(accepted.Failure);
+                return accepted.IsSuccess ? Outcome<VerifiedUpdateSource?>.Success(current ? null : new VerifiedUpdateSource(transport, manifest, feed.Value!, cache, fetched.Value!, signed.Value!)) :
+                    Outcome<VerifiedUpdateSource?>.Fail(accepted.Failure);
             }
             if (link == 16)
             {
-                return Outcome<VerifiedUpdateSource>.Fail(Failure.Validation);
+                return Outcome<VerifiedUpdateSource?>.Fail(Failure.Validation);
             }
             Failure rotated = await AcceptDocumentAsync(transport, trust, "transition-" + UpdateTrust.KeyId(trust.State.PublicKey), transition: true, cancellationToken).ConfigureAwait(false);
             if (rotated != Failure.None)
             {
-                return Outcome<VerifiedUpdateSource>.Fail(rotated);
+                return Outcome<VerifiedUpdateSource?>.Fail(rotated);
             }
         }
-        return Outcome<VerifiedUpdateSource>.Fail(Failure.Validation);
+        return Outcome<VerifiedUpdateSource?>.Fail(Failure.Validation);
     }
 
     /// <summary>Independently rechecks existing files and atomically promotes only exact freshly verified bytes.</summary>

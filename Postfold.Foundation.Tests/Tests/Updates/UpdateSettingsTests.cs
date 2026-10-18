@@ -1,5 +1,8 @@
+using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.NUnit;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -55,11 +58,33 @@ public sealed class UpdateSettingsTests
             bool? checks = settings.GetVisualDescendants().OfType<CheckBox>().Single(control => control.Name == "UpdateChecksEnabled").IsChecked;
             bool? downloads = settings.GetVisualDescendants().OfType<CheckBox>().Single(control => control.Name == "UpdateDownloadsEnabled").IsChecked;
             bool? unmetered = settings.GetVisualDescendants().OfType<CheckBox>().Single(control => control.Name == "UpdateUnmeteredOnly").IsChecked;
+            Find<CheckBox>(settings, "UpdateChecksEnabled").Focus();
+            settings.KeyPressQwerty(PhysicalKey.Tab, RawInputModifiers.Shift);
+            settings.KeyReleaseQwerty(PhysicalKey.Tab, RawInputModifiers.Shift);
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            IInputElement? beforeFirstChoice = settings.FocusManager?.GetFocusedElement();
+            Find<CheckBox>(settings, "UpdateChecksEnabled").Focus();
+            settings.KeyPressQwerty(PhysicalKey.Tab, RawInputModifiers.None);
+            settings.KeyReleaseQwerty(PhysicalKey.Tab, RawInputModifiers.None);
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            IInputElement? afterFirstTab = settings.FocusManager?.GetFocusedElement();
+            settings.KeyPressQwerty(PhysicalKey.Tab, RawInputModifiers.None);
+            settings.KeyReleaseQwerty(PhysicalKey.Tab, RawInputModifiers.None);
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            IInputElement? afterSecondTab = settings.FocusManager?.GetFocusedElement();
 
             // Assert
             Assert.That(checks, Is.False);
             Assert.That(downloads, Is.False);
             Assert.That(unmetered, Is.True);
+            Assert.That(beforeFirstChoice, Is.SameAs(settings.GetVisualDescendants().OfType<TabItem>().Single(tab => tab.IsSelected)));
+            Assert.That(afterFirstTab, Is.SameAs(Find<CheckBox>(settings, "UpdateDownloadsEnabled")));
+            Assert.That(afterSecondTab, Is.SameAs(Find<Button>(settings, "SaveUpdatePreferences")));
+            foreach (string name in new[] { "UpdateChecksEnabled", "UpdateDownloadsEnabled", "UpdateUnmeteredOnly" })
+            {
+                CheckBox choice = Find<CheckBox>(settings, name);
+                Assert.That(choice.GetVisualDescendants().OfType<TextBlock>().Select(text => text.Text), Does.Contain(Strings.Get(name)), name);
+            }
             Assert.That(settings.GetVisualDescendants().OfType<ComboBox>().Single(control => control.Name == "UpdateSchedule").SelectedIndex, Is.EqualTo(1));
             Assert.That(settings.GetVisualDescendants().OfType<TextBlock>().Single(control => control.Name == "UpdatesAvailability").Text, Is.EqualTo(Strings.Get("UpdatesUnavailable")));
             foreach (string name in new[] { "CheckForUpdates", "DownloadUpdate", "RestartToUpdate" })
@@ -155,6 +180,58 @@ public sealed class UpdateSettingsTests
         Assert.That(download, Is.EqualTo(check));
         Assert.That(restart, Is.EqualTo(check));
         progress.DidNotReceiveWithAnyArgs().Report(default!);
+    }
+
+    [AvaloniaTest]
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task Updates_WhenRestartCannotFinish_ShowsTruthfulRecoveryGuidanceInItsLiveStatus(bool committed)
+    {
+        // Arrange
+        IMailApplication application = Substitute.For<IMailApplication>();
+        IDesktopIntegration desktop = Substitute.For<IDesktopIntegration>();
+        desktop.ReadPreferencesAsync(Arg.Any<CancellationToken>()).Returns(DesktopPreferences.Default);
+        IClientUpdates updates = Substitute.For<IClientUpdates>();
+        updates.Current.Returns(new UpdateStatus(UpdateStage.Ready, "1.1.0")
+        {
+            CanRestart = true
+        });
+        updates.RestartAsync(Arg.Any<CancellationToken>()).Returns(new UpdateStatus(committed ? UpdateStage.RestartCommitted : UpdateStage.RestartBlocked, "1.1.0", Failure: committed ? Failure.NeedsReview : Failure.Unavailable)
+        {
+            CanRestart = !committed,
+            Explanation = committed ? null : Strings.Get("UpdateShutdownDraftBlocked")
+        });
+        MainWindowViewModel model = new MainWindowViewModel(application);
+        MainWindow main = new MainWindow
+        {
+            DataContext = model
+        };
+        main.Configure(application, null, desktop, updates: updates);
+        main.Show();
+        main.OpenSettings("Updates");
+        SettingsWindow settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
+        await DrainAsync(main);
+        try
+        {
+            // Act
+            Find<Button>(settings, "RestartToUpdate").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+
+            // Assert
+            TextBlock status = Find<TextBlock>(settings, "UpdatesAvailability");
+            Assert.That(status.Text, Does.Contain(committed ? Strings.Get("UpdateStateRestartCommitted") : Strings.Get("UpdateShutdownDraftBlocked")));
+            Assert.That(status.Text, Does.Not.Contain(Strings.Get("UpdateVerificationFailed")));
+            Assert.That(AutomationProperties.GetLiveSetting(status), Is.EqualTo(AutomationLiveSetting.Polite));
+            Assert.That(Find<Button>(settings, "RestartToUpdate").IsEnabled, Is.EqualTo(!committed));
+            Assert.That(Find<Button>(settings, "CheckForUpdates").IsEnabled, Is.EqualTo(!committed));
+            Assert.That(settings.IsEnabled, Is.True);
+        }
+        finally
+        {
+            settings.Close();
+            main.Close();
+            await model.DisposeAsync();
+        }
     }
 
     [AvaloniaTest]

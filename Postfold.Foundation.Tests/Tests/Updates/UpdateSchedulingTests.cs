@@ -723,6 +723,13 @@ public sealed class UpdateSchedulingTests
 
         internal async Task ClickAsync(string name)
         {
+            // Service completion can precede the queued Settings render; observe the actual control
+            // before activating it, with a deadline rather than a timing sleep or relaxed assertion.
+            DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+            while (!Button(name).IsEnabled && DateTimeOffset.UtcNow < deadline)
+            {
+                await PumpAsync();
+            }
             Assert.That(Button(name).IsEnabled, Is.True, name);
             Button(name).RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
             await DrainAsync();

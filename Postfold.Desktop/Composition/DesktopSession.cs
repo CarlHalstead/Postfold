@@ -54,6 +54,7 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
     private readonly IUpdateConnection? _updateConnection;
     private readonly NativeRestartConfiguration? _nativeRestart;
     private bool _restartPending;
+    private string? _shutdownExplanation;
     private bool _powerHook;
     private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
 
@@ -158,6 +159,7 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
                 return false;
             }
             _restartPending = true;
+            _shutdownExplanation = null;
             return true;
         });
         if (!admitted)
@@ -255,7 +257,8 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
             Failure: authorized ? Failure.NeedsReview : failure == Failure.None ? Failure.Unavailable : failure
         )
         {
-            CanRestart = !_finished && !authorized
+            CanRestart = !_finished && !authorized,
+            Explanation = _shutdownExplanation
         };
     }
 
@@ -408,9 +411,10 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
 
         Failure Blocked(Failure failure, string key)
         {
+            _shutdownExplanation = Strings.Get(key);
             if (_window.DataContext is MainWindowViewModel model)
             {
-                model.ReportSendStatus(Strings.Get(key));
+                model.ReportSendStatus(_shutdownExplanation);
             }
             return failure;
         }
