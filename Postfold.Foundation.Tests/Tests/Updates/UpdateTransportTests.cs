@@ -19,6 +19,8 @@ public sealed class UpdateTransportTests
     [TestCase("https://github.com/CarlHalstead/Postfold/releases/download/v1/nested/")]
     [TestCase("https://github.com/CarlHalstead/Postfold/releases/download/v1/?hint=key")]
     [TestCase("https://github.com/CarlHalstead/Postfold/releases/download/v..1/")]
+    [TestCase("https://raw.githubusercontent.com/CarlHalstead/Postfold/main/updates/win-x64-beta.json?key=unsigned")]
+    [TestCase("https://raw.githubusercontent.com/other/Postfold/main/updates/win-x64-beta.json")]
     public void Construct_WhenLocationIsNotAnImmutableApprovedRepository_RejectsIt(string uri)
     {
         // Arrange / Act / Assert
@@ -117,6 +119,26 @@ public sealed class UpdateTransportTests
         // Assert
         Assert.That(result.Failure, Is.EqualTo(Failure.Validation));
         Assert.That(handler.Requests, Is.EqualTo(5));
+    }
+
+    [Test]
+    public async Task DiscoverLocationAsync_WhenCatalogueRedirects_RefusesBeforeFollowingEvenAnAllowedAssetHost()
+    {
+        // Arrange
+        FixtureHandler handler = new FixtureHandler(_ =>
+        {
+            HttpResponseMessage response = new HttpResponseMessage(HttpStatusCode.Found);
+            response.Headers.Location = new Uri("https://release-assets.githubusercontent.com/fixture");
+            return response;
+        });
+        using HttpsUpdateTransport transport = new HttpsUpdateTransport(new Uri(ProductionUpdateIdentity.Discovery), TimeProvider.System, handler);
+
+        // Act
+        Failure result = await transport.DiscoverLocationAsync(CancellationToken.None);
+
+        // Assert
+        Assert.That(result, Is.EqualTo(Failure.Validation));
+        Assert.That(handler.Requests, Is.EqualTo(1));
     }
 
     private static Uri Location()

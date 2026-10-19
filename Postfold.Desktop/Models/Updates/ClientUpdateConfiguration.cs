@@ -3,9 +3,9 @@ using System;
 namespace Postfold.Desktop.Models.Updates;
 
 /// <summary>
-/// Explicit immutable release location, offline-pinned root and exact admitted installation/profile facts.
+/// Explicit immutable release location or reviewed location catalogue, pinned root and admitted profile facts.
 /// StateDirectory is owned by the OS user outside installation; qualification supplies an isolated directory.
-/// No value in this configuration may be learned from unsigned discovery metadata.
+/// No security identity in this configuration may be learned from unsigned discovery metadata.
 /// </summary>
 internal sealed record ClientUpdateConfiguration(
     Uri Release,

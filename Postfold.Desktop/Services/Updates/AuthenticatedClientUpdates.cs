@@ -139,6 +139,11 @@ internal sealed class AuthenticatedClientUpdates : IClientUpdates, IDisposable
             }
             if (!download)
             {
+                Failure location = await _transport.DiscoverLocationAsync(cancellationToken).ConfigureAwait(false);
+                if (location != Failure.None)
+                {
+                    return Publish(new UpdateStatus(UpdateStage.Failed, Failure: location), progress);
+                }
                 Outcome<VerifiedUpdateSource?> discovered = await VerifiedUpdateSource.DiscoverAsync(
                     _transport,
                     trust!,

@@ -9,6 +9,8 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -17,7 +19,9 @@ namespace Postfold.Desktop.Services.Updates;
 /// <summary>HTTPS-only GitHub release transport. Discovery is a hint; signatures establish artifact identity.</summary>
 internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
 {
-    private readonly Uri _release;
+    private Uri? _release;
+    private readonly Uri? _catalogue;
+    private readonly Dictionary<string, Uri> _bridges = new Dictionary<string, Uri>(StringComparer.Ordinal);
     private readonly HttpClient _client;
     private readonly TimeProvider _time;
     private readonly SemaphoreSlim _requests = new SemaphoreSlim(1, 1);
@@ -28,14 +32,16 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
 
     internal HttpsUpdateTransport(Uri release, TimeProvider time, HttpMessageHandler? fixtureHandler = null)
     {
-        if (!Allowed(release) || release.Host != "github.com" ||
+        bool catalogue = release.OriginalString == ProductionUpdateIdentity.Discovery;
+        if (!catalogue && (!Allowed(release) || release.Host != "github.com" ||
             !System.Text.RegularExpressions.Regex.IsMatch(release.AbsolutePath, @"\A/CarlHalstead/Postfold/releases/download/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant) ||
             release.AbsolutePath.Contains("..", StringComparison.Ordinal) ||
-            !release.AbsolutePath.EndsWith('/') || release.Query.Length != 0)
+            !release.AbsolutePath.EndsWith('/') || release.Query.Length != 0))
         {
             throw new ArgumentException("An immutable Postfold GitHub release location is required.", nameof(release));
         }
-        _release = release;
+        _catalogue = catalogue ? release : null;
+        _release = catalogue ? null : release;
         _time = time;
         _client = new HttpClient(fixtureHandler ?? new HttpClientHandler
         {
@@ -50,6 +56,55 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
 
     internal DateTimeOffset RetryAt { get; private set; }
     internal bool RateLimited { get; private set; }
+
+    /// <summary>Snapshots availability hints for one check. No key, version or digest is trusted here.</summary>
+    internal async Task<Failure> DiscoverLocationAsync(CancellationToken cancellationToken)
+    {
+        if (_catalogue is null)
+        {
+            return Failure.None;
+        }
+        _release = null;
+        _bridges.Clear();
+        _metadata.Clear();
+        _metadataBytes = 0;
+        using MemoryStream bytes = new MemoryStream();
+        Failure fetched = await TransferAsync("catalogue", 65536, null, bytes, cancellationToken, _catalogue).ConfigureAwait(false);
+        if (fetched != Failure.None)
+        {
+            return fetched;
+        }
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(bytes.ToArray(), new JsonDocumentOptions { MaxDepth = 3 });
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 2 ||
+                !root.TryGetProperty("release", out JsonElement release) || !root.TryGetProperty("bridges", out JsonElement bridges) ||
+                bridges.ValueKind != JsonValueKind.Object)
+            {
+                return Failure.Validation;
+            }
+            foreach (JsonProperty bridge in bridges.EnumerateObject())
+            {
+                if (_bridges.Count >= 128 || !Regex.IsMatch(bridge.Name, @"\A(transition|activation)-[0-9A-F]{64}\z", RegexOptions.CultureInvariant) ||
+                    !_bridges.TryAdd(bridge.Name, ReleaseLocation(bridge.Value.GetString()!)))
+                {
+                    return Failure.Validation;
+                }
+            }
+            if (release.ValueKind == JsonValueKind.Null)
+            {
+                return Failure.NotFound;
+            }
+            _release = ReleaseLocation(release.GetString()!);
+            return Failure.None;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException or ArgumentException)
+        {
+            _bridges.Clear();
+            return Failure.Validation;
+        }
+    }
 
     public async Task<Outcome<byte[]>> FetchAsync(string name, int maximumBytes, CancellationToken cancellationToken)
     {
@@ -115,12 +170,23 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
                 uri.Host == "release-assets.githubusercontent.com");
     }
 
+    private static Uri ReleaseLocation(string tag)
+    {
+        if (tag is null || tag.Contains("..", StringComparison.Ordinal) ||
+            !Regex.IsMatch(tag, @"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z", RegexOptions.CultureInvariant))
+        {
+            throw new ArgumentException("An exact release tag is required.", nameof(tag));
+        }
+        return new Uri("https://github.com/CarlHalstead/Postfold/releases/download/" + tag + "/");
+    }
+
     private async Task<Failure> TransferAsync(
         string name,
         long maximumBytes,
         UpdateArtifact? artifact,
         Stream destination,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        Uri? catalogue = null
     )
     {
         if (name.Length is <= 0 or > 128 || name.Contains("..", StringComparison.Ordinal) ||
@@ -138,7 +204,16 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
             }
             using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(artifact is null ? TimeSpan.FromSeconds(30) : TimeSpan.FromMinutes(10));
-            Uri uri = new Uri(_release, name);
+            Uri? releaseLocation = _release;
+            if (_catalogue is not null && catalogue is null && (name.StartsWith("transition-", StringComparison.Ordinal) || name.StartsWith("activation-", StringComparison.Ordinal)))
+            {
+                _bridges.TryGetValue(Path.GetFileNameWithoutExtension(name), out releaseLocation);
+            }
+            if (catalogue is null && releaseLocation is null)
+            {
+                return Failure.NotFound;
+            }
+            Uri uri = catalogue ?? new Uri(releaseLocation!, name);
             for (int redirect = 0; redirect <= 4; redirect++)
             {
                 using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, uri);
@@ -146,7 +221,7 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
                 if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308)
                 {
                     Uri? location = response.Headers.Location;
-                    if (redirect == 4 || location is null)
+                    if (catalogue is not null || redirect == 4 || location is null)
                     {
                         return Failure.Validation;
                     }

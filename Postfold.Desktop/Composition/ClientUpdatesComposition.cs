@@ -7,7 +7,7 @@ using System.Net.Http;
 
 namespace Postfold.Desktop.Composition;
 
-/// <summary>No production configuration is shipped. Only explicit configuration can create an active updater.</summary>
+/// <summary>Normal composition stays inactive. Only explicit configuration can create an active updater.</summary>
 internal static class ClientUpdatesComposition
 {
     internal static IClientUpdates Create(

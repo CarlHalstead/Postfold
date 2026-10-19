@@ -7,6 +7,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Channel -ne 'beta')
+{
+    throw 'Only the reviewed beta production identity is prepared; stable requires separate configuration review.'
+}
 $repositoryRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows))
 {
@@ -77,11 +81,7 @@ if (Test-Path -LiteralPath $draftRoot)
 $publishDirectory = Join-Path $draftRoot 'publish'
 $releaseDirectory = Join-Path $draftRoot 'release'
 [System.IO.Directory]::CreateDirectory($draftRoot) | Out-Null
-Invoke-Dotnet -Arguments @('publish', 'Postfold.Desktop/Postfold.Desktop.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-p:RuntimeFrameworkVersion=10.0.13', '-p:PublishTrimmed=false', '-p:PublishAot=false', "-p:Version=$Version", "-p:SourceRevisionId=$SourceCommit", '-o', $publishDirectory)
-[System.IO.File]::Copy((Join-Path $repositoryRoot 'LICENSE'), (Join-Path $publishDirectory 'POSTFOLD-LICENSE.txt'))
-[System.IO.File]::Copy((Join-Path $repositoryRoot 'THIRD-PARTY-NOTICES.md'), (Join-Path $publishDirectory 'POSTFOLD-NOTICES.md'))
-Copy-Item -LiteralPath (Join-Path $repositoryRoot 'ThirdPartyNotices') -Destination $publishDirectory -Recurse
-& (Join-Path $PSScriptRoot 'Test-PublishInventory.ps1') -PublishDirectory $publishDirectory
+& (Join-Path $PSScriptRoot 'Publish-UpdatePreparation.ps1') -SourceCommit $SourceCommit -Version $Version -OutputDirectory $publishDirectory -SourceExportManifest $SourceExportManifest -SourceExportSha256 $SourceExportSha256
 foreach ($file in (Get-ChildItem -LiteralPath $publishDirectory -Recurse -File))
 {
     if ($file.FullName -match '(?i)(Postfold-Planning|AGENTS\.md|SKILL\.md|\.agents|\.codex|Microsoft\.EntityFrameworkCore\.Design|Microsoft\.CodeAnalysis)')
@@ -100,6 +100,23 @@ if (@(Get-ChildItem -LiteralPath $releaseDirectory -Filter '*-delta.nupkg').Coun
 {
     throw 'Delta artifacts are forbidden in v1.'
 }
+$fullPackages = @(Get-ChildItem -LiteralPath $releaseDirectory -Filter '*-full.nupkg')
+if ($fullPackages.Count -ne 1) { throw 'Exactly one full package is required.' }
+$nativeInventory = Get-Content -LiteralPath ($publishDirectory + '-native.json') -Raw | ConvertFrom-Json
+$archive = [System.IO.Compression.ZipFile]::OpenRead($fullPackages[0].FullName)
+try
+{
+    $helperEntry = $archive.GetEntry('lib/app/Squirrel.exe')
+    if ($null -eq $helperEntry) { throw 'Packaged native helper is missing.' }
+    $helperStream = $helperEntry.Open()
+    try
+    {
+        $helperHash = [System.Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($helperStream))
+        if ($helperHash -cne $nativeInventory.helperSha256) { throw 'Packaged helper differs from the embedded native inventory.' }
+    }
+    finally { $helperStream.Dispose() }
+}
+finally { $archive.Dispose() }
 $artifacts = @(Get-ChildItem -LiteralPath $releaseDirectory -File | ForEach-Object {
     [ordered]@{
         name = $_.Name

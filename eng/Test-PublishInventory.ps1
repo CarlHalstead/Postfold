@@ -1,8 +1,12 @@
-param([Parameter(Mandatory)][string]$PublishDirectory)
+param([Parameter(Mandatory)][string]$PublishDirectory, [switch]$ProductionPreparation)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $expected = @(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'win-x64-publish-files.json') -Raw | ConvertFrom-Json)
+if ($ProductionPreparation)
+{
+    $expected += 'Postfold.UpdateBroker.exe'
+}
 $actual = @(Get-ChildItem -LiteralPath $PublishDirectory -Recurse -File | ForEach-Object {
     [System.IO.Path]::GetRelativePath($PublishDirectory, $_.FullName).Replace('\', '/')
 })
