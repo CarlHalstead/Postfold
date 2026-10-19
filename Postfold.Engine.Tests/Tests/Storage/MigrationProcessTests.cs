@@ -33,7 +33,7 @@ public sealed class MigrationProcessTests
 
         // Act
         child.Kill(entireProcessTree: true);
-        await child.WaitForExitAsync();
+        WaitForTermination(child);
         // Exercise crash recovery before OpenAsync maps access exceptions to Failure.Unavailable,
         // so an intermittent admission failure retains its original exception and stack trace.
         using (FileStream admission = await ProfileMigration.AdmitAsync(database, CancellationToken.None))
@@ -74,7 +74,7 @@ public sealed class MigrationProcessTests
 
         // Act
         child.Kill(entireProcessTree: true);
-        await child.WaitForExitAsync();
+        WaitForTermination(child);
         ProfileMigrationPlan plan = EvolutionContext.CreatePlan();
         using (FileStream lease = await ProfileMigration.AdmitAsync(database, plan, CancellationToken.None))
         {
@@ -104,7 +104,7 @@ public sealed class MigrationProcessTests
         // Act
         Outcome<SqliteProfile> competing = await SqliteProfile.OpenAsync(database, TimeProvider.System, CancellationToken.None);
         child.Kill(entireProcessTree: true);
-        await child.WaitForExitAsync();
+        WaitForTermination(child);
         Outcome<SqliteProfile> reopened = await SqliteProfile.OpenAsync(database, TimeProvider.System, CancellationToken.None);
 
         // Assert
@@ -150,10 +150,20 @@ public sealed class MigrationProcessTests
             if (!child.HasExited)
             {
                 child.Kill(entireProcessTree: true);
-                await child.WaitForExitAsync();
             }
 
+            WaitForTermination(child);
             throw;
+        }
+    }
+
+    private static void WaitForTermination(Process child)
+    {
+        // On Windows, WaitForExitAsync can accept HasExited's exit code before handle cleanup.
+        // The bounded synchronous overload waits for the native process handle to be signaled.
+        if (!child.WaitForExit(TimeSpan.FromSeconds(30)))
+        {
+            throw new TimeoutException($"Synthetic process {child.Id} did not terminate within 30 seconds.");
         }
     }
 }
