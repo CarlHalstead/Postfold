@@ -10,6 +10,7 @@ using Postfold.UI.Resources;
 using System;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -101,6 +102,12 @@ internal sealed class UpdateSettingsView : UserControl
         _downloads.IsCheckedChanged += (_, _) => Render();
         form.Children.Add(_preferences);
         form.Children.Add(_availability);
+        form.Children.Add(new TextBlock
+        {
+            Name = "CurrentVersion",
+            Text = Strings.Get("CurrentVersion") + ": " + typeof(UpdateSettingsView).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+')[0],
+            TextWrapping = TextWrapping.Wrap
+        });
         form.Children.Add(_version);
         form.Children.Add(_progress);
         form.Children.Add(_progressText);

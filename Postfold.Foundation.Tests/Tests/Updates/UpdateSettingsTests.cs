@@ -17,6 +17,7 @@ using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
 using Postfold.UI.Views;
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -87,6 +88,10 @@ public sealed class UpdateSettingsTests
             }
             Assert.That(settings.GetVisualDescendants().OfType<ComboBox>().Single(control => control.Name == "UpdateSchedule").SelectedIndex, Is.EqualTo(1));
             Assert.That(settings.GetVisualDescendants().OfType<TextBlock>().Single(control => control.Name == "UpdatesAvailability").Text, Is.EqualTo(Strings.Get("UpdatesUnavailable")));
+            TextBlock currentVersion = Find<TextBlock>(settings, "CurrentVersion");
+            Assert.That(currentVersion.IsVisible, Is.True);
+            Assert.That(currentVersion.Text, Is.EqualTo(Strings.Get("CurrentVersion") + ": " + FileVersionInfo.GetVersionInfo(typeof(SettingsWindow).Assembly.Location).ProductVersion!.Split('+')[0]));
+            Assert.That(Find<TextBlock>(settings, "UpdateVersion").IsVisible, Is.False);
             foreach (string name in new[] { "CheckForUpdates", "DownloadUpdate", "RestartToUpdate" })
             {
                 Assert.That(settings.GetVisualDescendants().OfType<Button>().Single(control => control.Name == name).IsEnabled, Is.False);
@@ -131,6 +136,8 @@ public sealed class UpdateSettingsTests
         try
         {
             // Act
+            Assert.That(Find<TextBlock>(settings, "CurrentVersion").Text, Is.EqualTo(Strings.Get("CurrentVersion") + ": " + FileVersionInfo.GetVersionInfo(typeof(SettingsWindow).Assembly.Location).ProductVersion!.Split('+')[0]));
+            Assert.That(Find<TextBlock>(settings, "UpdateVersion").Text, Is.EqualTo(Strings.Get("UpdateVersion") + ": 0.2.0"));
             Find<Button>(settings, "DownloadUpdate").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             progress!.Report(new UpdateStatus(UpdateStage.Downloading, "0.2.0", 53));
             await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);

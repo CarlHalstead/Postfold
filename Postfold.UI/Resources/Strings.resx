@@ -299,6 +299,7 @@
   <data name="CancelUpdate" xml:space="preserve"><value>Cancel</value></data>
   <data name="UpdateProgress" xml:space="preserve"><value>Update download progress</value></data>
   <data name="UpdateVersion" xml:space="preserve"><value>Update version</value></data>
+  <data name="CurrentVersion" xml:space="preserve"><value>Current version</value></data>
   <data name="UpdateCancelling" xml:space="preserve"><value>Cancelling the update operation…</value></data>
   <data name="UpdateStateIdle" xml:space="preserve"><value>No update check has been performed in this session.</value></data>
   <data name="UpdateStateChecking" xml:space="preserve"><value>Checking for updates…</value></data>

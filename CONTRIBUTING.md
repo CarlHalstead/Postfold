@@ -44,6 +44,12 @@ pwsh -File eng/Verify-Source.ps1 -IncludeUntracked
 
 Resolve warnings and validation failures. Keep ordinary and Windows RID dependency lock files current when changing dependencies.
 
+## Versions and release tags
+
+Use `major.minor.patch` for stable releases and `major.minor.patch-beta.N` for beta candidates.
+Start N at 1 for each target version and increment it for each new candidate. Prefix release
+tags with `v`, for example `v0.1.0-beta.1`. Never reuse released versions or move release tags.
+
 ## Submit
 
 Use short, descriptive branch names and commit titles such as `fix: preserve draft on close`. Pull requests should explain the change and validation performed; reviewed changes use squash merges.
