@@ -34,6 +34,12 @@ public sealed class MigrationProcessTests
         // Act
         child.Kill(entireProcessTree: true);
         await child.WaitForExitAsync();
+        // Exercise crash recovery before OpenAsync maps access exceptions to Failure.Unavailable,
+        // so an intermittent admission failure retains its original exception and stack trace.
+        using (FileStream admission = await ProfileMigration.AdmitAsync(database, CancellationToken.None))
+        {
+        }
+
         Outcome<SqliteProfile> reopened = await SqliteProfile.OpenAsync(database, TimeProvider.System, CancellationToken.None);
 
         // Assert
