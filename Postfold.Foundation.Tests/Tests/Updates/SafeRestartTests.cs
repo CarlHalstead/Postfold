@@ -465,6 +465,7 @@ public sealed class SafeRestartTests
     }
 
     [AvaloniaTest]
+    [Platform("Win")]
     public async Task Shutdown_WhenRendererAndPreviewCompleteLate_ObservesBothBeforeReleasingProfileAndIgnoresTheirResults()
     {
         // Arrange

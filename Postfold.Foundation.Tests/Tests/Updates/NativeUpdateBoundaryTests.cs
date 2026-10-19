@@ -2,6 +2,7 @@ using Microsoft.Win32.SafeHandles;
 using NUnit.Framework;
 using Postfold.Core.Enums;
 using Postfold.Desktop.Stores;
+using Postfold.Engine.Tests.Fixtures;
 using Postfold.Foundation.Tests.Fixtures.Updates;
 using Postfold.UpdateBroker.Services;
 using System;
@@ -41,8 +42,8 @@ public sealed class NativeUpdateBoundaryTests
     {
         // Arrange
         using UpdateFixture fixture = new UpdateFixture();
-        string directory = Path.Combine(Path.GetTempPath(), "Postfold-U04-missing-trust-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
+        // macOS temporary paths can contain symlink ancestors that the trust store rejects.
+        string directory = EngineFixture.DirectoryPath();
         string path = Path.Combine(directory, "trust.journal");
 
         // Act
