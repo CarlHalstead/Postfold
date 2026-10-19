@@ -78,9 +78,9 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         get => Navigation.Concat(Navigation.SelectMany(item => item.Children)).FirstOrDefault(item => item.Scope == Scope);
         set
         {
-            if (!UpdatingNavigation)
+            if (!UpdatingNavigation && value is not null)
             {
-                Scope = value?.Scope;
+                Scope = value.Scope;
             }
         }
     }
@@ -252,6 +252,12 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(CachedMessageCount));
         ImmutableArray<AccountConfiguration> accounts = await _application.Catalog.AccountsAsync(_lifetime.Token);
         ImmutableArray<MailboxSnapshot> mailboxes = await _application.Catalog.MailboxesAsync(_lifetime.Token);
+        if (Scope is not null && Accounts.SequenceEqual(accounts) && Mailboxes.SequenceEqual(mailboxes))
+        {
+            await RefreshAsync(false);
+            return;
+        }
+
         UpdatingNavigation = true;
         Accounts.Clear();
         Mailboxes.Clear();
@@ -305,9 +311,10 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         await RefreshAsync(false);
     }
 
-    public async Task RefreshAsync(bool next)
+    /// <summary>Loads a page; navigation echoes can retain a page whose scope and filters are still valid.</summary>
+    public async Task RefreshAsync(bool next, bool onlyIfInvalidated = false)
     {
-        if (_application is null || Scope is null || next && _continuation is null)
+        if (_application is null || Scope is null || next && _continuation is null || onlyIfInvalidated && _pageScope is not null)
         {
             return;
         }

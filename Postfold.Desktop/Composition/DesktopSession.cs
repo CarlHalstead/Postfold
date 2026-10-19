@@ -37,6 +37,9 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
     private readonly Task<Outcome<DesktopMailRuntime>> _opening;
     private string? _profileDirectory;
     private DesktopMailRuntime? _host;
+    private WindowsCredentialStore? _secure;
+    private DesktopPreferences? _startupPreferences;
+    private MainWindowViewModel? _startupModel;
     private Task _starting = Task.CompletedTask;
     private Task _synchronising = Task.CompletedTask;
     private Task _resumingUpdates = Task.CompletedTask;
@@ -81,12 +84,9 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
             "profiles"
         ));
         // Admission runs off the dispatcher while the native window is constructed and shown.
-        // StartAsync still awaits the complete gate before creating account services or accessing mail.
+        // Account restoration follows complete admission; StartAsync observes both before publishing mail services.
         _opening = OpenProfileAsync();
-        _window = window ?? new MainWindow
-        {
-            DataContext = new MainWindowViewModel()
-        };
+        _window = window ?? new MainWindow();
         window = _window;
         // This session owns child saves and task draining. Avalonia's children-first default can cancel
         // the owner close before our asynchronous barrier is reached.
@@ -395,6 +395,10 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
             {
                 await model.DisposeAsync();
             }
+            if (_startupModel is not null && !ReferenceEquals(_startupModel, _window.DataContext))
+            {
+                await _startupModel.DisposeAsync();
+            }
             await _host!.DisposeAsync();
             _integration?.Dispose();
             _notifications?.Dispose();
@@ -429,15 +433,14 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
             directory = _profileDirectory!;
             if (!opened.IsSuccess)
             {
+                _window.DataContext ??= new MainWindowViewModel();
                 _window.ReportStartupFailure(opened.Failure, profilesDirectory: Path.GetDirectoryName(directory));
                 return false;
             }
             _host = opened.Value!;
-            WindowsCredentialStore secure = new WindowsCredentialStore(Path.Combine(directory, "credentials"));
-            await _host.RestoreAccountsAsync(secure, _lifetime.Token);
+            WindowsCredentialStore secure = _secure!;
             IMailApplication application = _host.Application;
-            MainWindowViewModel model = new MainWindowViewModel(application);
-            _window.DataContext = model;
+            MainWindowViewModel model = _startupModel!;
             _notifications = new WindowsNewMailNotification(_window, TimeProvider.System);
             _updates = ClientUpdatesComposition.Create(_updateConfiguration, _updateTime, _updateHandler, _host.DesktopPreferences, _updateConnection, _nativeRestart is null ? null : this);
             _integration = new DesktopIntegration(_window, _host.DesktopPreferences, _notifications, _updates as IClientUpdateActivity);
@@ -455,8 +458,8 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
                 _exitRequested = true;
                 _window.Close();
             };
-            DesktopPreferences preferences = await _integration.ReadPreferencesAsync(_lifetime.Token);
-            Failure configured = await _integration.ConfigureAsync(preferences, _lifetime.Token);
+            DesktopPreferences preferences = _startupPreferences!;
+            Failure configured = _integration.RestorePreferences(preferences);
             if (configured != Failure.None)
             {
                 await _integration.ConfigureAsync(preferences with
@@ -465,6 +468,10 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
                 }, _lifetime.Token);
             }
             _window.Configure(application, new AccountSetup(_host, secure, _host.Identity), _integration, _host, _updates);
+            await _window.LoadAppearanceAsync(_host.Appearance);
+            _window.DataContext = model;
+            // The window owns the model after attachment; only unbound models remain opening-task resources.
+            _startupModel = null;
             _html = new WindowsHtmlReadingService(
                 _window,
                 application,
@@ -474,8 +481,6 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
             );
             _window.ConfigureHtml(_html);
             _window.ConfigureIdentity(_host.Identity);
-            await _window.LoadAppearanceAsync(_host.Appearance);
-            await model.InitialiseAsync();
             _window.OpenAccountSetupIfNeeded();
             _synchronising = SynchroniseAccountsAsync(model);
             long observedMessages = model.CachedMessageCount;
@@ -511,6 +516,7 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            _window.DataContext ??= new MainWindowViewModel();
             _window.ReportStartupFailure(
                 Failure.Unavailable,
                 _host is null,
@@ -553,15 +559,38 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
         // Keep path-selection IO and any admission failure on the observed startup task.
         return Task.Run(async () =>
         {
-            _profileDirectory = directory ?? Program.ProfileDirectory ?? _profiles.ReadDirectory();
+            string selected = directory ?? Program.ProfileDirectory ?? _profiles.ReadDirectory();
+            _profileDirectory = selected;
             EngineLimits limits = new EngineLimits(2, 256, 3, 200, 33554432, 200, 30, 20, 1073741824);
-            return await DesktopMailRuntime.OpenAsync(
-                _profileDirectory,
+            Outcome<DesktopMailRuntime> opened = await DesktopMailRuntime.OpenAsync(
+                selected,
                 new EnginePolicy(true, false, false),
                 TimeProvider.System,
                 limits,
                 CancellationToken.None
             ).ConfigureAwait(false);
+            if (opened.IsSuccess)
+            {
+                // Opening owns these services until StartAsync observes completion. Shutdown awaits
+                // startup before draining them, including a partially restored runtime after IO failure.
+                _host = opened.Value!;
+                _secure = new WindowsCredentialStore(Path.Combine(selected, "credentials"));
+                await _host.RestoreAccountsAsync(_secure, _lifetime.Token).ConfigureAwait(false);
+                _startupPreferences = await _host.DesktopPreferences.ReadDesktopPreferencesAsync(_lifetime.Token).ConfigureAwait(false);
+                MainWindowViewModel model = new MainWindowViewModel(_host.Application);
+                try
+                {
+                    // This model has no UI subscribers until the opening task is observed on the dispatcher.
+                    await model.InitialiseAsync().ConfigureAwait(false);
+                    _startupModel = model;
+                }
+                catch
+                {
+                    await model.DisposeAsync().ConfigureAwait(false);
+                    throw;
+                }
+            }
+            return opened;
         });
     }
 

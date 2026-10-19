@@ -138,6 +138,23 @@ public sealed class DesktopIntegration : IDesktopIntegration, IDisposable
         }
     }
 
+    /// <summary>Applies admitted startup preferences without rewriting the user's saved choices.</summary>
+    internal Failure RestorePreferences(DesktopPreferences preferences)
+    {
+        Dispatcher.UIThread.VerifyAccess();
+        if (_disposed || preferences.TrayEnabled && _tray is null && !CreateTray())
+        {
+            return Failure.Unavailable;
+        }
+
+        _preferences = preferences;
+        if (_tray is not null)
+        {
+            _tray.IsVisible = preferences.TrayEnabled;
+        }
+        return Failure.None;
+    }
+
     private bool CreateTray()
     {
         if (Application.Current is not Application app || _window.TryGetPlatformHandle() is not

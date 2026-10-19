@@ -8,10 +8,12 @@ using NSubstitute;
 using NUnit.Framework;
 using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
+using Postfold.Core.Models.Accounts;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.Desktop.Composition;
 using Postfold.Desktop.Stores;
 using Postfold.Engine.Tests.Fixtures;
+using Postfold.Storage.Stores;
 using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
 using Postfold.UI.Views;
@@ -25,6 +27,54 @@ namespace Postfold.Foundation.Tests.Tests.Desktop;
 
 public sealed class ProfileStartupTests
 {
+    [AvaloniaTest]
+    public async Task Close_WhenStartupIsOpeningAccounts_ObservesStartupAndReleasesTheAdmittedProfile()
+    {
+        // Arrange
+        string profiles = Path.Combine(EngineFixture.DirectoryPath(), "profiles");
+        string directory = Path.Combine(profiles, "default");
+        await using (SqliteProfile seed = await EngineFixture.OpenAsync(directory))
+        {
+            foreach (int id in new[] { 1, 2 })
+            {
+                AccountId account = new AccountId(id);
+                MailEndpoint endpoint = new MailEndpoint("synthetic.invalid", 993, TlsMode.Implicit, "synthetic@example.invalid", "missing");
+                await seed.ConfigureAccountAsync(account, endpoint, endpoint, CancellationToken.None);
+                await seed.CommitAsync(
+                    EngineFixture.Mailbox(account: account),
+                    EngineFixture.Page([EngineFixture.Message(1, account: account)], account: account),
+                    CancellationToken.None
+                );
+            }
+        }
+        IClassicDesktopStyleApplicationLifetime desktop = Substitute.For<IClassicDesktopStyleApplicationLifetime>();
+        TaskCompletionSource shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        desktop.When(lifetime => lifetime.Shutdown(0)).Do(_ => shutdown.TrySetResult());
+        MainWindow main = new MainWindow
+        {
+            DataContext = new MainWindowViewModel()
+        };
+        DesktopSession session = new DesktopSession(desktop, main, profiles);
+
+        // Act
+        main.Show();
+        main.Close();
+        await shutdown.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await session.Startup;
+        main.Close();
+        await using DesktopMailRuntime reopened = (await DesktopMailRuntime.OpenAsync(
+            directory,
+            new EnginePolicy(false, false, false),
+            TimeProvider.System,
+            new EngineLimits(2, 256, 3, 200, 33554432, 200, 30, 20, 1073741824),
+            CancellationToken.None
+        )).Value!;
+
+        // Assert
+        Assert.That(((MainWindowViewModel)main.DataContext!).Accounts.Count, Is.EqualTo(2));
+        Assert.That((await reopened.Catalog.AccountsAsync(CancellationToken.None)).Length, Is.EqualTo(2));
+    }
+
     [AvaloniaTest]
     public async Task StartFresh_WhenDesktopStartupWasBlocked_OpensSetupAndRemembersTheNewProfile()
     {

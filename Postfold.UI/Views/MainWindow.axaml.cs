@@ -364,7 +364,7 @@ public sealed partial class MainWindow : Window
                 args.Handled = true;
             }
         };
-        this.FindControl<TreeView>("ScopeList")!.SelectionChanged += (_, _) => Track(RefreshFromControlsAsync);
+        this.FindControl<TreeView>("ScopeList")!.SelectionChanged += (_, _) => Track(() => RefreshFromControlsAsync(onlyIfInvalidated: true));
         KeyDown += (_, args) =>
         {
             if (args.KeyModifiers == KeyModifiers.Control && args.Key == Key.N)
@@ -1451,7 +1451,7 @@ public sealed partial class MainWindow : Window
 
     private Task SelectFilterAsync(bool unread)
     {
-        if (DataContext is not MainWindowViewModel model || model.UpdatingNavigation)
+        if (DataContext is not MainWindowViewModel model || model.UpdatingNavigation || model.UnreadOnly == unread)
         {
             return Task.CompletedTask;
         }
@@ -1835,6 +1835,11 @@ public sealed partial class MainWindow : Window
 
     private Task RefreshFromControlsAsync()
     {
+        return RefreshFromControlsAsync(onlyIfInvalidated: false);
+    }
+
+    private Task RefreshFromControlsAsync(bool onlyIfInvalidated)
+    {
         if (DataContext is not MainWindowViewModel model || model.UpdatingNavigation)
         {
             return Task.CompletedTask;
@@ -1842,7 +1847,7 @@ public sealed partial class MainWindow : Window
 
         model.Scope = (this.FindControl<TreeView>("ScopeList")!.SelectedItem as NavigationItemViewModel)?.Scope ?? model.Scope;
         model.Terms = this.FindControl<TextBox>("SearchBox")!.Text ?? "";
-        return model.RefreshAsync(false);
+        return model.RefreshAsync(next: false, onlyIfInvalidated: onlyIfInvalidated);
     }
 
     private void Wire(string name, Func<Task> action)

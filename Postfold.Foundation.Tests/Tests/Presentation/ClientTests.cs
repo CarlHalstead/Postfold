@@ -34,6 +34,62 @@ namespace Postfold.Foundation.Tests.Tests.Presentation;
 public sealed class ClientTests
 {
     [AvaloniaTest]
+    public async Task InitialiseAsync_WhenCatalogIsUnchanged_RetainsNavigationAndRefreshesMessages()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        NavigationItemViewModel[] navigation = model.Navigation.ToArray();
+        MessageSnapshot message = Message(2, "Newly synchronised message");
+        application.SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Outcome<SearchPage>.Success(new SearchPage([message], null)));
+
+        // Act
+        await model.InitialiseAsync();
+
+        // Assert
+        Assert.That(model.Messages, Is.EqualTo(new[] { message }));
+        Assert.That(model.Navigation.Count, Is.EqualTo(navigation.Length));
+        for (int index = 0; index < navigation.Length; index++)
+        {
+            Assert.That(model.Navigation[index], Is.SameAs(navigation[index]));
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task AttachLoadedModel_WhenNavigationEchoesItsSelection_RetainsThePageAndExplicitRefreshStillQueries()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        MessageSnapshot message = Message(1, "Prepared inbox");
+        application.SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Outcome<SearchPage>.Success(new SearchPage([message], null)));
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        application.ClearReceivedCalls();
+        MainWindow main = new MainWindow();
+        main.Configure(application, null);
+        main.Show();
+        try
+        {
+            // Act
+            main.DataContext = model;
+            await main.WaitForActionsAsync();
+
+            // Assert
+            Assert.That(model.Messages, Is.EqualTo(new[] { message }));
+            await application.DidNotReceive().SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>());
+            await model.RefreshAsync(false);
+            await application.Received(1).SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            main.Close();
+        }
+    }
+
+    [AvaloniaTest]
     public async Task RenameAccount_WhenSavedFromSidebar_RefreshesLabelWithoutChangingEmailOrFolderSelection()
     {
         // Arrange

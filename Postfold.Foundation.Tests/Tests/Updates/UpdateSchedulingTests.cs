@@ -145,6 +145,7 @@ public sealed class UpdateSchedulingTests
 
         // Act
         await ui.StartAsync();
+        Assert.That(ui.Service.Current.Stage, Is.EqualTo(UpdateStage.Available), "The first authenticated check must succeed before testing its saved interval.");
         int first = fixture.Requests.Count;
         clock.Advance(TimeSpan.FromHours(hours) - TimeSpan.FromTicks(1));
         await ui.SettleAsync();

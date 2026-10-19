@@ -137,6 +137,20 @@ approximately 72 characters with no trailing full stop. Allowed types are `feat`
 `test`, `ci`, `build`, `chore`, `style` and `revert`. Use breaking markers only for actual compatibility changes.
 Reviewed pull requests use squash merges. Passing validation does not itself authorise a commit, push or release.
 
+## Performance changes
+
+Keep the numerical performance gates and readiness endpoints fixed while investigating regressions.
+Identify the expensive work with a trace or focused measurement before changing scheduling or ownership.
+Prefer removing duplicate work and improving the responsible operation over adding delays, frame waits,
+dispatcher priorities or polling to hide its cost. Use scheduling primitives only when a documented lifecycle
+or platform contract requires them, with explicit cancellation and shutdown ownership.
+
+Readability remains an acceptance condition. Use clear names and ordinary control flow; avoid speculative
+abstractions and unexplained timing dependencies. Retain an optimisation only when comparable before/after
+measurements demonstrate its benefit and affected correctness checks pass. Remove unsuccessful experiments.
+Keep raw failures and record tradeoffs; a faster result does not excuse weaker security, durability,
+accessibility, truthful readiness or maintainability. Threshold changes require separate review.
+
 ## Offline update tooling
 
 `eng/Build-UpdateDraft.ps1` builds an unsigned, full-only Windows x64 draft from a clean selected commit.

@@ -11,6 +11,7 @@ namespace Postfold.UI.ViewModels;
 /// <summary>Native tree navigation; account expansion stays independent of the selected mail scope.</summary>
 public sealed class NavigationItemViewModel : ObservableObject
 {
+    private readonly MailboxRole _role;
     private bool _isExpanded = true;
     private long? _unreadCount;
 
@@ -22,7 +23,7 @@ public sealed class NavigationItemViewModel : ObservableObject
     {
         Scope = scope;
         Children = children;
-        Icon = scope.IsAccount ? MailIcons.Account : MailIcons.ForRole(scope.IsFolder ? role : MailboxRole.Inbox);
+        _role = role;
     }
 
     public MailScope Scope { get; }
@@ -30,7 +31,8 @@ public sealed class NavigationItemViewModel : ObservableObject
     public bool IsFolder => Scope.IsFolder;
     public bool IsAccount => Scope.IsAccount;
     public Avalonia.Thickness RowMargin => new Avalonia.Thickness(IsFolder ? 32 : 12, 8, 12, 8);
-    public Geometry Icon { get; }
+    /// <summary>Resolves dispatcher-owned geometry when the view reads it, after unbound metadata preparation.</summary>
+    public Geometry Icon => Scope.IsAccount ? MailIcons.Account : MailIcons.ForRole(Scope.IsFolder ? _role : MailboxRole.Inbox);
     public string CountText => UnreadCount > 0 ? UnreadCount.Value.ToString("N0", CultureInfo.CurrentCulture) : "";
     public string AccessibleName => Name + (UnreadCount is long count ? ", " + count.ToString(CultureInfo.CurrentCulture) +
         " " + Strings.Get("UnreadMessages") : "");

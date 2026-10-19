@@ -18,6 +18,27 @@ namespace Postfold.Foundation.Tests.Tests.Desktop;
 public sealed class DesktopIntegrationTests
 {
     [AvaloniaTest]
+    public async Task RestorePreferences_WhenLoadingSavedChoices_AppliesThemWithoutReadingOrSavingAgain()
+    {
+        // Arrange
+        IDesktopPreferenceStore store = Substitute.For<IDesktopPreferenceStore>();
+        INewMailNotification notifications = Substitute.For<INewMailNotification>();
+        using DesktopIntegration integration = new DesktopIntegration(new Window(), store, notifications);
+
+        // Act
+        Failure restored = integration.RestorePreferences(new DesktopPreferences(false, false));
+        Failure notified = integration.NotifyNewMail();
+
+        // Assert
+        Assert.That(restored, Is.EqualTo(Failure.None));
+        Assert.That(notified, Is.EqualTo(Failure.None));
+        Assert.That(integration.TrayEnabled, Is.False);
+        notifications.DidNotReceive().ShowGeneric();
+        await store.DidNotReceiveWithAnyArgs().ReadDesktopPreferencesAsync(default);
+        await store.DidNotReceiveWithAnyArgs().SaveDesktopPreferencesAsync(default!, default);
+    }
+
+    [AvaloniaTest]
     public async Task ConfigureUpdatesAsync_WhenDesktopChoicesChange_PreservesDisabledUpdateChoicesAcrossReopen()
     {
         // Arrange
