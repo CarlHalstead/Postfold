@@ -27,6 +27,11 @@ $audit = Join-Path $draft 'artifact-hashes.json'
 [IO.File]::WriteAllText($audit, (([ordered]@{sourceCommit=$manifest.sourceCommit;version=$manifest.version;channel='beta';rid='win-x64';artifacts=$rows} | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
 $prepared = Join-Path $area 'release'
 $script = Join-Path $PSScriptRoot 'Invoke-UpdateRelease.ps1'
+$generated = Join-Path $area 'generated'
+& $script -Action Prepare -Version $manifest.version -SourceCommit $manifest.sourceCommit -Sequence $manifest.sequence -DraftDirectory $draft -DraftAuditSha256 (Get-FileHash $audit).Hash -ReleaseDirectory $generated -SignerPath $SignerPath -PublicKeyPath $PublicKeyPath -ReadmePath $ReadmePath
+$generatedManifest = [IO.File]::ReadAllText((Join-Path $generated 'inputs/Postfold.win-x64-beta.manifest.json'))
+if (-not $generatedManifest.Contains("`n    `"feed`": {`n        `"name`": ") -or $generatedManifest.Contains("`r") -or -not $generatedManifest.EndsWith("`n")) { throw 'Generated manifest formatting changed.' }
+& $script -Action Check -Version $manifest.version -ReleaseDirectory $generated -ReviewSha256 (Get-FileHash (Join-Path $generated 'release-review.json')).Hash
 & $script -Action Prepare -Version $manifest.version -SourceCommit $manifest.sourceCommit -Sequence $manifest.sequence -DraftDirectory $draft -DraftAuditSha256 (Get-FileHash $audit).Hash -ReleaseDirectory $prepared -SignerPath $SignerPath -PublicKeyPath $PublicKeyPath -ReadmePath $ReadmePath -ManifestPath (Join-Path $fixture 'Postfold.win-x64-beta.manifest.json')
 $reviewHash = (Get-FileHash (Join-Path $prepared 'release-review.json')).Hash
 $arguments = @{Version=$manifest.version;ReleaseDirectory=$prepared;ReviewSha256=$reviewHash}

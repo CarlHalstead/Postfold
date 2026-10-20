@@ -73,7 +73,9 @@ foreach ($relativePath in $trackedFiles)
     }
 
     $text = [System.Text.UTF8Encoding]::new($false, $true).GetString($bytes)
-    if ($text.Contains("`r") -or ($bytes.Length -gt 0 -and -not $text.EndsWith("`n")))
+    # Velopack feed bytes are authenticated by the signed manifest; never normalise packer output.
+    $exactReleaseFeed = $relativePath -cmatch '\Aupdates/releases/v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-beta\.[1-9][0-9]*)?/win-x64-beta/releases\.win-x64-beta\.json\z'
+    if (-not $exactReleaseFeed -and ($text.Contains("`r") -or ($bytes.Length -gt 0 -and -not $text.EndsWith("`n"))))
     {
         throw "Expected LF and final newline: $relativePath"
     }

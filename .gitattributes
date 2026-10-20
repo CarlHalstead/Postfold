@@ -1,3 +1,7 @@
 * text=auto eol=lf
 *.png binary
 *.ico binary
+
+# Signed release metadata must retain exact bytes in every checkout.
+updates/releases/** -text -eol
+updates/releases/**/*.sig binary -eol

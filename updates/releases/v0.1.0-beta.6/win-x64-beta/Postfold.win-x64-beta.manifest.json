@@ -1,0 +1,30 @@
+{
+    "kind":  "PostfoldUpdateManifest",
+    "schema":  1,
+    "keyId":  "A022E28E638426A0901C393CE163EF06246066CB5E3496B6DCF4965560E4CFE4",
+    "product":  "Postfold",
+    "rid":  "win-x64",
+    "channel":  "beta",
+    "toolChannel":  "win-x64-beta",
+    "sequence":  3,
+    "version":  "0.1.0-beta.6",
+    "sourceCommit":  "d3f31995b0c0a007b4d782dec0f3a3d46ab0f70c",
+    "minimumApp":  "0.1.0-beta.1",
+    "minimumFormat":  2,
+    "maximumFormat":  2,
+    "targetFormat":  2,
+    "originMigrations":  [
+                             "20261014150754_InitialEfProfile"
+                         ],
+    "targetMigration":  "20261014150754_InitialEfProfile",
+    "feed":  {
+                 "name":  "releases.win-x64-beta.json",
+                 "length":  277,
+                 "sha256":  "94D5ACD5FDA9FE8EB9AE54AE5BFA5B75FCBD2ED6CB4B17946D161D7401A44022"
+             },
+    "package":  {
+                    "name":  "Postfold-0.1.0-beta.6-win-x64-beta-full.nupkg",
+                    "length":  94035190,
+                    "sha256":  "84889CFB4F19FE6D3CC4376AFFFFE39676A496CBA92BB184970B0F8CBECEB9FA"
+                }
+}

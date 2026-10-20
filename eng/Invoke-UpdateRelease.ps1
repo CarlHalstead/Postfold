@@ -30,7 +30,20 @@ $names = @("Postfold-$Version-win-x64-beta-full.nupkg", 'Postfold-win-x64-beta-S
 
 function Write-Json([string]$Path, $Value)
 {
-    [IO.File]::WriteAllText($Path, (($Value | ConvertTo-Json -Depth 12).Replace("`r`n", "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+    # Use the framework formatter for consistent indentation on Windows PowerShell 5.1.
+    Add-Type -AssemblyName System.Runtime.Serialization
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($Value | ConvertTo-Json -Depth 12 -Compress))
+    $reader = [Runtime.Serialization.Json.JsonReaderWriterFactory]::CreateJsonReader($bytes, [Xml.XmlDictionaryReaderQuotas]::Max)
+    $stream = [IO.MemoryStream]::new()
+    $writer = [Runtime.Serialization.Json.JsonReaderWriterFactory]::CreateJsonWriter($stream, [Text.UTF8Encoding]::new($false), $false, $true, '    ')
+    try
+    {
+        $writer.WriteNode($reader, $true)
+        $writer.Flush()
+        $json = [Text.Encoding]::UTF8.GetString($stream.ToArray()).Replace("`r`n", "`n") + "`n"
+        [IO.File]::WriteAllText($Path, $json, [Text.UTF8Encoding]::new($false))
+    }
+    finally { $writer.Dispose(); $reader.Dispose(); $stream.Dispose() }
 }
 
 function Get-Row([string]$Path)
