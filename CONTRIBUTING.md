@@ -67,6 +67,33 @@ the embedded native/source inventory after profile admission and start the exist
 updater owner. Unpackaged builds remain inactive; invalid update admission reports a local failure while
 mail stays usable. Signing, release publication and catalogue activation require separate approval.
 
+Release tooling is reusable: never generate a script, signer project or signer binary per version.
+Build `Postfold.UpdateSigner` once as a self-contained Windows tool at
+`artifacts/tools/update-signer`, and reuse it until its source/runtime changes. Use
+`eng/Invoke-UpdateRelease.ps1` for `Prepare`, `Check`, owner-operated `Sign` and `Bundle`.
+`Prepare` consumes the reviewed draft receipt, approved version/source and independently selected
+sequence; it generates release data and prints the review SHA-256. Pass that exact review hash to
+later actions. All actions support Windows PowerShell 5.1. The signer reads the passphrase privately
+without displaying characters. No password is supplied through arguments or environment variables.
+Generated manifests, signatures, hashes and receipts are release outputs, never new release-specific code.
+Review issued records before selecting a sequence; the beta suffix is not the signing sequence.
+
+Build the reusable signer when its source or pinned runtime changes:
+
+```powershell
+dotnet publish Postfold.UpdateSigner -c Release -r win-x64 --self-contained true -p:RuntimeFrameworkVersion=10.0.13 -p:RestoreLockedMode=true -p:PublishTrimmed=false -p:PublishAot=false --disable-build-servers -o artifacts/tools/update-signer
+```
+
+For each approved beta release, run `Build-UpdateDraft.ps1` with its version/source/channel, then
+`Invoke-UpdateRelease.ps1 -Action Prepare` with `-Version`, `-SourceCommit`, `-Sequence` and the reviewed
+`-DraftAuditSha256`. Preparation uses the existing draft directory by default. Inspect its generated
+`artifacts/update-release/<version>/release-review.json` and retain the printed hash. Use the same
+script with `-Action Check`, `Sign` or `Bundle`, passing `-Version` and `-ReviewSha256`. Only the owner
+runs `Sign` in a normal interactive Windows console. `Bundle` reuses `New-UpdateBundle.ps1`; it does
+not publish. Existing outputs are preserved, and any new attempt requires a fresh output directory.
+The current beta compatibility policy is profile format 2 and the initial EF migration; changing that
+policy requires explicit review, independently of the application version.
+
 ## Submit
 
 Use short, descriptive branch names and commit titles such as `fix: preserve draft on close`. Pull requests should explain the change and validation performed; reviewed changes use squash merges.

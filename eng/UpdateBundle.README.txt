@@ -1,0 +1,30 @@
+Postfold - Windows generic-mail preview
+
+Windows 11 24H2+ x64. The .NET runtime is included.
+Extract this ZIP into a new directory and run Postfold-win-x64-beta-Setup.exe.
+The installer is not Windows publisher-signed. Windows may show publisher or
+reputation warnings; device security policy may prevent installation.
+
+Existing inactive builds require one manual installation. Close Postfold normally
+and install over the existing installation as the same Windows user. Keep the
+profile; do not uninstall first. Preserve drafts and pending/uncertain sends.
+Confirm the version in Settings, then close and reopen normally. Never resend
+an uncertain message as an upgrade test.
+
+The authenticated updater checks small metadata and downloads ZIPs under saved
+policy. Restart requires safe shutdown. It stages the verified update package
+and never runs this bundled Setup.exe. End-to-end public automatic upgrades
+require capable-to-capable release qualification; see the release notes.
+
+The signed inner manifest authenticates the feed and full update package.
+SHA256SUMS.txt is only a comparison aid. No signature over the outer ZIP or
+bundled Setup.exe is claimed. Download from the official CarlHalstead/Postfold
+GitHub release. Preserve diagnostics on failure; never reset update trust or
+restore an older queued-send profile to make an upgrade run.
+
+Generic IMAP/SMTP preview; Gmail API and Microsoft OAuth are not included yet.
+The local mail cache is not encrypted by Postfold. Performance targets remain
+unmet; full public-beta qualification remains open.
+
+Issues: https://github.com/CarlHalstead/Postfold/issues
+Report version and reproduction steps without credentials or private mail.
