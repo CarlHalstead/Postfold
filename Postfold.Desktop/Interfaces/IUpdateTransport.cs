@@ -1,6 +1,5 @@
 using Postfold.Core.Enums;
 using Postfold.Core.Models;
-using Postfold.Core.Models.Updates;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,5 +11,6 @@ internal interface IUpdateTransport
 {
     Task<Outcome<byte[]>> FetchAsync(string name, int maximumBytes, CancellationToken cancellationToken);
 
-    Task<Failure> DownloadAsync(UpdateArtifact artifact, Stream destination, CancellationToken cancellationToken);
+    /// <summary>Transfers an untrusted distribution envelope under the bulk deadline and actual byte ceiling.</summary>
+    Task<Failure> DownloadBundleAsync(string name, long maximumBytes, Stream destination, CancellationToken cancellationToken);
 }

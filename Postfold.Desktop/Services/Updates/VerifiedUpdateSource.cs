@@ -4,6 +4,7 @@ using Postfold.Core.Models.Updates;
 using Postfold.Core.Policies.Updates;
 using Postfold.Desktop.Interfaces;
 using Postfold.Desktop.Stores;
+using Postfold.UpdateBroker.Services;
 using System;
 using System.Collections.Immutable;
 using System.IO;
@@ -11,6 +12,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
 using Velopack;
 using Velopack.Logging;
 using Velopack.Sources;
@@ -163,50 +165,117 @@ internal sealed class VerifiedUpdateSource : IUpdateSource
             return Outcome<string>.Fail(Failure.Validation);
         }
         await _downloads.WaitAsync(cancellationToken).ConfigureAwait(false);
+        string? bundlePath = null;
+        string? packagePath = null;
+        FileStream? lease = null;
+        using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromMinutes(10));
+        CancellationToken operationToken = deadline.Token;
         try
         {
             VerifyPath(full);
             Directory.CreateDirectory(_cache);
+            string leasePath = Path.Combine(_cache, "staging.lock");
+            VerifyPath(leasePath);
+            if (!File.Exists(leasePath))
+            {
+                // Reserve the lease itself before creating it, as well as the two scratch slots.
+                int existing = 0;
+                foreach (string entry in Directory.EnumerateFileSystemEntries(_cache))
+                {
+                    operationToken.ThrowIfCancellationRequested();
+                    if (++existing >= 254)
+                    {
+                        return Outcome<string>.Fail(Failure.Unavailable);
+                    }
+                }
+            }
+            lease = new FileStream(leasePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             if (File.Exists(full))
             {
                 verifying?.Invoke();
                 using FileStream cached = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
-                Failure checkedCache = await UpdateArtifacts.VerifyAsync(cached, Manifest.Package, cancellationToken).ConfigureAwait(false);
+                Failure checkedCache = await UpdateArtifacts.VerifyAsync(cached, Manifest.Package, operationToken).ConfigureAwait(false);
+                if (checkedCache == Failure.None)
+                {
+                    cached.Position = 0;
+                    NativeUpdateBroker.VerifyPackageIdentity(cached, Manifest.Version);
+                }
+                operationToken.ThrowIfCancellationRequested();
                 return checkedCache == Failure.None ? Outcome<string>.Success(full) : Outcome<string>.Fail(Failure.Corrupt);
             }
             long retained = 0;
             int files = 0;
-            foreach (string file in Directory.EnumerateFiles(_cache))
+            long reserve = checked(UpdateBundle.MaximumBytes + Manifest.Package.Length);
+            foreach (string file in Directory.EnumerateFileSystemEntries(_cache))
             {
                 VerifyPath(file);
+                if (Directory.Exists(file))
+                {
+                    return Outcome<string>.Fail(Failure.Unavailable);
+                }
                 long length = new FileInfo(file).Length;
-                if (++files > 256 || length > 2147483648L - Manifest.Package.Length - retained)
+                if (++files > 254 || length > 2147483648L - reserve - retained)
                 {
                     return Outcome<string>.Fail(Failure.Unavailable);
                 }
                 retained += length;
             }
-            string temporary = Path.Combine(_cache, Guid.NewGuid().ToString("N") + ".partial");
-            using (FileStream staging = new FileStream(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+            if (new DriveInfo(Path.GetPathRoot(_cache)!).AvailableFreeSpace < reserve)
             {
-                Failure downloaded = await _transport.DownloadAsync(Manifest.Package, staging, cancellationToken).ConfigureAwait(false);
+                return Outcome<string>.Fail(Failure.Unavailable);
+            }
+            string bundleTemporary = Path.Combine(_cache, Guid.NewGuid().ToString("N") + ".bundle.partial");
+            string packageTemporary = Path.Combine(_cache, Guid.NewGuid().ToString("N") + ".package.partial");
+            using (FileStream bundle = new FileStream(bundleTemporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+            {
+                bundlePath = bundleTemporary;
+                Failure downloaded = await _transport.DownloadBundleAsync("Postfold-" + Manifest.Version + "-win-x64.zip", UpdateBundle.MaximumBytes, bundle, operationToken).ConfigureAwait(false);
                 if (downloaded != Failure.None)
                 {
                     return Outcome<string>.Fail(downloaded);
                 }
-                staging.Position = 0;
+                bundle.Position = 0;
                 verifying?.Invoke();
-                Failure verified = await UpdateArtifacts.VerifyAsync(staging, Manifest.Package, cancellationToken).ConfigureAwait(false);
-                if (verified != Failure.None)
+                using (FileStream staging = new FileStream(packageTemporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
                 {
-                    return Outcome<string>.Fail(verified);
+                    packagePath = packageTemporary;
+                    Failure verified = await UpdateBundle.StageAsync(bundle, staging, this, operationToken).ConfigureAwait(false);
+                    if (verified != Failure.None)
+                    {
+                        return Outcome<string>.Fail(verified);
+                    }
+                    await staging.FlushAsync(operationToken).ConfigureAwait(false);
+                    staging.Flush(flushToDisk: true);
+                    staging.Position = 0;
+                    if (await UpdateArtifacts.VerifyAsync(staging, Manifest.Package, operationToken).ConfigureAwait(false) != Failure.None)
+                    {
+                        return Outcome<string>.Fail(Failure.Validation);
+                    }
+                    operationToken.ThrowIfCancellationRequested();
+                    staging.Position = 0;
+                    NativeUpdateBroker.VerifyPackageIdentity(staging, Manifest.Version);
+                    operationToken.ThrowIfCancellationRequested();
                 }
-                staging.Flush(flushToDisk: true);
             }
-            cancellationToken.ThrowIfCancellationRequested();
+            operationToken.ThrowIfCancellationRequested();
             VerifyPath(full);
-            File.Move(temporary, full, overwrite: false);
+            VerifyPath(packageTemporary);
+            File.Move(packageTemporary, full, overwrite: false);
+            packagePath = null;
             return Outcome<string>.Success(full);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Outcome<string>.Fail(Failure.Unavailable);
+        }
+        catch (InvalidDataException)
+        {
+            return Outcome<string>.Fail(Failure.Validation);
+        }
+        catch (XmlException)
+        {
+            return Outcome<string>.Fail(Failure.Validation);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -214,7 +283,40 @@ internal sealed class VerifiedUpdateSource : IUpdateSource
         }
         finally
         {
-            _downloads.Release();
+            try
+            {
+                RemoveOwnedScratch(bundlePath, packagePath);
+            }
+            finally
+            {
+                lease?.Dispose();
+                _downloads.Release();
+            }
+        }
+    }
+
+    private static void RemoveOwnedScratch(string? bundle, string? package)
+    {
+        Exception? failure = null;
+        foreach (string? path in new[] { bundle, package })
+        {
+            if (path is null)
+            {
+                continue;
+            }
+            try
+            {
+                VerifyPath(path);
+                File.Delete(path);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                failure = exception;
+            }
+        }
+        if (failure is not null)
+        {
+            throw new IOException("Owned update scratch cleanup failed; retained files remain accounted.", failure);
         }
     }
 

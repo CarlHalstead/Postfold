@@ -1,7 +1,5 @@
 using Postfold.Core.Enums;
 using Postfold.Core.Models;
-using Postfold.Core.Models.Updates;
-using Postfold.Core.Policies.Updates;
 using Postfold.Desktop.Interfaces;
 using System;
 using System.Collections.Generic;
@@ -24,14 +22,20 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
     private readonly Dictionary<string, Uri> _bridges = new Dictionary<string, Uri>(StringComparer.Ordinal);
     private readonly HttpClient _client;
     private readonly TimeProvider _time;
+    private readonly string _channel;
     private readonly SemaphoreSlim _requests = new SemaphoreSlim(1, 1);
     private int _failures;
     private readonly Dictionary<string, (DateTimeOffset Stored, byte[] Bytes)> _metadata = new Dictionary<string, (DateTimeOffset, byte[])>(StringComparer.Ordinal);
     private readonly SemaphoreSlim _metadataGate = new SemaphoreSlim(1, 1);
     private int _metadataBytes;
 
-    internal HttpsUpdateTransport(Uri release, TimeProvider time, HttpMessageHandler? fixtureHandler = null)
+    internal HttpsUpdateTransport(Uri release, TimeProvider time, HttpMessageHandler? fixtureHandler = null, string channel = "beta")
     {
+        if (channel is not ("beta" or "stable"))
+        {
+            throw new ArgumentException("A configured update channel is required.", nameof(channel));
+        }
+        _channel = channel;
         bool catalogue = release.OriginalString == ProductionUpdateIdentity.Discovery;
         if (!catalogue && (!Allowed(release) || release.Host != "github.com" ||
             !System.Text.RegularExpressions.Regex.IsMatch(release.AbsolutePath, @"\A/CarlHalstead/Postfold/releases/download/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant) ||
@@ -69,7 +73,7 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
         _metadata.Clear();
         _metadataBytes = 0;
         using MemoryStream bytes = new MemoryStream();
-        Failure fetched = await TransferAsync("catalogue", 65536, null, bytes, cancellationToken, _catalogue).ConfigureAwait(false);
+        Failure fetched = await TransferAsync("catalogue", 65536, false, bytes, cancellationToken, _catalogue).ConfigureAwait(false);
         if (fetched != Failure.None)
         {
             return fetched;
@@ -120,20 +124,26 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
             {
                 return Outcome<byte[]>.Fail(Failure.Transient);
             }
-            if (_metadata.TryGetValue(name, out (DateTimeOffset Stored, byte[] Bytes) cached) &&
+            Uri? location = MetadataLocation(name);
+            if (location is null)
+            {
+                return Outcome<byte[]>.Fail(Failure.NotFound);
+            }
+            string cacheKey = location.AbsoluteUri;
+            if (_metadata.TryGetValue(cacheKey, out (DateTimeOffset Stored, byte[] Bytes) cached) &&
                 now >= cached.Stored && now - cached.Stored < TimeSpan.FromMinutes(5) && cached.Bytes.Length <= maximumBytes)
             {
                 // Exact cached bytes pass through signature/feed verification again; callers cannot mutate the cache.
                 return Outcome<byte[]>.Success((byte[])cached.Bytes.Clone());
             }
             using MemoryStream destination = new MemoryStream();
-            Failure failure = await TransferAsync(name, maximumBytes, null, destination, cancellationToken).ConfigureAwait(false);
+            Failure failure = await TransferAsync(name, maximumBytes, false, destination, cancellationToken, location).ConfigureAwait(false);
             if (failure != Failure.None)
             {
                 return Outcome<byte[]>.Fail(failure);
             }
             byte[] bytes = destination.ToArray();
-            if (_metadata.Remove(name, out (DateTimeOffset Stored, byte[] Bytes) previous))
+            if (_metadata.Remove(cacheKey, out (DateTimeOffset Stored, byte[] Bytes) previous))
             {
                 _metadataBytes -= previous.Bytes.Length;
             }
@@ -142,7 +152,7 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
                 _metadata.Clear();
                 _metadataBytes = 0;
             }
-            _metadata[name] = (_time.GetUtcNow(), (byte[])bytes.Clone());
+            _metadata[cacheKey] = (_time.GetUtcNow(), (byte[])bytes.Clone());
             _metadataBytes += bytes.Length;
             return Outcome<byte[]>.Success(bytes);
         }
@@ -152,9 +162,15 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
         }
     }
 
-    public Task<Failure> DownloadAsync(UpdateArtifact artifact, Stream destination, CancellationToken cancellationToken)
+    public Task<Failure> DownloadBundleAsync(string name, long maximumBytes, Stream destination, CancellationToken cancellationToken)
     {
-        return TransferAsync(artifact.Name, artifact.Length, artifact, destination, cancellationToken);
+        Match match = Regex.Match(name, @"\APostfold-([0-9]+\.[0-9]+\.[0-9]+(?:-beta\.[0-9]+)?)-win-x64\.zip\z", RegexOptions.CultureInvariant);
+        if (!match.Success || _release is null || _release != ReleaseLocation("v" + match.Groups[1].Value) ||
+            maximumBytes is <= 0 or > UpdateBundle.MaximumBytes)
+        {
+            return Task.FromResult(Failure.Validation);
+        }
+        return TransferAsync(name, maximumBytes, true, destination, cancellationToken);
     }
 
     public void Dispose()
@@ -180,10 +196,32 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
         return new Uri("https://github.com/CarlHalstead/Postfold/releases/download/" + tag + "/");
     }
 
+    private Uri? MetadataLocation(string name)
+    {
+        if (name != "Postfold.win-x64-" + _channel + ".manifest.json" &&
+            name != "Postfold.win-x64-" + _channel + ".manifest.sig" &&
+            name != "releases.win-x64-" + _channel + ".json" &&
+            !Regex.IsMatch(name, @"\A(transition|activation)-[0-9A-F]{64}\.(json|sig)\z", RegexOptions.CultureInvariant))
+        {
+            return null;
+        }
+        Uri? release = _release;
+        if (_catalogue is not null && (name.StartsWith("transition-", StringComparison.Ordinal) || name.StartsWith("activation-", StringComparison.Ordinal)))
+        {
+            _bridges.TryGetValue(Path.GetFileNameWithoutExtension(name), out release);
+        }
+        if (release is null)
+        {
+            return null;
+        }
+        string tag = release.Segments[^1].TrimEnd('/');
+        return new Uri("https://raw.githubusercontent.com/CarlHalstead/Postfold/main/updates/releases/" + tag + "/win-x64-" + _channel + "/" + name);
+    }
+
     private async Task<Failure> TransferAsync(
         string name,
         long maximumBytes,
-        UpdateArtifact? artifact,
+        bool bulk,
         Stream destination,
         CancellationToken cancellationToken,
         Uri? catalogue = null
@@ -203,12 +241,8 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
                 return Failure.Transient;
             }
             using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(artifact is null ? TimeSpan.FromSeconds(30) : TimeSpan.FromMinutes(10));
+            deadline.CancelAfter(bulk ? TimeSpan.FromMinutes(10) : TimeSpan.FromSeconds(30));
             Uri? releaseLocation = _release;
-            if (_catalogue is not null && catalogue is null && (name.StartsWith("transition-", StringComparison.Ordinal) || name.StartsWith("activation-", StringComparison.Ordinal)))
-            {
-                _bridges.TryGetValue(Path.GetFileNameWithoutExtension(name), out releaseLocation);
-            }
             if (catalogue is null && releaseLocation is null)
             {
                 return Failure.NotFound;
@@ -221,7 +255,7 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
                 if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308)
                 {
                     Uri? location = response.Headers.Location;
-                    if (catalogue is not null || redirect == 4 || location is null)
+                    if (!bulk || redirect == 4 || location is null)
                     {
                         return Failure.Validation;
                     }
@@ -254,33 +288,25 @@ internal sealed class HttpsUpdateTransport : IUpdateTransport, IDisposable
                     Backoff();
                     return Failure.Transient;
                 }
-                if (!response.IsSuccessStatusCode || response.Content.Headers.ContentEncoding.Count != 0 ||
+                if (response.StatusCode != HttpStatusCode.OK || response.Content.Headers.ContentEncoding.Count != 0 ||
                     response.Content.Headers.ContentLength > maximumBytes)
                 {
                     return Failure.Validation;
                 }
                 using Stream source = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
-                Failure result;
-                if (artifact is not null)
+                byte[] buffer = new byte[16384];
+                long length = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, deadline.Token).ConfigureAwait(false)) != 0)
                 {
-                    result = await UpdateArtifacts.CopyVerifiedAsync(source, destination, artifact, deadline.Token).ConfigureAwait(false);
-                }
-                else
-                {
-                    byte[] buffer = new byte[16384];
-                    long length = 0;
-                    int read;
-                    while ((read = await source.ReadAsync(buffer, deadline.Token).ConfigureAwait(false)) != 0)
+                    length += read;
+                    if (length > maximumBytes)
                     {
-                        length += read;
-                        if (length > maximumBytes)
-                        {
-                            return Failure.Validation;
-                        }
-                        await destination.WriteAsync(buffer.AsMemory(0, read), deadline.Token).ConfigureAwait(false);
+                        return Failure.Validation;
                     }
-                    result = Failure.None;
+                    await destination.WriteAsync(buffer.AsMemory(0, read), deadline.Token).ConfigureAwait(false);
                 }
+                Failure result = response.Content.Headers.ContentLength is long declared && declared != length ? Failure.Validation : Failure.None;
                 if (result == Failure.None)
                 {
                     _failures = 0;

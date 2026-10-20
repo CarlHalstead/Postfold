@@ -228,6 +228,19 @@ public static class NativeUpdateBroker
         }
     }
 
+    /// <summary>Checks the authenticated opaque package's bounded native product/version identity without extraction.</summary>
+    public static void VerifyPackageIdentity(Stream package, string version)
+    {
+        using ZipArchive archive = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
+        ZipArchiveEntry[] manifests = archive.Entries.Where(entry => entry.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (manifests.Length != 1 || manifests[0].FullName.Contains('/') || manifests[0].FullName.Contains('\\') || manifests[0].Length > 65536)
+        {
+            throw new InvalidDataException("Ambiguous native package identity.");
+        }
+        using Stream nuspec = manifests[0].Open();
+        VerifyXmlIdentity(nuspec, version);
+    }
+
     private static async Task ReportAsync(TextWriter events, string value)
     {
         await events.WriteLineAsync(value).ConfigureAwait(false);
@@ -266,18 +279,6 @@ public static class NativeUpdateBroker
         using LockedUpdateFiles identity = new LockedUpdateFiles();
         using FileStream installed = identity.OpenRead(Path.Combine(root, "current", "sq.version"));
         VerifyXmlIdentity(installed, version);
-    }
-
-    private static void VerifyPackageIdentity(Stream package, string version)
-    {
-        using ZipArchive archive = new ZipArchive(package, ZipArchiveMode.Read, leaveOpen: true);
-        ZipArchiveEntry[] manifests = archive.Entries.Where(entry => entry.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase)).ToArray();
-        if (manifests.Length != 1 || manifests[0].FullName.Contains('/') || manifests[0].FullName.Contains('\\') || manifests[0].Length > 65536)
-        {
-            throw new InvalidDataException("Ambiguous native package identity.");
-        }
-        using Stream nuspec = manifests[0].Open();
-        VerifyXmlIdentity(nuspec, version);
     }
 
     private static void VerifyXmlIdentity(Stream stream, string version)

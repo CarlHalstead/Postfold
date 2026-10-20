@@ -3,6 +3,7 @@ using Postfold.Core.Enums;
 using Postfold.Core.Models;
 using Postfold.Desktop.Services.Updates;
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -43,7 +44,7 @@ public sealed class UpdateTransportTests
         using HttpsUpdateTransport transport = new HttpsUpdateTransport(Location(), TimeProvider.System, handler);
 
         // Act
-        Outcome<byte[]> result = await transport.FetchAsync("manifest.json", 64, CancellationToken.None);
+        Outcome<byte[]> result = await transport.FetchAsync("Postfold.win-x64-beta.manifest.json", 64, CancellationToken.None);
 
         // Assert
         Assert.That(result.Failure, Is.EqualTo(Failure.Validation));
@@ -66,7 +67,7 @@ public sealed class UpdateTransportTests
         using HttpsUpdateTransport transport = new HttpsUpdateTransport(Location(), TimeProvider.System, handler);
 
         // Act
-        Outcome<byte[]> result = await transport.FetchAsync("manifest.json", 64, CancellationToken.None);
+        Outcome<byte[]> result = await transport.FetchAsync("Postfold.win-x64-beta.manifest.json", 64, CancellationToken.None);
 
         // Assert
         Assert.That(result.Failure, Is.EqualTo(Failure.Validation));
@@ -87,10 +88,10 @@ public sealed class UpdateTransportTests
         using HttpsUpdateTransport transport = new HttpsUpdateTransport(Location(), clock, handler);
 
         // Act
-        Outcome<byte[]> first = await transport.FetchAsync("manifest.json", 64, CancellationToken.None);
-        Outcome<byte[]> blocked = await transport.FetchAsync("manifest.json", 64, CancellationToken.None);
+        Outcome<byte[]> first = await transport.FetchAsync("Postfold.win-x64-beta.manifest.json", 64, CancellationToken.None);
+        Outcome<byte[]> blocked = await transport.FetchAsync("Postfold.win-x64-beta.manifest.json", 64, CancellationToken.None);
         clock.Now = transport.RetryAt;
-        Outcome<byte[]> retried = await transport.FetchAsync("manifest.json", 64, CancellationToken.None);
+        Outcome<byte[]> retried = await transport.FetchAsync("Postfold.win-x64-beta.manifest.json", 64, CancellationToken.None);
 
         // Assert
         Assert.That(first.Failure, Is.EqualTo(Failure.Transient));
@@ -102,7 +103,7 @@ public sealed class UpdateTransportTests
     }
 
     [Test]
-    public async Task FetchAsync_WhenServerRedirectsRepeatedly_StopsAtBound()
+    public async Task DownloadBundleAsync_WhenServerRedirectsRepeatedly_StopsAtBound()
     {
         // Arrange
         FixtureHandler handler = new FixtureHandler(_ =>
@@ -114,10 +115,11 @@ public sealed class UpdateTransportTests
         using HttpsUpdateTransport transport = new HttpsUpdateTransport(Location(), TimeProvider.System, handler);
 
         // Act
-        Outcome<byte[]> result = await transport.FetchAsync("manifest.json", 64, CancellationToken.None);
+        using MemoryStream destination = new MemoryStream();
+        Failure result = await transport.DownloadBundleAsync("Postfold-1.1.0-win-x64.zip", 64, destination, CancellationToken.None);
 
         // Assert
-        Assert.That(result.Failure, Is.EqualTo(Failure.Validation));
+        Assert.That(result, Is.EqualTo(Failure.Validation));
         Assert.That(handler.Requests, Is.EqualTo(5));
     }
 
@@ -141,9 +143,62 @@ public sealed class UpdateTransportTests
         Assert.That(handler.Requests, Is.EqualTo(1));
     }
 
+    [TestCase(64, 64, false, HttpStatusCode.OK, Failure.None)]
+    [TestCase(65, 1, false, HttpStatusCode.OK, Failure.Validation)]
+    [TestCase(63, 64, false, HttpStatusCode.OK, Failure.Validation)]
+    [TestCase(1, 65, false, HttpStatusCode.OK, Failure.Validation)]
+    [TestCase(64, 64, true, HttpStatusCode.OK, Failure.Validation)]
+    [TestCase(64, 64, false, HttpStatusCode.PartialContent, Failure.Validation)]
+    public async Task DownloadBundleAsync_WhenHeadersOrActualLengthDisagree_EnforcesBulkPolicy(int actual, int declared, bool encoded, HttpStatusCode status, Failure expected)
+    {
+        // Arrange
+        FixtureHandler handler = new FixtureHandler(request =>
+        {
+            Assert.That(request.RequestUri!.AbsoluteUri, Is.EqualTo("https://github.com/CarlHalstead/Postfold/releases/download/v1.1.0/Postfold-1.1.0-win-x64.zip"));
+            HttpResponseMessage response = new HttpResponseMessage(status)
+            {
+                Content = new ByteArrayContent(new byte[actual])
+            };
+            response.Content.Headers.ContentLength = declared;
+            if (encoded)
+            {
+                response.Content.Headers.ContentEncoding.Add("gzip");
+            }
+            return response;
+        });
+        using HttpsUpdateTransport transport = new HttpsUpdateTransport(Location(), TimeProvider.System, handler);
+        using MemoryStream destination = new MemoryStream();
+
+        // Act
+        Failure result = await transport.DownloadBundleAsync("Postfold-1.1.0-win-x64.zip", 64, destination, CancellationToken.None);
+
+        // Assert
+        Assert.That(result, Is.EqualTo(expected));
+        Assert.That(destination.Length, Is.LessThanOrEqualTo(64));
+        Assert.That(handler.Requests, Is.EqualTo(1));
+    }
+
+    [TestCase("Postfold-1.2.0-win-x64.zip", 64)]
+    [TestCase("Postfold-1.1.0-win-x64.zip", 536870913)]
+    [TestCase("../Postfold-1.1.0-win-x64.zip", 64)]
+    [TestCase("Postfold-1.1.0-win-x64-stable-full.nupkg", 64)]
+    public async Task DownloadBundleAsync_WhenTagNameOrCeilingIsWrong_RefusesBeforeNetwork(string name, long ceiling)
+    {
+        // Arrange
+        FixtureHandler handler = new FixtureHandler(_ => throw new AssertionException("No request permitted."));
+        using HttpsUpdateTransport transport = new HttpsUpdateTransport(Location(), TimeProvider.System, handler);
+
+        // Act
+        Failure result = await transport.DownloadBundleAsync(name, ceiling, Stream.Null, CancellationToken.None);
+
+        // Assert
+        Assert.That(result, Is.EqualTo(Failure.Validation));
+        Assert.That(handler.Requests, Is.Zero);
+    }
+
     private static Uri Location()
     {
-        return new Uri("https://github.com/CarlHalstead/Postfold/releases/download/synthetic-v1/");
+        return new Uri("https://github.com/CarlHalstead/Postfold/releases/download/v1.1.0/");
     }
 
     private sealed class FixtureClock : TimeProvider

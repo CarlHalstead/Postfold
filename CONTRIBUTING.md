@@ -39,7 +39,7 @@ dotnet format Postfold.slnx --verify-no-changes --no-restore
 dotnet format style Postfold.slnx --verify-no-changes --no-restore --severity info --diagnostics IDE0005
 dotnet ef migrations has-pending-model-changes --project Postfold.Storage --startup-project Postfold.Storage --context ProfileDbContext --configuration Release --no-build
 dotnet test Postfold.slnx --configuration Release --no-build --no-restore
-pwsh -File eng/Verify-Source.ps1 -IncludeUntracked
+powershell.exe -NoProfile -File eng/Verify-Source.ps1 -IncludeUntracked
 ```
 
 Resolve warnings and validation failures. Keep ordinary and Windows RID dependency lock files current when changing dependencies.
@@ -49,6 +49,20 @@ Resolve warnings and validation failures. Keep ordinary and Windows RID dependen
 Use `major.minor.patch` for stable releases and `major.minor.patch-beta.N` for beta candidates.
 Start N at 1 for each target version and increment it for each new candidate. Prefix release
 tags with `v`, for example `v0.1.0-beta.1`. Never reuse released versions or move release tags.
+
+Windows draft builds use `eng/Build-UpdateDraft.ps1` from clean, approved source. After owner-local
+signing, `eng/New-UpdateBundle.ps1` assembles one ZIP using exact reviewed input hashes and the
+public-key-only `Postfold.UpdateSigner verify` command. Run the assembler with Windows PowerShell
+5.1; its required parameters bind source, version, audit, public key, verifier and readme bytes.
+The audited input directory contains only the full package, Setup, two Velopack indexes, feed,
+manifest and signature. Its audit must include all seven exact file lengths and SHA-256 values.
+The output includes a separate repository-metadata preparation whose three files exactly match
+the ZIP copies. Publish those files at `updates/releases/v<version>/win-x64-beta/` only under
+separate release approval, then update the location catalogue last. Versioned paths on `main`
+are append-only by release procedure, not immutable hosting. CI remains unsigned and draft-only.
+The updater reads metadata during Check and downloads the ZIP only under download policy; it
+stages the signed full package and never executes bundled Setup. Existing inactive builds need
+one manual bootstrap to a future activated ZIP-capable build. Production activation remains separate.
 
 ## Submit
 

@@ -9,6 +9,7 @@ using Postfold.Engine.Tests.Fixtures;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
@@ -37,6 +38,7 @@ internal sealed class ClientUpdateFixture : HttpMessageHandler
     }
 
     internal const string PackageName = "Postfold-1.1.0-win-x64-stable-full.nupkg";
+    internal const string BundleName = "Postfold-1.1.0-win-x64.zip";
     internal string Directory { get; }
     internal UpdateFixture Signer => _signer;
     internal Dictionary<string, byte[]> Documents { get; } = new Dictionary<string, byte[]>(StringComparer.Ordinal);
@@ -77,7 +79,7 @@ internal sealed class ClientUpdateFixture : HttpMessageHandler
     private ClientUpdateConfiguration Configuration(string? root, string version, int format, string migration)
     {
         return new ClientUpdateConfiguration(
-            new Uri("https://github.com/CarlHalstead/Postfold/releases/download/synthetic-u02/"),
+            new Uri("https://github.com/CarlHalstead/Postfold/releases/download/v1.1.0/"),
             root ?? _signer.PublicKey,
             "stable",
             version,
@@ -132,6 +134,13 @@ internal sealed class ClientUpdateFixture : HttpMessageHandler
 
     internal HttpResponseMessage Respond(string name)
     {
+        if (name == BundleName && Documents.ContainsKey(PackageName))
+        {
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(FixtureUpdateTransport.Bundle(Documents.Where(pair => pair.Key != "win-x64-beta.json").ToDictionary()))
+            };
+        }
         return Documents.TryGetValue(name, out byte[]? bytes) ? new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new ByteArrayContent(bytes)

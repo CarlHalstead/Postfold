@@ -17,6 +17,30 @@ namespace Postfold.UpdateSigner.Services;
 /// <summary>Offline exact-byte signer. Keys are encrypted PKCS#8 inputs; no generation, network or overwrite path.</summary>
 public static class OfflineUpdateSigner
 {
+    /// <summary>Verifies with an independently reviewed public root only; never opens private key material.</summary>
+    public static async Task<bool> VerifyAsync(
+        string documentPath,
+        string artifactDirectory,
+        string publicKeyPath,
+        string signaturePath,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            byte[] document = await ReadBoundedAsync(documentPath, UpdateTrust.MaximumDocumentBytes, cancellationToken).ConfigureAwait(false);
+            byte[] signature = await ReadBoundedAsync(signaturePath, UpdateTrust.SignatureLength, cancellationToken).ConfigureAwait(false);
+            byte[] key = await ReadBoundedAsync(publicKeyPath, 2048, cancellationToken).ConfigureAwait(false);
+            string publicKey = System.Text.Encoding.UTF8.GetString(key).Trim();
+            Outcome<UpdateManifest> verified = UpdateTrust.VerifyManifest(document, signature, publicKey);
+            return verified.IsSuccess && await InspectArtifactsAsync(verified.Value!, artifactDirectory, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or CryptographicException or XmlException or InvalidOperationException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>Inspects exact inputs and emits a new signature, returning false on expected validation or IO failure.</summary>
     public static async Task<bool> SignAsync(
         string documentPath,

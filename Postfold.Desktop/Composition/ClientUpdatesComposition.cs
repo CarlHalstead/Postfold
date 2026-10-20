@@ -23,7 +23,7 @@ internal static class ClientUpdatesComposition
         {
             return new InactiveClientUpdates();
         }
-        HttpsUpdateTransport transport = new HttpsUpdateTransport(configuration.Release, time ?? TimeProvider.System, fixtureHandler);
+        HttpsUpdateTransport transport = new HttpsUpdateTransport(configuration.Release, time ?? TimeProvider.System, fixtureHandler, configuration.Channel);
         try
         {
             AuthenticatedClientUpdates client = new AuthenticatedClientUpdates(

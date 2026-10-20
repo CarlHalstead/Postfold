@@ -27,8 +27,8 @@ public sealed class ProductionPreparationTests
     {
         // Arrange
         using ClientUpdateFixture fixture = new ClientUpdateFixture();
-        fixture.Documents["win-x64-beta.json"] = Encoding.UTF8.GetBytes("{\"release\":\"synthetic-r02\",\"bridges\":{}}");
-        using HttpsUpdateTransport transport = new HttpsUpdateTransport(new Uri(ProductionUpdateIdentity.Discovery), fixture.Clock, fixture);
+        fixture.Documents["win-x64-beta.json"] = Encoding.UTF8.GetBytes("{\"release\":\"v1.1.0\",\"bridges\":{}}");
+        using HttpsUpdateTransport transport = new HttpsUpdateTransport(new Uri(ProductionUpdateIdentity.Discovery), fixture.Clock, fixture, channel);
         using AuthenticatedClientUpdates service = new AuthenticatedClientUpdates(transport, wrongKey ? ProductionUpdateIdentity.PublicKey : fixture.Signer.PublicKey, channel, "1.0.0", 2, UpdateFixture.InitialMigration, fixture.Directory);
 
         // Act
@@ -41,7 +41,7 @@ public sealed class ProductionPreparationTests
         // Assert
         Assert.That(service.Current.Stage, Is.EqualTo(expected));
         Assert.That(service.Current.CanRestart, Is.False);
-        Assert.That(fixture.Requests.Contains(ClientUpdateFixture.PackageName), Is.EqualTo(expected == UpdateStage.Ready));
+        Assert.That(fixture.Requests.Contains(ClientUpdateFixture.BundleName), Is.EqualTo(expected == UpdateStage.Ready));
     }
 
     [Test]
@@ -82,7 +82,7 @@ public sealed class ProductionPreparationTests
         // Arrange
         string transition = "transition-" + new string('A', 64);
         string tag = "v1";
-        Handler handler = new Handler(uri => uri.Host == "raw.githubusercontent.com" ?
+        Handler handler = new Handler(uri => uri.AbsoluteUri == ProductionUpdateIdentity.Discovery ?
             "{\"release\":\"" + tag + "\",\"bridges\":{\"" + transition + "\":\"retained-v0\"}}" : uri.AbsolutePath);
         using HttpsUpdateTransport transport = new HttpsUpdateTransport(new Uri(ProductionUpdateIdentity.Discovery), TimeProvider.System, handler);
 
@@ -95,9 +95,9 @@ public sealed class ProductionPreparationTests
         Outcome<byte[]> second = await transport.FetchAsync("Postfold.win-x64-beta.manifest.json", 65536, CancellationToken.None);
 
         // Assert
-        Assert.That(Encoding.UTF8.GetString(first.Value!), Does.Contain("/v1/"));
-        Assert.That(Encoding.UTF8.GetString(second.Value!), Does.Contain("/v2/"));
-        Assert.That(Encoding.UTF8.GetString(bridge.Value!), Does.Contain("/retained-v0/"));
+        Assert.That(Encoding.UTF8.GetString(first.Value!), Is.EqualTo("/CarlHalstead/Postfold/main/updates/releases/v1/win-x64-beta/Postfold.win-x64-beta.manifest.json"));
+        Assert.That(Encoding.UTF8.GetString(second.Value!), Is.EqualTo("/CarlHalstead/Postfold/main/updates/releases/v2/win-x64-beta/Postfold.win-x64-beta.manifest.json"));
+        Assert.That(Encoding.UTF8.GetString(bridge.Value!), Is.EqualTo("/CarlHalstead/Postfold/main/updates/releases/retained-v0/win-x64-beta/" + transition + ".sig"));
         Assert.That(UpdateTrust.VerifyManifest(second.Value!, new byte[384], ProductionUpdateIdentity.PublicKey).IsSuccess, Is.False);
     }
 

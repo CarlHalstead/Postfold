@@ -55,7 +55,7 @@ public sealed class VerifiedUpdateSourceTests
         else
         {
             Assert.That(File.Exists(target), Is.False);
-            Assert.That(Directory.GetFiles(cache, "*.partial"), Has.Length.EqualTo(1));
+            Assert.That(Directory.GetFiles(cache, "*.partial"), Is.Empty);
         }
     }
 
@@ -90,7 +90,7 @@ public sealed class VerifiedUpdateSourceTests
     }
 
     [Test]
-    public async Task DownloadFullAsync_WhenCancelled_PreservesPartialWithoutMarkingReady()
+    public async Task DownloadFullAsync_WhenCancelled_RemovesOwnedScratchWithoutMarkingReady()
     {
         // Arrange
         using UpdateFixture fixture = new UpdateFixture();
@@ -106,7 +106,7 @@ public sealed class VerifiedUpdateSourceTests
         // Act / Assert
         await Assert.ThrowsAsync<OperationCanceledException>(() => source.DownloadFullAsync(target, cancel.Token));
         Assert.That(File.Exists(target), Is.False);
-        Assert.That(Directory.GetFiles(cache, "*.partial"), Has.Length.EqualTo(1));
+        Assert.That(Directory.GetFiles(cache, "*.partial"), Is.Empty);
     }
 
     [Test]

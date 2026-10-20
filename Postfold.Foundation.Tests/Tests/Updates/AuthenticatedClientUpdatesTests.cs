@@ -101,7 +101,7 @@ public sealed class AuthenticatedClientUpdatesTests
         Assert.That(service.Current.Stage, Is.EqualTo(fault == "current" ? UpdateStage.Current : UpdateStage.Failed));
         Assert.That(ui.Button("DownloadUpdate").IsEnabled, Is.False);
         Assert.That(ui.Button("RestartToUpdate").IsEnabled, Is.False);
-        Assert.That(fixture.Requests, Does.Not.Contain(ClientUpdateFixture.PackageName));
+        Assert.That(fixture.Requests, Does.Not.Contain(ClientUpdateFixture.BundleName));
         if (fault == "current")
         {
             Assert.That(service.Current.Failure, Is.EqualTo(Failure.None));
@@ -185,7 +185,7 @@ public sealed class AuthenticatedClientUpdatesTests
         Assert.That(ui.Button("RestartToUpdate").IsEnabled, Is.False);
         UpdateStatus denied = await service.DownloadAsync(new Progress<UpdateStatus>(), CancellationToken.None);
         Assert.That(denied.Stage, Is.EqualTo(UpdateStage.Failed));
-        Assert.That(fixture.Requests, Does.Not.Contain(ClientUpdateFixture.PackageName));
+        Assert.That(fixture.Requests, Does.Not.Contain(ClientUpdateFixture.BundleName));
     }
 
     [AvaloniaTest]
@@ -390,7 +390,7 @@ public sealed class AuthenticatedClientUpdatesTests
         await ui.ClickAsync("CheckForUpdates");
         TaskCompletionSource reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        fixture.Response = (name, _) => Task.FromResult(name == ClientUpdateFixture.PackageName ? new HttpResponseMessage(HttpStatusCode.OK)
+        fixture.Response = (name, _) => Task.FromResult(name == ClientUpdateFixture.BundleName ? new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StreamContent(new GatedStream(fixture.Signer.Package, reached, release))
         } : fixture.Respond(name));
@@ -412,8 +412,7 @@ public sealed class AuthenticatedClientUpdatesTests
             Assert.That(ui.Button("DownloadUpdate").IsEnabled, Is.False);
             string cache = Path.Combine(fixture.Directory, "packages");
             Assert.That(File.Exists(Path.Combine(cache, ClientUpdateFixture.PackageName)), Is.False);
-            Assert.That(System.IO.Directory.GetFiles(cache, "*.partial"), Has.Length.EqualTo(1));
-            Assert.That(new FileInfo(System.IO.Directory.GetFiles(cache, "*.partial").Single()).Length, Is.GreaterThan(0));
+            Assert.That(System.IO.Directory.GetFiles(cache, "*.partial"), Is.Empty);
             fixture.Response = null;
             await ui.ClickAsync("CheckForUpdates");
             await ui.ClickAsync("DownloadUpdate");
@@ -511,7 +510,7 @@ public sealed class AuthenticatedClientUpdatesTests
 
         // Assert
         Assert.That(service.Current.Stage, Is.EqualTo(UpdateStage.Failed));
-        Assert.That(fixture.Requests, Does.Not.Contain(ClientUpdateFixture.PackageName));
+        Assert.That(fixture.Requests, Does.Not.Contain(ClientUpdateFixture.BundleName));
         Assert.That(ui.Button("RestartToUpdate").IsEnabled, Is.False);
     }
 

@@ -60,7 +60,7 @@ public sealed class UpdateSchedulingTests
             clock.Advance(TimeSpan.FromHours(1));
             await session.ObservePowerMessage(0x0218, new IntPtr(0x12)).WaitAsync(TimeSpan.FromSeconds(10));
             Assert.That(fixture.Requests, Has.Count.EqualTo(6));
-            Assert.That(fixture.Requests, Does.Not.Contain(ClientUpdateFixture.PackageName));
+            Assert.That(fixture.Requests, Does.Not.Contain(ClientUpdateFixture.BundleName));
         }
         finally
         {
@@ -83,7 +83,7 @@ public sealed class UpdateSchedulingTests
         TaskCompletionSource reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        fixture.Response = (name, _) => Task.FromResult(name == ClientUpdateFixture.PackageName ? new HttpResponseMessage(HttpStatusCode.OK)
+        fixture.Response = (name, _) => Task.FromResult(name == ClientUpdateFixture.BundleName ? new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StreamContent(new LateStream(fixture.Signer.Package, reached, release))
         } : fixture.Respond(name));
@@ -112,7 +112,7 @@ public sealed class UpdateSchedulingTests
             string database = Path.Combine(profiles, "default", "profile.db");
             using FileStream exclusive = new FileStream(database + ".lease", FileMode.Open, FileAccess.ReadWrite, FileShare.None);
             Assert.That(File.Exists(Path.Combine(fixture.Directory, "packages", ClientUpdateFixture.PackageName)), Is.False);
-            Assert.That(Directory.GetFiles(Path.Combine(fixture.Directory, "packages"), "*.partial"), Has.Length.EqualTo(1));
+            Assert.That(Directory.GetFiles(Path.Combine(fixture.Directory, "packages"), "*.partial"), Is.Empty);
         }
         finally
         {
@@ -339,7 +339,7 @@ public sealed class UpdateSchedulingTests
 
         // Assert
         Assert.That(ui.Service.Current.Stage, Is.EqualTo(cost == UpdateConnection.Offline ? UpdateStage.Idle : permitted ? UpdateStage.Ready : UpdateStage.Available));
-        Assert.That(fixture.Requests.Contains(ClientUpdateFixture.PackageName), Is.EqualTo(permitted));
+        Assert.That(fixture.Requests.Contains(ClientUpdateFixture.BundleName), Is.EqualTo(permitted));
         if (cost == UpdateConnection.Offline)
         {
             Assert.That((await ui.Service.CheckAsync(new Progress<UpdateStatus>(), CancellationToken.None)).Failure, Is.EqualTo(Failure.Unavailable));
@@ -381,7 +381,7 @@ public sealed class UpdateSchedulingTests
         await ui.SaveAsync(new UpdatePreferences(DownloadsEnabled: false));
         await ui.SettleAsync();
         Assert.That(ui.Service.Current.Stage, Is.EqualTo(UpdateStage.Available));
-        Assert.That(fixture.Requests, Does.Not.Contain(ClientUpdateFixture.PackageName));
+        Assert.That(fixture.Requests, Does.Not.Contain(ClientUpdateFixture.BundleName));
         Assert.That((await ui.Service.DownloadAsync(new Progress<UpdateStatus>(), CancellationToken.None)).Failure, Is.EqualTo(Failure.PolicyBlocked));
         Assert.That(fixture.Requests, Has.Count.EqualTo(3));
     }
@@ -464,8 +464,8 @@ public sealed class UpdateSchedulingTests
         await ui.SettleAsync();
         fixture.Response = (name, _) =>
         {
-            HttpResponseMessage response = name == ClientUpdateFixture.PackageName ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) : fixture.Respond(name);
-            if (name == ClientUpdateFixture.PackageName)
+            HttpResponseMessage response = name == ClientUpdateFixture.BundleName ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) : fixture.Respond(name);
+            if (name == ClientUpdateFixture.BundleName)
             {
                 response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMinutes(15));
             }
@@ -490,7 +490,7 @@ public sealed class UpdateSchedulingTests
         Assert.That(ui.Service.Current.Stage, Is.EqualTo(UpdateStage.Ready));
         string package = Path.Combine(fixture.Directory, "packages", ClientUpdateFixture.PackageName);
         Assert.That(File.ReadAllBytes(package), Is.EqualTo(fixture.Signer.Package));
-        Assert.That(Directory.GetFiles(Path.GetDirectoryName(package)!, "*.partial"), Has.Length.EqualTo(1));
+        Assert.That(Directory.GetFiles(Path.GetDirectoryName(package)!, "*.partial"), Is.Empty);
         File.WriteAllBytes(package, [1, 2, 3]);
         await ui.ClickAsync("CheckForUpdates");
         int cachedRequests = fixture.Requests.Count;
@@ -518,7 +518,7 @@ public sealed class UpdateSchedulingTests
         await ui.SaveAsync(UpdatePreferences.Default);
         TaskCompletionSource reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        fixture.Response = (name, _) => Task.FromResult(name == ClientUpdateFixture.PackageName ? new HttpResponseMessage(HttpStatusCode.OK)
+        fixture.Response = (name, _) => Task.FromResult(name == ClientUpdateFixture.BundleName ? new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StreamContent(new LateStream(fixture.Signer.Package, reached, release))
         } : fixture.Respond(name));
@@ -571,7 +571,7 @@ public sealed class UpdateSchedulingTests
             Assert.That(ui.Service.Current.Stage, Is.EqualTo(UpdateStage.Cancelled));
             Assert.That(ui.Service.IsBusy, Is.False);
             Assert.That(File.Exists(Path.Combine(fixture.Directory, "packages", ClientUpdateFixture.PackageName)), Is.False);
-            Assert.That(Directory.GetFiles(Path.Combine(fixture.Directory, "packages"), "*.partial"), Has.Length.EqualTo(1));
+            Assert.That(Directory.GetFiles(Path.Combine(fixture.Directory, "packages"), "*.partial"), Is.Empty);
             Assert.That(ui.Button("RestartToUpdate").IsEnabled, Is.False);
             if (trigger != "shutdown")
             {
@@ -731,7 +731,7 @@ public sealed class UpdateSchedulingTests
             {
                 await PumpAsync();
             }
-            Assert.That(Button(name).IsEnabled, Is.True, name);
+            Assert.That(Button(name).IsEnabled, Is.True, name + ": " + Service.Current + "; busy=" + Service.IsBusy);
             Button(name).RaiseEvent(new RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
             await DrainAsync();
             await PumpAsync();

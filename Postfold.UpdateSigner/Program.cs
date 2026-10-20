@@ -9,9 +9,17 @@ internal static class Program
 {
     private static async Task<int> Main(string[] args)
     {
+        if (args.Length == 5 && args[0] == "verify")
+        {
+            using CancellationTokenSource deadline = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+            bool verified = await OfflineUpdateSigner.VerifyAsync(args[1], args[2], args[3], args[4], deadline.Token);
+            Console.WriteLine(verified ? "Exact signed manifest, feed and package verified." : "Verification refused.");
+            return verified ? 0 : 1;
+        }
         if (args.Length != 5 || args[0] is not ("manifest" or "transition") || Console.IsInputRedirected)
         {
             Console.Error.WriteLine("Usage: Postfold.UpdateSigner manifest|transition document artifacts-directory encrypted-pkcs8 signature-output");
+            Console.Error.WriteLine("Verify: Postfold.UpdateSigner verify document artifacts-directory public-spki-base64 signature");
             Console.Error.WriteLine("The passphrase is read privately from an interactive terminal; no key generation or publication occurs.");
             return 2;
         }
