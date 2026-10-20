@@ -1,15 +1,25 @@
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Headless.NUnit;
+using NSubstitute;
 using NUnit.Framework;
 using Postfold.Core.Enums;
+using Postfold.Core.Interfaces;
 using Postfold.Core.Models;
+using Postfold.Core.Models.Updates;
 using Postfold.Core.Policies.Updates;
 using Postfold.Desktop.Composition;
 using Postfold.Desktop.Models.Updates;
 using Postfold.Desktop.Services.Updates;
+using Postfold.Engine.Tests.Fixtures;
 using Postfold.Foundation.Tests.Fixtures.Updates;
+using Postfold.UI.Views;
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -45,7 +55,7 @@ public sealed class ProductionPreparationTests
     }
 
     [Test]
-    public void Identity_WhenReviewed_IsCanonicalAndNormalCompositionIsInactive()
+    public void Identity_WhenReviewed_IsCanonicalAndUnconfiguredCompositionIsInactive()
     {
         // Arrange / Act
         ProductionUpdateIdentity.Validate();
@@ -54,6 +64,69 @@ public sealed class ProductionPreparationTests
         // Assert
         Assert.That(UpdateTrust.KeyId(ProductionUpdateIdentity.PublicKey), Is.EqualTo(ProductionUpdateIdentity.KeyId));
         Assert.That(updates.Current.CanRestart, Is.False);
+    }
+
+    [AvaloniaTest]
+    [TestCase(false, UpdateStage.Inactive)]
+    [TestCase(true, UpdateStage.Failed)]
+    public async Task Startup_WhenUpdatesCannotActivate_AdmitsMailWithoutScheduler(bool invalidState, UpdateStage expected)
+    {
+        // Arrange
+        string profiles = Path.Combine(EngineFixture.DirectoryPath(), "profiles");
+        IClassicDesktopStyleApplicationLifetime lifetime = Substitute.For<IClassicDesktopStyleApplicationLifetime>();
+        TaskCompletionSource shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lifetime.When(value => value.Shutdown(0)).Do(_ => shutdown.TrySetResult());
+        ClientUpdateConfiguration? configuration = invalidState ? new ClientUpdateConfiguration(
+            new Uri(ProductionUpdateIdentity.Discovery),
+            ProductionUpdateIdentity.PublicKey,
+            "beta",
+            "1.0.0",
+            2,
+            UpdateFixture.InitialMigration,
+            AppContext.BaseDirectory
+        ) : null;
+        DesktopSession session = new DesktopSession(lifetime, profilesDirectory: profiles, updateConfiguration: configuration);
+        session.Window.Show();
+        try
+        {
+            // Act
+            await session.Startup;
+            IClientUpdates updates = (IClientUpdates)typeof(DesktopSession).GetField("_updates", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(session)!;
+
+            // Assert
+            Assert.That(updates, Is.TypeOf<InactiveClientUpdates>());
+            Assert.That(updates.Current.Stage, Is.EqualTo(expected));
+            Assert.That(updates.Current.Failure, Is.EqualTo(invalidState ? Failure.NeedsReview : Failure.None));
+            Assert.That(typeof(DesktopSession).GetField("_updateConfiguration", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(session), Is.EqualTo(configuration));
+            Assert.That(session.Window.OwnedWindows, Has.Some.TypeOf<AccountSetupWindow>());
+        }
+        finally
+        {
+            foreach (Window child in session.Window.OwnedWindows.ToArray())
+            {
+                child.Close();
+            }
+            session.Window.Close();
+            await shutdown.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            session.Window.Close();
+        }
+    }
+
+    [Test]
+    public async Task InactiveClient_WhenAdmissionFailed_RetainsActionableFailureWithoutRestart()
+    {
+        // Arrange
+        InactiveClientUpdates updates = new InactiveClientUpdates(Failure.NeedsReview);
+
+        // Act
+        UpdateStatus status = await updates.CheckAsync(new Progress<UpdateStatus>(), CancellationToken.None);
+        UpdateStatus restart = await updates.RestartAsync(CancellationToken.None);
+
+        // Assert
+        Assert.That(status.Stage, Is.EqualTo(UpdateStage.Failed));
+        Assert.That(status.Failure, Is.EqualTo(Failure.NeedsReview));
+        Assert.That(restart.CanRestart, Is.False);
+        Assert.That(restart, Is.EqualTo(status));
     }
 
     [TestCase("{\"release\":null,\"bridges\":{}}", Failure.NotFound)]

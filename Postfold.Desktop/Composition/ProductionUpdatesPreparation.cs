@@ -14,17 +14,24 @@ using System.Xml.Linq;
 namespace Postfold.Desktop.Composition;
 
 /// <summary>
-/// Dormant preparation, never called by Program, App, session startup or Settings.
+/// Installed startup admission; unpackaged builds without an embedded inventory remain inactive.
 /// Inventory is embedded at publish from the freshly built broker/helper, never trusted beside them.
 /// The admitted runtime owns compatibility; the installed native manifest and assembly own version/source.
 /// </summary>
 internal static class ProductionUpdatesPreparation
 {
-    internal static (ClientUpdateConfiguration Client, NativeRestartConfiguration Native) Review(DesktopMailRuntime admitted)
+    internal static (ClientUpdateConfiguration Client, NativeRestartConfiguration Native)? Review(DesktopMailRuntime admitted)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
         Assembly assembly = typeof(ProductionUpdatesPreparation).Assembly;
-        using Stream inventory = assembly.GetManifestResourceStream("Postfold.ProductionNativeInventory.json") ??
-            throw new InvalidDataException("This build has no reviewed native inventory.");
+        using Stream? inventory = assembly.GetManifestResourceStream("Postfold.ProductionNativeInventory.json");
+        if (inventory is null)
+        {
+            return null;
+        }
         string identity = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
         string installation = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
         return ReviewInventory(inventory, installation, identity, admitted.ProfileFormat, admitted.ProfileMigration);

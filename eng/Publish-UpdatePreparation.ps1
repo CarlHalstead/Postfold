@@ -34,4 +34,4 @@ Invoke-Dotnet -Arguments @('publish','Postfold.Desktop','-c','Release','-r','win
 Copy-Item -LiteralPath (Join-Path $root 'ThirdPartyNotices') -Destination $output -Recurse
 & (Join-Path $PSScriptRoot 'Test-PublishInventory.ps1') -PublishDirectory $output -ProductionPreparation
 & (Join-Path $PSScriptRoot 'Test-DraftSource.ps1') @sourceArguments | Out-Null
-Write-Output 'Dormant production preparation published; no installer, signing or updater activation.'
+Write-Output 'Installed updater composition prepared; no installer, signing or publication performed.'

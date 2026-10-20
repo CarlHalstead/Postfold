@@ -24,8 +24,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
 
 namespace Postfold.Desktop.Composition;
 
@@ -51,11 +54,11 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
     private WindowsNewMailNotification? _notifications;
     private WindowsHtmlReadingService? _html;
     private IClientUpdates? _updates;
-    private readonly ClientUpdateConfiguration? _updateConfiguration;
+    private ClientUpdateConfiguration? _updateConfiguration;
     private readonly TimeProvider? _updateTime;
     private readonly HttpMessageHandler? _updateHandler;
     private readonly IUpdateConnection? _updateConnection;
-    private readonly NativeRestartConfiguration? _nativeRestart;
+    private NativeRestartConfiguration? _nativeRestart;
     private bool _restartPending;
     private string? _shutdownExplanation;
     private bool _powerHook;
@@ -72,6 +75,10 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
         NativeRestartConfiguration? nativeRestart = null
     )
     {
+        if (nativeRestart is not null && updateConfiguration is null)
+        {
+            throw new ArgumentException("Native restart requires its matching client configuration.", nameof(nativeRestart));
+        }
         _desktop = desktop;
         _updateConfiguration = updateConfiguration;
         _updateTime = updateTime;
@@ -442,17 +449,8 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
             IMailApplication application = _host.Application;
             MainWindowViewModel model = _startupModel!;
             _notifications = new WindowsNewMailNotification(_window, TimeProvider.System);
-            _updates = ClientUpdatesComposition.Create(_updateConfiguration, _updateTime, _updateHandler, _host.DesktopPreferences, _updateConnection, _nativeRestart is null ? null : this);
+            await StartUpdatesAsync();
             _integration = new DesktopIntegration(_window, _host.DesktopPreferences, _notifications, _updates as IClientUpdateActivity);
-            if (_updates is ScheduledClientUpdates scheduled)
-            {
-                await scheduled.StartAsync(_lifetime.Token);
-                if (_window.TryGetPlatformHandle()?.HandleDescriptor == "HWND")
-                {
-                    Win32Properties.AddWndProcHookCallback(_window, OnPowerMessage);
-                    _powerHook = true;
-                }
-            }
             _integration.ExitRequested += (_, _) =>
             {
                 _exitRequested = true;
@@ -513,9 +511,11 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
         }
         catch (OperationCanceledException)
         {
+            await StopUpdatesAsync();
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            await StopUpdatesAsync();
             _window.DataContext ??= new MainWindowViewModel();
             _window.ReportStartupFailure(
                 Failure.Unavailable,
@@ -524,6 +524,40 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
             );
         }
         return false;
+    }
+
+    private async Task StartUpdatesAsync()
+    {
+        try
+        {
+            if (_updateConfiguration is null)
+            {
+                // Native inventory/hash admission is owned startup IO, never dispatcher or Settings work.
+                (ClientUpdateConfiguration Client, NativeRestartConfiguration Native)? reviewed = await Task.Run(
+                    () => ProductionUpdatesPreparation.Review(_host!),
+                    _lifetime.Token
+                );
+                if (reviewed is not null)
+                {
+                    (_updateConfiguration, _nativeRestart) = reviewed.Value;
+                }
+            }
+            _updates = ClientUpdatesComposition.Create(_updateConfiguration, _updateTime, _updateHandler, _host!.DesktopPreferences, _updateConnection, _nativeRestart is null ? null : this);
+            if (_updates is ScheduledClientUpdates scheduled)
+            {
+                await scheduled.StartAsync(_lifetime.Token);
+                if (_window.TryGetPlatformHandle()?.HandleDescriptor == "HWND")
+                {
+                    Win32Properties.AddWndProcHookCallback(_window, OnPowerMessage);
+                    _powerHook = true;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or CryptographicException or JsonException or XmlException or ArgumentException or FormatException or InvalidOperationException or System.Collections.Generic.KeyNotFoundException)
+        {
+            await StopUpdatesAsync();
+            _updates = new InactiveClientUpdates(Failure.NeedsReview);
+        }
     }
 
     private async Task StopUpdatesAsync()

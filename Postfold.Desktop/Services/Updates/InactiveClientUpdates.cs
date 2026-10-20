@@ -10,7 +10,12 @@ namespace Postfold.Desktop.Services.Updates;
 /// <summary>No transport, timer, updater or shutdown dependency: this build cannot discover or apply updates.</summary>
 internal sealed class InactiveClientUpdates : IClientUpdates
 {
-    public UpdateStatus Current { get; } = new UpdateStatus(UpdateStage.Inactive);
+    internal InactiveClientUpdates(Failure failure = Failure.None)
+    {
+        Current = new UpdateStatus(failure == Failure.None ? UpdateStage.Inactive : UpdateStage.Failed, Failure: failure);
+    }
+
+    public UpdateStatus Current { get; }
 
     public Task<UpdateStatus> CheckAsync(IProgress<UpdateStatus> progress, CancellationToken cancellationToken)
     {

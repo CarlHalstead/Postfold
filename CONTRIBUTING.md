@@ -62,7 +62,10 @@ separate release approval, then update the location catalogue last. Versioned pa
 are append-only by release procedure, not immutable hosting. CI remains unsigned and draft-only.
 The updater reads metadata during Check and downloads the ZIP only under download policy; it
 stages the signed full package and never executes bundled Setup. Existing inactive builds need
-one manual bootstrap to a future activated ZIP-capable build. Production activation remains separate.
+one manual bootstrap to the first approved activated ZIP-capable build. Installed Windows builds admit
+the embedded native/source inventory after profile admission and start the existing policy-controlled
+updater owner. Unpackaged builds remain inactive; invalid update admission reports a local failure while
+mail stays usable. Signing, release publication and catalogue activation require separate approval.
 
 ## Submit
 

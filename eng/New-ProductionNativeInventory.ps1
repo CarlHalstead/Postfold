@@ -62,4 +62,4 @@ $receipt = [ordered]@{
     velopack = '1.2.161'
 }
 [IO.File]::WriteAllText($OutputPath, (($receipt | ConvertTo-Json) + "`n"), [Text.UTF8Encoding]::new($false))
-Write-Output "Prepared dormant native inventory: $OutputPath"
+Write-Output "Prepared native inventory: $OutputPath"
