@@ -362,6 +362,11 @@
         "resolved": "10.0.13",
         "contentHash": "ZjTwxzhiw2TMEzIbUDkMF0dfDB2I4NQgIfKD0ELu9/5Mk+SRGdKZcD0/lvBrRCAPo6KN2r0BW86MRancoyJkoA=="
       },
+      "Microsoft.IdentityModel.Abstractions": {
+        "type": "Transitive",
+        "resolved": "8.14.0",
+        "contentHash": "iwbCpSjD3ehfTwBhtSNEtKPK0ICun6ov7Ibx6ISNA9bfwIyzI2Siwyi9eJFCJBwxowK9xcA1mj+jBWiigeqgcQ=="
+      },
       "Microsoft.Testing.Extensions.Telemetry": {
         "type": "Transitive",
         "resolved": "2.4.1",
@@ -484,6 +489,7 @@
           "Avalonia.Controls.WebView": "[12.1.0, )",
           "Avalonia.Desktop": "[12.1.3, )",
           "Avalonia.Themes.Fluent": "[12.1.3, )",
+          "Microsoft.Identity.Client": "[4.91.0, )",
           "Postfold.Core": "[1.0.0, )",
           "Postfold.Protocols": "[1.0.0, )",
           "Postfold.Storage": "[1.0.0, )",
@@ -641,6 +647,15 @@
           "Microsoft.Extensions.Logging": "10.0.13",
           "SQLitePCLRaw.bundle_e_sqlite3": "2.1.13",
           "SQLitePCLRaw.core": "2.1.13"
+        }
+      },
+      "Microsoft.Identity.Client": {
+        "type": "CentralTransitive",
+        "requested": "[4.91.0, )",
+        "resolved": "4.91.0",
+        "contentHash": "u+j8hdM/Eez1j0rQVodY+4MRfsLgmsskjMgVkf74xkLWssbW4mqSgz0Tx4H0CJTtrDes00M5s4545rbLN61/uw==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Abstractions": "8.14.0"
         }
       },
       "MimeKit": {

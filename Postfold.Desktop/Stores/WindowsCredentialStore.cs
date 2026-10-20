@@ -177,7 +177,7 @@ public sealed class WindowsCredentialStore : ICredentialStore
     }
 
     [SupportedOSPlatform("windows")]
-    private static void ValidateAcl(FileSystemSecurity security)
+    internal static void ValidateAcl(FileSystemSecurity security)
     {
         SecurityIdentifier owner = WindowsIdentity.GetCurrent().User!;
         if (!security.AreAccessRulesProtected || !owner.Equals(security.GetOwner(typeof(SecurityIdentifier))))
@@ -194,7 +194,7 @@ public sealed class WindowsCredentialStore : ICredentialStore
         }
     }
 
-    private static void CheckPath(string path)
+    internal static void CheckPath(string path)
     {
         string? current = Path.GetFullPath(path);
         while (current is not null)

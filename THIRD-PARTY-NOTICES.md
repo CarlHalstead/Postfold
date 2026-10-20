@@ -21,6 +21,7 @@ The separately installed Windows WebView2 browser runtime is an OS prerequisite;
 | AngleSharp / AngleSharp.Css | 1.7.2 / 1.0.2 | MIT |
 | HtmlSanitizer | 9.2.1039 | MIT |
 | MailKit / MimeKit | 4.18.1 | MIT |
+| Microsoft.Identity.Client / Microsoft.IdentityModel.Abstractions | 4.91.0 / 8.14.0 | MIT; Microsoft Corporation |
 | BouncyCastle.Cryptography | 2.7.0 | MIT |
 | CommunityToolkit.Mvvm | 8.4.2 | MIT |
 | MicroCom.Runtime | 0.11.6 | MIT |
