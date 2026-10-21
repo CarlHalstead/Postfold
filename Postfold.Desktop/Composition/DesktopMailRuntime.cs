@@ -16,6 +16,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -31,11 +32,13 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
     private readonly EngineLimits _limits;
     private readonly MimePipeline _mime;
     private readonly IRetryDelayPolicy _retry;
-    private readonly Dictionary<AccountId, (ImapAdapter Adapter, MailAccountEngine Engine)> _accounts =
-        new Dictionary<AccountId, (ImapAdapter, MailAccountEngine)>();
+    private readonly Dictionary<AccountId, (IMailboxReader Adapter, MailAccountEngine Engine)> _accounts =
+        new Dictionary<AccountId, (IMailboxReader, MailAccountEngine)>();
     private readonly SemaphoreSlim _connections = new SemaphoreSlim(1, 1);
     private readonly Dictionary<AccountId, ITransportCredentials> _credentials = new Dictionary<AccountId, ITransportCredentials>();
     private readonly Dictionary<AccountId, MicrosoftAccountAuthenticator> _authenticators = new Dictionary<AccountId, MicrosoftAccountAuthenticator>();
+    private readonly Dictionary<AccountId, GoogleAccountAuthenticator> _googleAuthenticators = new Dictionary<AccountId, GoogleAccountAuthenticator>();
+    private readonly Dictionary<AccountId, HttpClient> _googleHttp = new Dictionary<AccountId, HttpClient>();
     private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
     private bool _stopping;
 
@@ -74,10 +77,11 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
     internal string ProfileMigration => _profile.AdmittedMigration;
     internal Microsoft.Identity.Client.IMsalHttpClientFactory? AuthenticationHttpFactory { get; set; }
     internal Action<ImapAdapter, SmtpSubmitter>? ConfigureFixtureTransports { get; set; }
+    internal Func<HttpClient>? GoogleHttpFactory { get; set; }
 
     public IMailAccountEngine? Find(AccountId account)
     {
-        return _accounts.TryGetValue(account, out (ImapAdapter Adapter, MailAccountEngine Engine) entry) ? entry.Engine : null;
+        return _accounts.TryGetValue(account, out (IMailboxReader Adapter, MailAccountEngine Engine) entry) ? entry.Engine : null;
     }
 
     public Task<AccountId> NextAccountIdAsync(CancellationToken cancellationToken)
@@ -103,7 +107,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
                 return Failure.NotFound;
             }
             FolderRoles? roles = await _profile.ReadRolesAsync(account, cancellationToken).ConfigureAwait(false);
-            if (_accounts.TryGetValue(account, out (ImapAdapter Adapter, MailAccountEngine Engine) previous))
+            if (_accounts.TryGetValue(account, out (IMailboxReader Adapter, MailAccountEngine Engine) previous))
             {
                 await previous.Engine.DisposeAsync().ConfigureAwait(false);
                 await _scheduler.SuspendAsync(account).ConfigureAwait(false);
@@ -114,12 +118,10 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             if (result != Failure.None)
             {
                 _scheduler.Resume(account);
-                if (_credentials.TryGetValue(account, out ITransportCredentials? credentials))
-                {
-                    ImmutableArray<MailboxSnapshot> mailboxes = (await _profile.MailboxesAsync(CancellationToken.None)
-                        .ConfigureAwait(false)).Where(item => item.Account == account).ToImmutableArray();
-                    _accounts[account] = CreateRestoredAccount(configuration, mailboxes, roles, credentials);
-                }
+                _credentials.TryGetValue(account, out ITransportCredentials? credentials);
+                ImmutableArray<MailboxSnapshot> mailboxes = (await _profile.MailboxesAsync(CancellationToken.None)
+                    .ConfigureAwait(false)).Where(item => item.Account == account).ToImmutableArray();
+                _accounts[account] = CreateRestoredAccount(configuration, mailboxes, roles, credentials);
                 return result;
             }
             _accounts.Remove(account);
@@ -127,6 +129,14 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             if (_authenticators.Remove(account, out MicrosoftAccountAuthenticator? authenticator))
             {
                 await authenticator.DisposeAsync().ConfigureAwait(false);
+            }
+            if (_googleAuthenticators.Remove(account, out GoogleAccountAuthenticator? google))
+            {
+                await google.DisposeAsync().ConfigureAwait(false);
+            }
+            if (_googleHttp.Remove(account, out HttpClient? http))
+            {
+                http.Dispose();
             }
 
             return Failure.None;
@@ -176,6 +186,12 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
 
                 ImmutableArray<MailboxSnapshot> cached = mailboxes.Where(item => item.Account == account.Id).ToImmutableArray();
                 FolderRoles? roles = await _profile.ReadRolesAsync(account.Id, linked.Token).ConfigureAwait(false);
+                if (account.ProviderKind == "Google")
+                {
+                    CreateGoogleAuthenticator(account, tokens, browser);
+                    _accounts.Add(account.Id, CreateRestoredAccount(account, cached, roles, null));
+                    continue;
+                }
                 ITransportCredentials source = CreateCredentials(account, credentials, tokens, browser);
                 _accounts.Add(account.Id, CreateRestoredAccount(account, cached, roles, source));
                 _credentials.Add(account.Id, source);
@@ -343,9 +359,13 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         try
         {
             ObjectDisposedException.ThrowIf(_stopping, this);
-            if (!_accounts.TryGetValue(account, out (ImapAdapter Adapter, MailAccountEngine Engine) entry))
+            if (!_accounts.TryGetValue(account, out (IMailboxReader Adapter, MailAccountEngine Engine) entry))
             {
                 return Failure.NotFound;
+            }
+            if (entry.Adapter is not ImapAdapter imap)
+            {
+                return Failure.Unsupported;
             }
 
             string?[] selected = [roles.Sent, roles.Drafts, roles.Archive, roles.Trash];
@@ -361,7 +381,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             await _profile.SaveMailboxesAsync(account, mailboxes, roles, cancellationToken).ConfigureAwait(false);
             mailboxes = mailboxes.Select(roles.Apply).ToImmutableArray();
             IRemoteDraftStore? drafts = roles.Drafts is null ? null :
-                entry.Adapter.SelectDraftMailbox(roles.Drafts, _profile.Blobs).Value;
+                imap.SelectDraftMailbox(roles.Drafts, _profile.Blobs).Value;
             SmtpSubmitter smtp = new SmtpSubmitter(
                 account,
                 configuration.Outgoing,
@@ -369,11 +389,11 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
                 _limits.MaximumMimeBytes
             );
             MailAccountEngine engine = new MailAccountEngine(
-                entry.Adapter,
-                entry.Adapter,
-                entry.Adapter,
+                imap,
+                imap,
+                imap,
                 drafts is null ? null : new ComposeRemoteDraftStore(drafts, _mime),
-                roles.Sent is null ? null : entry.Adapter,
+                roles.Sent is null ? null : imap,
                 smtp,
                 _profile,
                 _profile,
@@ -389,10 +409,10 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
                 _limits,
                 _profile,
                 mailboxes,
-                entry.Adapter.CreateIdleSignal()
+                imap.CreateIdleSignal()
             );
             await entry.Engine.DisposeAsync().ConfigureAwait(false);
-            entry.Adapter.SetRoles(roles);
+            imap.SetRoles(roles);
             _accounts[account] = (entry.Adapter, engine);
             return Failure.None;
         }
@@ -410,7 +430,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         try
         {
             await _scheduler.DisposeAsync().ConfigureAwait(false);
-            foreach ((ImapAdapter adapter, MailAccountEngine engine) in _accounts.Values)
+            foreach ((IMailboxReader adapter, MailAccountEngine engine) in _accounts.Values)
             {
                 await engine.DisposeAsync().ConfigureAwait(false);
                 await adapter.DisposeAsync().ConfigureAwait(false);
@@ -419,6 +439,14 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             foreach (MicrosoftAccountAuthenticator authenticator in _authenticators.Values)
             {
                 await authenticator.DisposeAsync().ConfigureAwait(false);
+            }
+            foreach (GoogleAccountAuthenticator authenticator in _googleAuthenticators.Values)
+            {
+                await authenticator.DisposeAsync().ConfigureAwait(false);
+            }
+            foreach (HttpClient http in _googleHttp.Values)
+            {
+                http.Dispose();
             }
 
             await _profile.DisposeAsync().ConfigureAwait(false);
@@ -439,7 +467,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         try
         {
             ObjectDisposedException.ThrowIf(_stopping, this);
-            if (!_accounts.TryGetValue(account, out (ImapAdapter Adapter, MailAccountEngine Engine) previous))
+            if (!_accounts.TryGetValue(account, out (IMailboxReader Adapter, MailAccountEngine Engine) previous))
             {
                 return Failure.NotFound;
             }
@@ -494,7 +522,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         {
             ObjectDisposedException.ThrowIf(_stopping, this);
             if (!_authenticators.TryGetValue(account, out MicrosoftAccountAuthenticator? authenticator) ||
-                !_accounts.TryGetValue(account, out (ImapAdapter Adapter, MailAccountEngine Engine) previous))
+                !_accounts.TryGetValue(account, out (IMailboxReader Adapter, MailAccountEngine Engine) previous))
             {
                 return Failure.NotFound;
             }
@@ -539,13 +567,74 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         return _profile.HasActiveSubmissionsAsync(cancellationToken);
     }
 
-    private (ImapAdapter Adapter, MailAccountEngine Engine) CreateRestoredAccount(
+    // Internal until separately scoped provider setup/reconnect acceptance.
+    internal async Task<Failure> BindGoogleAccountAsync(
+        AccountId account,
+        GoogleAccountBinding binding,
+        CancellationToken cancellationToken
+    )
+    {
+        await _connections.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_stopping, this);
+            return _accounts.ContainsKey(account) ? Failure.NeedsReview :
+                await _profile.BindGoogleAccountAsync(account, binding, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _connections.Release();
+        }
+    }
+
+    /// <summary>Drains account work before removing only local Google token bytes; retained binding and mail survive.</summary>
+    internal async Task<Failure> DeleteGoogleCredentialsAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        await _connections.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_stopping, this);
+            if (!_googleAuthenticators.TryGetValue(account, out GoogleAccountAuthenticator? authenticator) ||
+                !_accounts.TryGetValue(account, out (IMailboxReader Adapter, MailAccountEngine Engine) previous))
+            {
+                return Failure.NotFound;
+            }
+            AccountConfiguration configuration = (await _profile.AccountsAsync(cancellationToken).ConfigureAwait(false)).Single(item => item.Id == account);
+            ImmutableArray<MailboxSnapshot> mailboxes = previous.Engine.Mailboxes;
+            await previous.Engine.DisposeAsync().ConfigureAwait(false);
+            await _scheduler.SuspendAsync(account).ConfigureAwait(false);
+            await previous.Adapter.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                return (await authenticator.DeleteCredentialsAsync(cancellationToken).ConfigureAwait(false)).Failure;
+            }
+            finally
+            {
+                _accounts[account] = CreateGoogleAccount(configuration, mailboxes);
+                _scheduler.Resume(account);
+            }
+        }
+        finally
+        {
+            _connections.Release();
+        }
+    }
+
+    private (IMailboxReader Adapter, MailAccountEngine Engine) CreateRestoredAccount(
         AccountConfiguration account,
         ImmutableArray<MailboxSnapshot> mailboxes,
         FolderRoles? roles,
-        ITransportCredentials credentials
+        ITransportCredentials? credentials
     )
     {
+        if (account.ProviderKind == "Google")
+        {
+            return CreateGoogleAccount(account, mailboxes);
+        }
+        ArgumentNullException.ThrowIfNull(credentials);
         ImapAdapter adapter = new ImapAdapter(account.Id, account.Incoming, credentials, _limits.MaximumMimeBytes, _time);
         adapter.RestoreMailboxes(mailboxes);
         adapter.RestoreCapabilities(account.Capabilities);
@@ -581,6 +670,84 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             mailboxes
         );
         return (adapter, engine);
+    }
+
+    private void CreateGoogleAuthenticator(
+        AccountConfiguration account,
+        IProtectedTokenStore? tokens,
+        ISystemBrowser? browser
+    )
+    {
+        if (account.GoogleBinding is not { IsValid: true } binding || tokens is null || browser is null)
+        {
+            return;
+        }
+        GoogleAccountAuthenticator authenticator = new GoogleAccountAuthenticator(
+            account.Id,
+            binding.ClientId,
+            tokens,
+            browser,
+            GoogleHttp(account.Id),
+            _time,
+            TimeSpan.FromSeconds(30),
+            binding.Address
+        );
+        _googleAuthenticators.Add(account.Id, authenticator);
+    }
+
+    private (IMailboxReader Adapter, MailAccountEngine Engine) CreateGoogleAccount(
+        AccountConfiguration account,
+        ImmutableArray<MailboxSnapshot> mailboxes
+    )
+    {
+        _googleAuthenticators.TryGetValue(account.Id, out GoogleAccountAuthenticator? authentication);
+        GoogleAccountBinding binding = account.GoogleBinding ?? new GoogleAccountBinding("", "");
+        GmailAdapter adapter = new GmailAdapter(
+            account.Id,
+            binding,
+            authentication,
+            _profile.Blobs,
+            _limits.MaximumMimeBytes,
+            _time,
+            GoogleHttp(account.Id),
+            false
+        );
+        MailAccountEngine engine = new MailAccountEngine(
+            adapter,
+            adapter,
+            adapter,
+            new ComposeRemoteDraftStore(adapter, _mime),
+            adapter,
+            adapter,
+            _profile,
+            _profile,
+            _profile,
+            _profile,
+            _profile,
+            _profile.Blobs,
+            _mime,
+            _scheduler,
+            _policy,
+            _retry,
+            _time,
+            _limits,
+            _profile,
+            mailboxes
+        );
+        return (adapter, engine);
+    }
+
+    private HttpClient GoogleHttp(AccountId account)
+    {
+        if (!_googleHttp.TryGetValue(account, out HttpClient? http))
+        {
+            http = GoogleHttpFactory?.Invoke() ?? new HttpClient(new HttpClientHandler
+            {
+                AllowAutoRedirect = false
+            });
+            _googleHttp.Add(account, http);
+        }
+        return http;
     }
 
     private ITransportCredentials CreateCredentials(

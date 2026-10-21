@@ -95,7 +95,7 @@ public sealed class MailAccountEngine : IMailAccountEngine
     }
 
     public AccountId Account { get; }
-    public ImmutableArray<MailboxSnapshot> Mailboxes { get; }
+    public ImmutableArray<MailboxSnapshot> Mailboxes { get; private set; }
     public Capabilities Capabilities => _reader.Capabilities;
 
     public async Task<Failure> ReconcileAsync(string mailbox, CancellationToken cancellationToken)
@@ -113,7 +113,10 @@ public sealed class MailAccountEngine : IMailAccountEngine
             return Failure.Validation;
         }
 
-        ReconciliationWork work = new ReconciliationWork(_reader, _syncStore, selected, _limits.MetadataBatch);
+        ICanonicalMailboxReader? canonical = _reader as ICanonicalMailboxReader;
+        IAccountWork work = canonical is null ?
+            new ReconciliationWork(_reader, _syncStore, selected, _limits.MetadataBatch) :
+            new CanonicalReconciliationWork(canonical, _syncStore, _limits.MetadataBatch);
         Checkpoint? checkpoint;
         do
         {
@@ -128,9 +131,15 @@ public sealed class MailAccountEngine : IMailAccountEngine
                 return result;
             }
 
-            checkpoint = await _syncStore.ReadCheckpointAsync(Account, mailbox, cancellationToken).ConfigureAwait(false);
+            checkpoint = await _syncStore.ReadCheckpointAsync(Account, canonical is null ? mailbox : "$account", cancellationToken).ConfigureAwait(false);
         }
         while (checkpoint is { Complete: false });
+
+        if (canonical is not null && _syncStore is IClientCatalog catalog)
+        {
+            Mailboxes = (await catalog.MailboxesAsync(cancellationToken).ConfigureAwait(false))
+                .Where(item => item.Account == Account).ToImmutableArray();
+        }
 
         if (_mutator is not null)
         {
@@ -155,7 +164,7 @@ public sealed class MailAccountEngine : IMailAccountEngine
             {
                 if (message.Availability != ContentAvailability.Available &&
                     message.Date >= _time.GetUtcNow().AddDays(-_limits.PrefetchDays) &&
-                    message.Provider.Imap?.Mailbox == mailbox)
+                    (canonical is not null || message.Provider.Imap?.Mailbox == mailbox))
                 {
                     await _scheduler.EnqueueAsync(
                         Account,

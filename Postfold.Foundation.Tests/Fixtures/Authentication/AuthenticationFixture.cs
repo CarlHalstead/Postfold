@@ -28,6 +28,9 @@ internal sealed class AuthenticationFixture : HttpMessageHandler, IProtectedToke
     internal List<string> TokenRequests { get; } = [];
     internal string TokenJson { get; set; } = "{\"access_token\":\"synthetic-access\",\"refresh_token\":\"synthetic-refresh\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"scope\":\"https://www.googleapis.com/auth/gmail.modify\"}";
     internal string Subject { get; set; } = "synthetic@example.test";
+    internal string HistoryId { get; set; } = "100";
+    internal Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? ProviderRequest { get; set; }
+    internal Func<HttpRequestMessage, CancellationToken, Task>? BeforeRequest { get; set; }
     internal string? CodeChallengeOverride { get; set; }
     internal string? CallbackQuery { get; set; }
     internal string? CallbackHost { get; set; }
@@ -109,6 +112,10 @@ internal sealed class AuthenticationFixture : HttpMessageHandler, IProtectedToke
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        if (BeforeRequest is not null)
+        {
+            await BeforeRequest(request, cancellationToken);
+        }
         string uri = request.RequestUri!.AbsoluteUri;
         string json;
         HttpStatusCode status = HttpStatusCode.OK;
@@ -133,11 +140,15 @@ internal sealed class AuthenticationFixture : HttpMessageHandler, IProtectedToke
         }
         else if (uri == "https://gmail.googleapis.com/gmail/v1/users/me/profile")
         {
-            json = "{\"emailAddress\":\"" + Subject + "\"}";
+            json = "{\"emailAddress\":\"" + Subject + "\",\"historyId\":\"" + HistoryId + "\"}";
         }
         else if (uri == "https://oauth2.googleapis.com/revoke")
         {
             json = "{}";
+        }
+        else if (ProviderRequest is not null)
+        {
+            return await ProviderRequest(request, cancellationToken);
         }
         else
         {

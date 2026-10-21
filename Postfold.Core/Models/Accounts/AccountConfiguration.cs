@@ -11,5 +11,6 @@ public sealed record AccountConfiguration(
     Capabilities? Capabilities = null,
     ComposeIdentity? Identity = null,
     string ProviderKind = "Imap",
-    MicrosoftAccountBinding? MicrosoftBinding = null
+    MicrosoftAccountBinding? MicrosoftBinding = null,
+    GoogleAccountBinding? GoogleBinding = null
 );
