@@ -76,6 +76,11 @@ public sealed class AccountSetup : IAccountSetup
             return Failure.NotFound;
         }
 
+        if (configuration.ProviderKind != "Imap")
+        {
+            return Failure.NeedsAuthentication;
+        }
+
         Outcome<bool> incoming = await _secure.WriteAsync(
             configuration.Incoming.CredentialKey,
             new Credential(incomingPassword, false),

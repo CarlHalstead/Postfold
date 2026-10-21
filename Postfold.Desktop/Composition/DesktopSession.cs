@@ -12,6 +12,7 @@ using Postfold.Core.Services;
 using Postfold.Desktop.Interfaces;
 using Postfold.Desktop.Models.Updates;
 using Postfold.Desktop.Services;
+using Postfold.Desktop.Services.Authentication;
 using Postfold.Desktop.Services.Updates;
 using Postfold.Desktop.Stores;
 using Postfold.UI.Resources;
@@ -609,7 +610,12 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
                 // startup before draining them, including a partially restored runtime after IO failure.
                 _host = opened.Value!;
                 _secure = new WindowsCredentialStore(Path.Combine(selected, "credentials"));
-                await _host.RestoreAccountsAsync(_secure, _lifetime.Token).ConfigureAwait(false);
+                await _host.RestoreAccountsAsync(
+                    _secure,
+                    new WindowsTokenStore(Path.Combine(selected, "tokens")),
+                    new SystemAuthenticationBrowser(),
+                    _lifetime.Token
+                ).ConfigureAwait(false);
                 _startupPreferences = await _host.DesktopPreferences.ReadDesktopPreferencesAsync(_lifetime.Token).ConfigureAwait(false);
                 MainWindowViewModel model = new MainWindowViewModel(_host.Application);
                 try

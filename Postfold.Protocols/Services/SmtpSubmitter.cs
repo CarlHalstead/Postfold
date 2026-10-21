@@ -24,7 +24,7 @@ public sealed class SmtpSubmitter : IMessageSubmitter
 {
     private readonly AccountId _account;
     private readonly MailEndpoint _endpoint;
-    private readonly ICredentialStore _credentials;
+    private readonly ITransportCredentials _credentials;
     private readonly long _maximumBytes;
 
     public SmtpSubmitter(AccountId account, MailEndpoint endpoint, ICredentialStore credentials)
@@ -33,6 +33,11 @@ public sealed class SmtpSubmitter : IMessageSubmitter
     }
 
     public SmtpSubmitter(AccountId account, MailEndpoint endpoint, ICredentialStore credentials, long maximumBytes)
+        : this(account, endpoint, new PasswordTransportCredentials(credentials), maximumBytes)
+    {
+    }
+
+    public SmtpSubmitter(AccountId account, MailEndpoint endpoint, ITransportCredentials credentials, long maximumBytes)
     {
         _account = account;
         _endpoint = endpoint;
@@ -64,7 +69,7 @@ public sealed class SmtpSubmitter : IMessageSubmitter
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        Outcome<Credential> credential = await _credentials.ReadAsync(_endpoint.CredentialKey, cancellationToken)
+        Outcome<Credential> credential = await _credentials.ResolveAsync(_account, _endpoint, cancellationToken)
             .ConfigureAwait(false);
         if (!credential.IsSuccess)
         {
@@ -73,7 +78,7 @@ public sealed class SmtpSubmitter : IMessageSubmitter
                 SubmissionState.Rejected,
                 SubmissionPhase.BeforeConnect,
                 RecipientState.NotAccepted,
-                Failure.NeedsAuthentication
+                credential.Failure == Failure.NotFound ? Failure.NeedsAuthentication : credential.Failure
             );
         }
 
@@ -109,6 +114,11 @@ public sealed class SmtpSubmitter : IMessageSubmitter
             ).ConfigureAwait(false);
             if (credential.Value!.BearerToken)
             {
+                if (!client.AuthenticationMechanisms.Contains("XOAUTH2"))
+                {
+                    return Result(submission, SubmissionState.Rejected, client.Phase, RecipientState.NotAccepted, Failure.PolicyBlocked);
+                }
+
                 await client.AuthenticateAsync(
                     new SaslMechanismOAuth2(_endpoint.Username, credential.Value.Secret),
                     cancellationToken
@@ -145,14 +155,14 @@ public sealed class SmtpSubmitter : IMessageSubmitter
             return new SubmissionOutcome(recipients.All(item => item.State == RecipientState.Accepted) ?
                 SubmissionState.Accepted : SubmissionState.PartiallyAccepted, client.Phase, recipients, Failure.None);
         }
-        catch (MailKit.Security.AuthenticationException)
+        catch (MailKit.Security.AuthenticationException exception)
         {
             return Result(
                 submission,
                 SubmissionState.Rejected,
                 client.Phase,
                 RecipientState.NotAccepted,
-                Failure.NeedsAuthentication
+                AuthenticationFailure(exception)
             );
         }
         catch (SmtpCommandException exception)
@@ -203,13 +213,14 @@ public sealed class SmtpSubmitter : IMessageSubmitter
 
     public async Task<Failure> TestAsync(CancellationToken cancellationToken)
     {
-        Outcome<Credential> credential = await _credentials.ReadAsync(
-            _endpoint.CredentialKey,
+        Outcome<Credential> credential = await _credentials.ResolveAsync(
+            _account,
+            _endpoint,
             cancellationToken
         ).ConfigureAwait(false);
         if (!credential.IsSuccess)
         {
-            return Failure.NeedsAuthentication;
+            return credential.Failure == Failure.NotFound ? Failure.NeedsAuthentication : credential.Failure;
         }
 
         using SmtpClient client = new SmtpClient
@@ -225,17 +236,29 @@ public sealed class SmtpSubmitter : IMessageSubmitter
                 _endpoint.Tls == TlsMode.Implicit ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls,
                 cancellationToken
             ).ConfigureAwait(false);
-            await client.AuthenticateAsync(
-                _endpoint.Username,
-                credential.Value!.Secret,
-                cancellationToken
-            ).ConfigureAwait(false);
+            if (credential.Value!.BearerToken)
+            {
+                if (!client.AuthenticationMechanisms.Contains("XOAUTH2"))
+                {
+                    return Failure.PolicyBlocked;
+                }
+
+                await client.AuthenticateAsync(
+                    new SaslMechanismOAuth2(_endpoint.Username, credential.Value.Secret),
+                    cancellationToken
+                ).ConfigureAwait(false);
+            }
+            else
+            {
+                await client.AuthenticateAsync(_endpoint.Username, credential.Value.Secret, cancellationToken)
+                    .ConfigureAwait(false);
+            }
             await client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
             return Failure.None;
         }
-        catch (AuthenticationException)
+        catch (AuthenticationException exception)
         {
-            return Failure.NeedsAuthentication;
+            return AuthenticationFailure(exception);
         }
         catch (SslHandshakeException)
         {
@@ -254,6 +277,14 @@ public sealed class SmtpSubmitter : IMessageSubmitter
         {
             return Failure.Transient;
         }
+    }
+
+    private static Failure AuthenticationFailure(AuthenticationException exception)
+    {
+        // Exchange uses this enhanced status for several policy failures. It does not prove
+        // revocation or a specific disabled setting; never expose the accompanying server prose.
+        return exception.Message.StartsWith("535: 5.7.139 ", StringComparison.Ordinal) ?
+            Failure.PolicyBlocked : Failure.NeedsAuthentication;
     }
 
     private static SubmissionOutcome Result(

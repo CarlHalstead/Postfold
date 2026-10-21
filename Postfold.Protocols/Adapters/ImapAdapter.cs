@@ -36,7 +36,7 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
     IRemoteDraftTransport, IIdleTransport, IMessageAttachmentReader
 {
     private readonly MailEndpoint _endpoint;
-    private readonly ICredentialStore _credentials;
+    private readonly ITransportCredentials _credentials;
     private readonly ImapClient _client = new ImapClient();
     private readonly SemaphoreSlim _session = new SemaphoreSlim(1, 1);
     private readonly long _maximumContentBytes;
@@ -55,6 +55,16 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
         AccountId account,
         MailEndpoint endpoint,
         ICredentialStore credentials,
+        long maximumContentBytes,
+        TimeProvider time
+    ) : this(account, endpoint, new PasswordTransportCredentials(credentials), maximumContentBytes, time)
+    {
+    }
+
+    public ImapAdapter(
+        AccountId account,
+        MailEndpoint endpoint,
+        ITransportCredentials credentials,
         long maximumContentBytes,
         TimeProvider time
     )
@@ -664,6 +674,7 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
             return Failure.Validation;
         }
 
+        bool appendStarted = false;
         await AcquireSessionAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -682,13 +693,14 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
             IMailFolder sent = await _client.GetFolderAsync(destination.RemoteKey, cancellationToken).ConfigureAwait(false);
 
             using MimeMessage message = await MimeMessage.LoadAsync(content, cancellationToken).ConfigureAwait(false);
+            appendStarted = true;
             await sent.AppendAsync(message, MessageFlags.Seen, cancellationToken).ConfigureAwait(false);
             return Failure.None;
         }
         catch (Exception exception) when (Expected(exception))
         {
             // An uncertain sent APPEND is reconciled separately; it can never return to SMTP.
-            return Failure.NeedsReview;
+            return appendStarted ? Failure.NeedsReview : Classify(exception);
         }
         finally
         {
@@ -948,11 +960,11 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
     {
         if (!_client.IsAuthenticated)
         {
-            Outcome<Credential> credential = await _credentials.ReadAsync(_endpoint.CredentialKey, cancellationToken)
+            Outcome<Credential> credential = await _credentials.ResolveAsync(Account, _endpoint, cancellationToken)
                 .ConfigureAwait(false);
             if (!credential.IsSuccess)
             {
-                return Failure.NeedsAuthentication;
+                return credential.Failure == Failure.NotFound ? Failure.NeedsAuthentication : credential.Failure;
             }
 
             if (!_client.IsConnected)
@@ -967,6 +979,11 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
 
             if (credential.Value!.BearerToken)
             {
+                if (!_client.AuthenticationMechanisms.Contains("XOAUTH2"))
+                {
+                    return Failure.PolicyBlocked;
+                }
+
                 await _client.AuthenticateAsync(
                     new SaslMechanismOAuth2(_endpoint.Username, credential.Value.Secret),
                     cancellationToken

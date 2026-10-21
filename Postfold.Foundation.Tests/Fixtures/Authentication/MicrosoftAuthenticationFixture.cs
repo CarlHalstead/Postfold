@@ -23,12 +23,20 @@ internal sealed class MicrosoftAuthenticationFixture : HttpMessageHandler, IMsal
     }
 
     internal AuthenticationFixture Shared { get; } = new AuthenticationFixture();
+    internal string ApplicationId { get; set; } = ClientId;
     internal int Exchanges { get; private set; }
     internal string? LastRequest { get; private set; }
     internal string? Error { get; set; }
     internal string GrantedScopes { get; set; } = "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send";
     internal string HomeUser { get; set; } = User;
     internal int ExpiresIn { get; set; } = 3600;
+    internal string AccessSecret { get; set; } = "synthetic-microsoft-access";
+    internal string RefreshSecret { get; set; } = "synthetic-microsoft-refresh";
+    internal string ResourceTenant { get; set; } = Tenant;
+    internal bool BlockTokenRequests { get; set; }
+    internal TaskCompletionSource TokenRequestBlocked { get; } = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal TaskCompletionSource ReleaseTokenRequest { get; } = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal TaskCompletionSource TokenRequestCancelled { get; } = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public HttpClient GetHttpClient()
     {
@@ -69,12 +77,26 @@ internal sealed class MicrosoftAuthenticationFixture : HttpMessageHandler, IMsal
         {
             Exchanges++;
             LastRequest = await request.Content!.ReadAsStringAsync(cancellationToken);
+            if (BlockTokenRequests)
+            {
+                TokenRequestBlocked.TrySetResult();
+                try
+                {
+                    await ReleaseTokenRequest.Task.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    TokenRequestCancelled.TrySetResult();
+                    throw;
+                }
+            }
+
             status = Error is null ? HttpStatusCode.OK : HttpStatusCode.BadRequest;
             string idToken = Encode(new { alg = "none" }) + "." + Encode(new
             {
-                aud = ClientId,
+                aud = ApplicationId,
                 iss = "https://login.microsoftonline.com/" + Tenant + "/v2.0",
-                tid = Tenant,
+                tid = ResourceTenant,
                 oid = HomeUser,
                 sub = HomeUser,
                 preferred_username = "synthetic@example.test",
@@ -83,8 +105,8 @@ internal sealed class MicrosoftAuthenticationFixture : HttpMessageHandler, IMsal
             json = Error is not null ? JsonSerializer.Serialize(new { error = Error, error_description = "synthetic-private-error" }) :
                 JsonSerializer.Serialize(new
                 {
-                    access_token = "synthetic-microsoft-access",
-                    refresh_token = "synthetic-microsoft-refresh",
+                    access_token = AccessSecret,
+                    refresh_token = RefreshSecret,
                     token_type = "Bearer",
                     expires_in = ExpiresIn,
                     scope = GrantedScopes,

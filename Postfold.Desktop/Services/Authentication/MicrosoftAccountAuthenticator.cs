@@ -102,6 +102,12 @@ public sealed class MicrosoftAccountAuthenticator : IAccountAuthenticator, IAsyn
                     }
 
                     cacheBytes = previous.Bytes;
+                    if (_expectedSubject is not null && _expectedSubject != previous.HomeId ||
+                        _expectedTenant is not null && _expectedTenant != previous.Tenant)
+                    {
+                        return Outcome<AccessToken>.Fail(Failure.NeedsReview);
+                    }
+
                     _expectedSubject ??= previous.HomeId;
                     _expectedTenant ??= previous.Tenant;
                 }
@@ -125,6 +131,7 @@ public sealed class MicrosoftAccountAuthenticator : IAccountAuthenticator, IAsyn
             if (interactive)
             {
                 result = await application.AcquireTokenInteractive(Scopes)
+                    .WithTenantId(_expectedTenant ?? "common")
                     .WithUseEmbeddedWebView(false)
                     .WithPrompt(Prompt.SelectAccount)
                     .WithSystemWebViewOptions(new SystemWebViewOptions
@@ -155,7 +162,9 @@ public sealed class MicrosoftAccountAuthenticator : IAccountAuthenticator, IAsyn
                     return Outcome<AccessToken>.Fail(Failure.NeedsAuthentication);
                 }
 
-                result = await application.AcquireTokenSilent(Scopes, account).ExecuteAsync(linked.Token).ConfigureAwait(false);
+                result = await application.AcquireTokenSilent(Scopes, account)
+                    .WithTenantId(_expectedTenant!)
+                    .ExecuteAsync(linked.Token).ConfigureAwait(false);
             }
 
             if (!Scopes.All(scope => result.Scopes.Contains(scope, StringComparer.OrdinalIgnoreCase)) ||
@@ -192,7 +201,14 @@ public sealed class MicrosoftAccountAuthenticator : IAccountAuthenticator, IAsyn
                 _expectedTenant = result.TenantId;
             }
 
-            return saved.IsSuccess ? Outcome<AccessToken>.Success(new AccessToken(_account, home, result.AccessToken, result.ExpiresOn, result.TenantId)) :
+            return saved.IsSuccess ? Outcome<AccessToken>.Success(new AccessToken(
+                _account,
+                home,
+                result.AccessToken,
+                result.ExpiresOn,
+                result.TenantId,
+                "https://outlook.office.com"
+            )) :
                 Outcome<AccessToken>.Fail(Failure.CredentialStorageUnavailable);
         }
         catch (MsalException exception)

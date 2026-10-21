@@ -78,6 +78,10 @@ internal sealed class LocalMailServer : IAsyncDisposable
     internal bool RejectData { get; set; }
     internal bool AdvertiseStartTls { get; set; } = true;
     internal bool LoseAcknowledgement { get; set; }
+    internal bool AdvertiseOAuth { get; set; }
+    internal string? ExpectedBearer { get; set; }
+    internal string? AuthenticationFailure { get; set; }
+    internal List<string> BearerAuthentications { get; } = new List<string>();
     internal uint UidValidity { get; set; } = 7;
     internal uint? UidNext { get; set; } = 3;
     internal bool AdvancedImap { get; set; }
@@ -173,7 +177,7 @@ internal sealed class LocalMailServer : IAsyncDisposable
             {
                 await ReplyAsync(stream, _startTls && stream is not SslStream && AdvertiseStartTls ?
                     "250-localhost\r\n250 STARTTLS\r\n" :
-                    "250-localhost\r\n250 AUTH PLAIN\r\n");
+                    "250-localhost\r\n250 AUTH " + (AdvertiseOAuth ? "XOAUTH2" : "PLAIN") + "\r\n");
             }
             else if (line == "STARTTLS")
             {
@@ -182,7 +186,9 @@ internal sealed class LocalMailServer : IAsyncDisposable
             }
             else if (line.StartsWith("AUTH ", StringComparison.Ordinal))
             {
-                await ReplyAsync(stream, "235 Authenticated\r\n");
+                bool valid = ValidateAuthentication(line);
+                await ReplyAsync(stream, valid ? "235 Authenticated\r\n" :
+                    "535 " + (AuthenticationFailure ?? "5.7.3 Authentication unsuccessful") + "\r\n");
             }
             else if (line.StartsWith("MAIL FROM:", StringComparison.Ordinal))
             {
@@ -238,7 +244,7 @@ internal sealed class LocalMailServer : IAsyncDisposable
 
     private async Task ImapAsync(Stream stream)
     {
-        string capabilities = "IMAP4rev1 AUTH=PLAIN" + (_startTls && AdvertiseStartTls ? " STARTTLS" : "") +
+        string capabilities = "IMAP4rev1 AUTH=" + (AdvertiseOAuth ? "XOAUTH2" : "PLAIN") + (_startTls && AdvertiseStartTls ? " STARTTLS" : "") +
             (AdvancedImap ? " CONDSTORE QRESYNC UIDPLUS IDLE ENABLE" + (OmitNativeMove ? "" : " MOVE") : "");
         await ReplyAsync(stream, "* OK [CAPABILITY " + capabilities + "] synthetic IMAP\r\n");
         while (await LineAsync(stream) is string line)
@@ -260,10 +266,16 @@ internal sealed class LocalMailServer : IAsyncDisposable
             }
             else if (command.StartsWith("AUTHENTICATE", StringComparison.Ordinal))
             {
+                string authentication = command;
                 if (command.Split(' ').Length == 2)
                 {
                     await ReplyAsync(stream, "+ \r\n");
-                    await LineAsync(stream);
+                    authentication += " " + await LineAsync(stream);
+                }
+                if (!ValidateAuthentication(authentication))
+                {
+                    await ReplyAsync(stream, tag + " NO " + (AuthenticationFailure ?? "[AUTHENTICATIONFAILED] Authentication unsuccessful") + "\r\n");
+                    continue;
                 }
             }
             else if (command.StartsWith("LIST", StringComparison.Ordinal))
@@ -405,6 +417,19 @@ internal sealed class LocalMailServer : IAsyncDisposable
         }
 
         return null;
+    }
+
+    private bool ValidateAuthentication(string command)
+    {
+        if (!command.Contains("XOAUTH2", StringComparison.Ordinal))
+        {
+            return ExpectedBearer is null && AuthenticationFailure is null;
+        }
+
+        string decoded = Encoding.UTF8.GetString(Convert.FromBase64String(command.Split(' ')[^1]));
+        BearerAuthentications.Add(decoded);
+        return AuthenticationFailure is null && (ExpectedBearer is null ||
+            decoded == "user=synthetic@example.test\u0001auth=Bearer " + ExpectedBearer + "\u0001\u0001");
     }
 
     private async Task ReplyAsync(Stream stream, string text)

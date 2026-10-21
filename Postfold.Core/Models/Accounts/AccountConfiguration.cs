@@ -9,5 +9,7 @@ public sealed record AccountConfiguration(
     MailEndpoint Incoming,
     MailEndpoint Outgoing,
     Capabilities? Capabilities = null,
-    ComposeIdentity? Identity = null
+    ComposeIdentity? Identity = null,
+    string ProviderKind = "Imap",
+    MicrosoftAccountBinding? MicrosoftBinding = null
 );

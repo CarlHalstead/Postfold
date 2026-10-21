@@ -296,8 +296,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             using SqliteCommand command = Command(
                 connection,
                 null,
-                "SELECT a.AccountId,a.DisplayName,a.Configuration,a.Capabilities,p.Value FROM Accounts a " +
+                "SELECT a.AccountId,a.DisplayName,a.Configuration,a.Capabilities,p.Value,a.ProviderKind,b.Value FROM Accounts a " +
                 "LEFT JOIN Preferences p ON p.Scope='identity:'||a.AccountId AND p.Key='primary' AND p.PayloadVersion=1 " +
+                "LEFT JOIN Preferences b ON b.Scope='account:'||a.AccountId AND b.Key='microsoft-binding' AND b.PayloadVersion=1 " +
                 "WHERE a.Active=1 ORDER BY a.AccountId;"
             );
             using SqliteDataReader reader = command.ExecuteReader();
@@ -318,7 +319,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                         endpoints[0],
                         endpoints[1],
                         ReadCapabilities(reader.GetString(3)),
-                        reader.IsDBNull(4) ? null : ReadIdentity(reader.GetString(4))
+                        reader.IsDBNull(4) ? null : ReadIdentity(reader.GetString(4)),
+                        reader.GetString(5),
+                        reader.IsDBNull(6) ? null : ReadMicrosoftBinding(reader.GetString(6))
                     ));
                 }
             }
@@ -1426,6 +1429,59 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         ), cancellationToken);
     }
 
+    /// <summary>Atomically establishes an immutable non-secret provider binding without changing endpoints, credentials or durable mail.</summary>
+    public Task<Failure> BindMicrosoftAccountAsync(
+        AccountId account,
+        MicrosoftAccountBinding binding,
+        CancellationToken cancellationToken
+    )
+    {
+        if (!binding.IsValid)
+        {
+            return Task.FromResult(Failure.Validation);
+        }
+
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            string scope = "account:" + account.Value.ToString(CultureInfo.InvariantCulture);
+            object? provider = Scalar(
+                connection,
+                transaction,
+                "SELECT ProviderKind FROM Accounts WHERE AccountId=$a AND Active=1;",
+                ("$a", account.Value)
+            );
+            if (provider is not string kind)
+            {
+                return Failure.NotFound;
+            }
+
+            object? retained = Scalar(
+                connection,
+                transaction,
+                "SELECT Value FROM Preferences WHERE Scope=$s AND Key='microsoft-binding';",
+                ("$s", scope)
+            );
+            if (kind != "Imap" && kind != "Microsoft" ||
+                retained is string json && ReadMicrosoftBinding(json) != binding || kind == "Microsoft" && retained is not string)
+            {
+                return Failure.NeedsReview;
+            }
+
+            Execute(
+                connection,
+                transaction,
+                "INSERT INTO Preferences(Scope,Key,Value,PayloadVersion) VALUES($s,'microsoft-binding',$v,1) " +
+                "ON CONFLICT(Scope,Key) DO NOTHING;",
+                ("$s", scope),
+                ("$v", JsonSerializer.Serialize(binding))
+            );
+            Execute(connection, transaction, "UPDATE Accounts SET ProviderKind='Microsoft' WHERE AccountId=$a;", ("$a", account.Value));
+            transaction.Commit();
+            return Failure.None;
+        }, cancellationToken);
+    }
+
     public Task<bool> QueueAsync(MutationIntent intent, CancellationToken cancellationToken)
     {
         if (intent.PayloadVersion != 1 || intent.Id.Value == Guid.Empty || intent.Provider.Account != intent.Account)
@@ -2327,6 +2383,19 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     private static bool TargetMatches(SqliteConnection connection, SqliteTransaction transaction, MutationIntent intent)
     {
         return TargetMatches(connection, transaction, intent.Account, intent.Target, intent.Provider);
+    }
+
+    private static MicrosoftAccountBinding? ReadMicrosoftBinding(string json)
+    {
+        try
+        {
+            MicrosoftAccountBinding? binding = JsonSerializer.Deserialize<MicrosoftAccountBinding>(json);
+            return binding is not null && binding.IsValid ? binding : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static bool TargetMatches(

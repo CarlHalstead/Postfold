@@ -4,6 +4,7 @@ using Postfold.Core.Models;
 using Postfold.Core.Models.Accounts;
 using Postfold.Core.Models.Mailboxes;
 using Postfold.Core.Models.Synchronisation;
+using Postfold.Desktop.Services.Authentication;
 using Postfold.Protocols.Adapters;
 using Postfold.Protocols.Services;
 using Postfold.Storage.Stores;
@@ -33,7 +34,8 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
     private readonly Dictionary<AccountId, (ImapAdapter Adapter, MailAccountEngine Engine)> _accounts =
         new Dictionary<AccountId, (ImapAdapter, MailAccountEngine)>();
     private readonly SemaphoreSlim _connections = new SemaphoreSlim(1, 1);
-    private readonly Dictionary<AccountId, ICredentialStore> _credentials = new Dictionary<AccountId, ICredentialStore>();
+    private readonly Dictionary<AccountId, ITransportCredentials> _credentials = new Dictionary<AccountId, ITransportCredentials>();
+    private readonly Dictionary<AccountId, MicrosoftAccountAuthenticator> _authenticators = new Dictionary<AccountId, MicrosoftAccountAuthenticator>();
     private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
     private bool _stopping;
 
@@ -70,6 +72,8 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
 
     internal int ProfileFormat => _profile.AdmittedFormat;
     internal string ProfileMigration => _profile.AdmittedMigration;
+    internal Microsoft.Identity.Client.IMsalHttpClientFactory? AuthenticationHttpFactory { get; set; }
+    internal Action<ImapAdapter, SmtpSubmitter>? ConfigureFixtureTransports { get; set; }
 
     public IMailAccountEngine? Find(AccountId account)
     {
@@ -110,7 +114,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             if (result != Failure.None)
             {
                 _scheduler.Resume(account);
-                if (_credentials.TryGetValue(account, out ICredentialStore? credentials))
+                if (_credentials.TryGetValue(account, out ITransportCredentials? credentials))
                 {
                     ImmutableArray<MailboxSnapshot> mailboxes = (await _profile.MailboxesAsync(CancellationToken.None)
                         .ConfigureAwait(false)).Where(item => item.Account == account).ToImmutableArray();
@@ -120,6 +124,11 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             }
             _accounts.Remove(account);
             _credentials.Remove(account);
+            if (_authenticators.Remove(account, out MicrosoftAccountAuthenticator? authenticator))
+            {
+                await authenticator.DisposeAsync().ConfigureAwait(false);
+            }
+
             return Failure.None;
         }
         finally
@@ -139,15 +148,42 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             Task.FromResult(Failure.PolicyBlocked);
     }
 
-    public async Task RestoreAccountsAsync(ICredentialStore credentials, CancellationToken cancellationToken)
+    public Task RestoreAccountsAsync(ICredentialStore credentials, CancellationToken cancellationToken)
     {
-        ImmutableArray<MailboxSnapshot> mailboxes = await _profile.MailboxesAsync(cancellationToken).ConfigureAwait(false);
-        foreach (AccountConfiguration account in await _profile.AccountsAsync(cancellationToken).ConfigureAwait(false))
+        return RestoreAccountsAsync(credentials, null, null, cancellationToken);
+    }
+
+    /// <summary>Restores retained provider bindings. Microsoft acquisition is silent and uses a separate protected token store.</summary>
+    public async Task RestoreAccountsAsync(
+        ICredentialStore credentials,
+        IProtectedTokenStore? tokens,
+        ISystemBrowser? browser,
+        CancellationToken cancellationToken
+    )
+    {
+        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
+        await _connections.WaitAsync(linked.Token).ConfigureAwait(false);
+        try
         {
-            ImmutableArray<MailboxSnapshot> cached = mailboxes.Where(item => item.Account == account.Id).ToImmutableArray();
-            FolderRoles? roles = await _profile.ReadRolesAsync(account.Id, cancellationToken).ConfigureAwait(false);
-            _accounts.Add(account.Id, CreateRestoredAccount(account, cached, roles, credentials));
-            _credentials.Add(account.Id, credentials);
+            ObjectDisposedException.ThrowIf(_stopping, this);
+            ImmutableArray<MailboxSnapshot> mailboxes = await _profile.MailboxesAsync(linked.Token).ConfigureAwait(false);
+            foreach (AccountConfiguration account in await _profile.AccountsAsync(linked.Token).ConfigureAwait(false))
+            {
+                if (_accounts.ContainsKey(account.Id))
+                {
+                    continue;
+                }
+
+                ImmutableArray<MailboxSnapshot> cached = mailboxes.Where(item => item.Account == account.Id).ToImmutableArray();
+                FolderRoles? roles = await _profile.ReadRolesAsync(account.Id, linked.Token).ConfigureAwait(false);
+                ITransportCredentials source = CreateCredentials(account, credentials, tokens, browser);
+                _accounts.Add(account.Id, CreateRestoredAccount(account, cached, roles, source));
+                _credentials.Add(account.Id, source);
+            }
+        }
+        finally
+        {
+            _connections.Release();
         }
     }
 
@@ -218,6 +254,12 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
                 return Outcome<IMailAccountEngine>.Fail(Failure.Validation);
             }
 
+            if ((await _profile.AccountsAsync(linked.Token).ConfigureAwait(false))
+                .Any(item => item.Id == account && item.ProviderKind != "Imap"))
+            {
+                return Outcome<IMailAccountEngine>.Fail(Failure.NeedsReview);
+            }
+
             ImapAdapter adapter = new ImapAdapter(account, incoming, credentials, _limits.MaximumMimeBytes, _time);
             Outcome<ImmutableArray<MailboxSnapshot>> discovered;
             try
@@ -281,7 +323,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
                 adapter.CreateIdleSignal()
             );
             _accounts.Add(account, (adapter, engine));
-            _credentials.Add(account, credentials);
+            _credentials.Add(account, new PasswordTransportCredentials(credentials));
             return Outcome<IMailAccountEngine>.Success(engine);
         }
         finally
@@ -374,6 +416,11 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
                 await adapter.DisposeAsync().ConfigureAwait(false);
             }
 
+            foreach (MicrosoftAccountAuthenticator authenticator in _authenticators.Values)
+            {
+                await authenticator.DisposeAsync().ConfigureAwait(false);
+            }
+
             await _profile.DisposeAsync().ConfigureAwait(false);
         }
         finally
@@ -399,13 +446,76 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
 
             AccountConfiguration configuration = (await _profile.AccountsAsync(cancellationToken).ConfigureAwait(false))
                 .Single(item => item.Id == account);
+            if (configuration.ProviderKind != "Imap")
+            {
+                return Failure.NeedsAuthentication;
+            }
+
             ImmutableArray<MailboxSnapshot> mailboxes = previous.Engine.Mailboxes;
             FolderRoles? roles = await _profile.ReadRolesAsync(account, cancellationToken).ConfigureAwait(false);
             await previous.Engine.DisposeAsync().ConfigureAwait(false);
             await previous.Adapter.DisposeAsync().ConfigureAwait(false);
-            _accounts[account] = CreateRestoredAccount(configuration, mailboxes, roles, credentials);
-            _credentials[account] = credentials;
+            ITransportCredentials source = new PasswordTransportCredentials(credentials);
+            _accounts[account] = CreateRestoredAccount(configuration, mailboxes, roles, source);
+            _credentials[account] = source;
             return Failure.None;
+        }
+        finally
+        {
+            _connections.Release();
+        }
+    }
+
+    // Synthetic engineering entry point only; ordinary setup cannot create a provider account yet.
+    internal async Task<Failure> BindMicrosoftAccountAsync(
+        AccountId account,
+        MicrosoftAccountBinding binding,
+        CancellationToken cancellationToken
+    )
+    {
+        await _connections.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_stopping, this);
+            return _accounts.ContainsKey(account) ? Failure.NeedsReview :
+                await _profile.BindMicrosoftAccountAsync(account, binding, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _connections.Release();
+        }
+    }
+
+    /// <summary>Stops and drains account work before local cache removal. Retains binding, mail and unresolved work; does not revoke a server grant.</summary>
+    internal async Task<Failure> DeleteMicrosoftCredentialsAsync(AccountId account, CancellationToken cancellationToken)
+    {
+        await _connections.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_stopping, this);
+            if (!_authenticators.TryGetValue(account, out MicrosoftAccountAuthenticator? authenticator) ||
+                !_accounts.TryGetValue(account, out (ImapAdapter Adapter, MailAccountEngine Engine) previous))
+            {
+                return Failure.NotFound;
+            }
+
+            AccountConfiguration configuration = (await _profile.AccountsAsync(cancellationToken).ConfigureAwait(false))
+                .Single(item => item.Id == account);
+            FolderRoles? roles = await _profile.ReadRolesAsync(account, cancellationToken).ConfigureAwait(false);
+            ImmutableArray<MailboxSnapshot> mailboxes = previous.Engine.Mailboxes;
+            await previous.Engine.DisposeAsync().ConfigureAwait(false);
+            await _scheduler.SuspendAsync(account).ConfigureAwait(false);
+            await previous.Adapter.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                Outcome<bool> deleted = await authenticator.DeleteCredentialsAsync(cancellationToken).ConfigureAwait(false);
+                return deleted.Failure;
+            }
+            finally
+            {
+                _accounts[account] = CreateRestoredAccount(configuration, mailboxes, roles, _credentials[account]);
+                _scheduler.Resume(account);
+            }
         }
         finally
         {
@@ -433,7 +543,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         AccountConfiguration account,
         ImmutableArray<MailboxSnapshot> mailboxes,
         FolderRoles? roles,
-        ICredentialStore credentials
+        ITransportCredentials credentials
     )
     {
         ImapAdapter adapter = new ImapAdapter(account.Id, account.Incoming, credentials, _limits.MaximumMimeBytes, _time);
@@ -447,6 +557,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         ISentCopyStore? sent = mailboxes.Count(item => item.Role == MailboxRole.Sent && item.Selectable && item.Writable) == 1 ?
             adapter : null;
         SmtpSubmitter smtp = new SmtpSubmitter(account.Id, account.Outgoing, credentials, _limits.MaximumMimeBytes);
+        ConfigureFixtureTransports?.Invoke(adapter, smtp);
         MailAccountEngine engine = new MailAccountEngine(
             adapter,
             adapter,
@@ -470,5 +581,40 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             mailboxes
         );
         return (adapter, engine);
+    }
+
+    private ITransportCredentials CreateCredentials(
+        AccountConfiguration account,
+        ICredentialStore passwords,
+        IProtectedTokenStore? tokens,
+        ISystemBrowser? browser
+    )
+    {
+        if (account.ProviderKind == "Imap")
+        {
+            return new PasswordTransportCredentials(passwords);
+        }
+
+        MicrosoftAccountAuthenticator? authenticator = null;
+        if (account.ProviderKind == "Microsoft" && account.MicrosoftBinding is { IsValid: true } binding &&
+            tokens is not null && browser is not null)
+        {
+            authenticator = new MicrosoftAccountAuthenticator(
+                account.Id,
+                binding.ClientId,
+                tokens,
+                browser,
+                _time,
+                TimeSpan.FromSeconds(30),
+                binding.HomeAccountId,
+                binding.TenantId
+            )
+            {
+                HttpFactory = AuthenticationHttpFactory
+            };
+            _authenticators.Add(account.Id, authenticator);
+        }
+
+        return new MicrosoftTransportCredentials(account, authenticator, _time);
     }
 }
