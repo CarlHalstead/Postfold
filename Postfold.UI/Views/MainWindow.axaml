@@ -224,8 +224,6 @@
                                     <MenuItem Header="{x:Static ui:Strings.Retrieve}" Command="{Binding RetrieveCommand}" />
                                     <MenuItem Header="{x:Static ui:Strings.Archive}" Command="{Binding ArchiveCommand}" />
                                     <MenuItem Name="MoveButton" Header="{x:Static ui:Strings.Move}" IsEnabled="{Binding CanMove}" ToolTip.Tip="{Binding MoveSupport}" />
-                                    <MenuItem Name="HtmlButton" Header="{x:Static ui:Strings.HtmlRead}" IsEnabled="False" />
-                                    <MenuItem Name="PlainButton" Header="{x:Static ui:Strings.Body}" />
                                     <MenuItem Name="CheckEmptyAttachmentsButton" Header="{x:Static ui:Strings.CheckAttachments}" />
                                     <MenuItem Name="ImagesButton" Header="{x:Static ui:Strings.LoadImages}" IsEnabled="False" />
                                 </ContextMenu>
@@ -257,6 +255,7 @@
                                 </DockPanel>
                             </StackPanel>
                             <SelectableTextBlock Name="PlainPreview" Text="{Binding Body}" Focusable="True" TextWrapping="Wrap" FontSize="{DynamicResource BodyFontSize}" LineHeight="{DynamicResource BodyLineHeight}" Margin="0,24,0,0" AutomationProperties.Name="{x:Static ui:Strings.Preview}" />
+                            <TextBlock Name="HtmlReadingStatus" IsVisible="False" TextWrapping="Wrap" FontSize="{DynamicResource BodyFontSize}" Margin="0,24,0,0" />
                             <StackPanel Name="ReaderAttachmentPanel" IsVisible="{Binding HasAttachments}" Margin="0,32,0,0" Spacing="12">
                                 <Border Background="{DynamicResource MailLineBrush}" Height="1" />
                                 <TextBlock Text="{Binding AttachmentHeading}" />

@@ -10,6 +10,7 @@ using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
 using Postfold.Core.Models.Accounts;
 using Postfold.Core.Models.Drafts;
+using Postfold.Core.Models.Mailboxes;
 using Postfold.Core.Models.Messages;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.Desktop.Composition;
@@ -184,6 +185,10 @@ public sealed class ProviderWindowTests
             int priorMutations = provider.Requests.Count(item => item.Method == "POST" && item.Path == "messages/one/modify");
             Assert.That(model.ArchiveCommand.CanExecute(null), Is.True);
             await model.ArchiveCommand.ExecuteAsync(null);
+            Assert.That(model.Messages.Any(item => item.Provider.Key == "one"), Is.False);
+            MailboxSnapshot label = model.Mailboxes.Single(item => item.Account == account && item.RemoteKey == "Label_1");
+            model.Scope = model.Scopes.Single(item => item.Account == account && item.Folder == label.Id);
+            await model.RefreshAsync(false);
             model.Selected = model.Messages.Single(item => item.Provider.Key == "one");
             await model.ReadCommand.ExecuteAsync(null);
             await model.FlagCommand.ExecuteAsync(null);

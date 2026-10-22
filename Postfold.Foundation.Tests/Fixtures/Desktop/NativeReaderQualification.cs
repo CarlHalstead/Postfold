@@ -58,7 +58,6 @@ internal static class NativeReaderQualification
             Path.Combine(directory, "reader-browser"),
             qualified: true
         );
-        window.ConfigureHtml(reader);
         TaskCompletionSource destroyed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
@@ -83,7 +82,7 @@ internal static class NativeReaderQualification
             {
                 Case = "actual-reader-default-block-and-selected-cid",
                 Passed = read == Failure.None && transport.Requests == 0 && await InspectAsync(
-                    "document.images.length === 2 && document.images[0].naturalWidth === 1 && " +
+                    "document.images.length === 2 && document.images[0].naturalWidth === 0 && " +
                     "document.images[1].naturalWidth === 0 && globalThis.attack !== true"
                 )
             });

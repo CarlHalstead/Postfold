@@ -43,7 +43,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     private readonly TimeProvider _time;
     private int _disposed;
 
-    private SqliteProfile(string path, TimeProvider time, FileStream lease)
+    private SqliteProfile(
+        string path,
+        TimeProvider time,
+        FileStream lease
+    )
     {
         _path = Path.GetFullPath(path);
         _time = time;
@@ -59,7 +63,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     /// <summary>Final shipped migration validated by profile admission.</summary>
     public string AdmittedMigration => ProfileMigrationManifest.Versions[^1].Id;
 
-    public Task<AccountId> NextAccountIdAsync(CancellationToken cancellationToken)
+    public Task<AccountId> NextAccountIdAsync(
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection => new AccountId(Convert.ToInt64(
             Scalar(connection, null, "SELECT COALESCE(MAX(AccountId),0)+1 FROM Accounts;"),
@@ -68,26 +74,42 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     }
 
     /// <summary>Retains local data and credential references; refuses to hide durable work needing a decision.</summary>
-    public Task<Failure> DeactivateAccountAsync(AccountId account, CancellationToken cancellationToken)
+    public Task<Failure> DeactivateAccountAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync(connection =>
         {
             using SqliteTransaction transaction = connection.BeginTransaction();
-            if (Convert.ToInt64(Scalar(connection, transaction,
-                "SELECT COUNT(*) FROM Accounts WHERE AccountId=$a AND Active=1;", ("$a", account.Value)),
-                CultureInfo.InvariantCulture) == 0)
+            if (Convert.ToInt64(
+                Scalar(
+                connection,
+                transaction,
+                "SELECT COUNT(*) FROM Accounts WHERE AccountId=$a AND Active=1;",
+                ("$a", account.Value)
+            ),
+                CultureInfo.InvariantCulture
+            ) == 0)
             {
                 return Failure.NotFound;
             }
-            long protectedWork = Convert.ToInt64(Scalar(connection, transaction, """
+            long protectedWork = Convert.ToInt64(Scalar(
+                connection,
+                transaction,
+                """
                 SELECT (SELECT COUNT(*) FROM Drafts d WHERE d.AccountId=$a AND NOT EXISTS
                     (SELECT 1 FROM OutboxSubmissions o WHERE o.AccountId=d.AccountId
                     AND o.SourceDraftId=d.DraftId AND o.State<>$cancelled))
                     + (SELECT COUNT(*) FROM OutboxSubmissions WHERE AccountId=$a AND State NOT IN($done,$cancelled))
                     + (SELECT COUNT(*) FROM PendingOperations WHERE AccountId=$a AND State NOT IN($finished,$dismissed));
-                """, ("$a", account.Value), ("$done", (int)SubmissionState.Completed),
-                ("$cancelled", (int)SubmissionState.Cancelled), ("$finished", (int)PendingState.Completed),
-                ("$dismissed", (int)PendingState.Dismissed)), CultureInfo.InvariantCulture);
+                """,
+                ("$a", account.Value),
+                ("$done", (int)SubmissionState.Completed),
+                ("$cancelled", (int)SubmissionState.Cancelled),
+                ("$finished", (int)PendingState.Completed),
+                ("$dismissed", (int)PendingState.Dismissed)
+            ), CultureInfo.InvariantCulture);
             if (protectedWork > 0)
             {
                 return Failure.NeedsReview;
@@ -99,7 +121,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     }
 
     /// <summary>Changes only the active account's local label.</summary>
-    public Task<Failure> RenameAccountAsync(AccountId account, string name, CancellationToken cancellationToken)
+    public Task<Failure> RenameAccountAsync(
+        AccountId account,
+        string name,
+        CancellationToken cancellationToken
+    )
     {
         if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 200 || name.Any(char.IsControl))
         {
@@ -118,7 +144,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<long> CachedMessageCountAsync(CancellationToken cancellationToken)
+    public Task<long> CachedMessageCountAsync(
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection => Convert.ToInt64(
             Scalar(connection, null, "SELECT COUNT(*) FROM Messages m JOIN Accounts a ON a.AccountId=m.AccountId WHERE a.Active=1;"),
@@ -126,7 +154,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         ), cancellationToken);
     }
 
-    public Task<FolderRoles?> ReadRolesAsync(AccountId account, CancellationToken cancellationToken)
+    public Task<FolderRoles?> ReadRolesAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection =>
         {
@@ -198,7 +229,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<AppearanceSettings> ReadAsync(CancellationToken cancellationToken)
+    public Task<AppearanceSettings> ReadAsync(
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection =>
         {
@@ -224,7 +257,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public async Task<Failure> SaveAsync(AppearanceSettings settings, CancellationToken cancellationToken)
+    public async Task<Failure> SaveAsync(
+        AppearanceSettings settings,
+        CancellationToken cancellationToken
+    )
     {
         if (!settings.IsValid)
         {
@@ -245,7 +281,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         return Failure.None;
     }
 
-    public Task<DesktopPreferences> ReadDesktopPreferencesAsync(CancellationToken cancellationToken)
+    public Task<DesktopPreferences> ReadDesktopPreferencesAsync(
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection =>
         {
@@ -274,7 +312,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task SaveDesktopPreferencesAsync(DesktopPreferences preferences, CancellationToken cancellationToken)
+    public Task SaveDesktopPreferencesAsync(
+        DesktopPreferences preferences,
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync(connection =>
         {
@@ -335,7 +376,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<ImmutableArray<string>> RecognisedRecipientsAsync(AccountId account, string prefix, CancellationToken cancellationToken)
+    public Task<ImmutableArray<string>> RecognisedRecipientsAsync(
+        AccountId account,
+        string prefix,
+        CancellationToken cancellationToken
+    )
     {
         if (string.IsNullOrWhiteSpace(prefix) || prefix.Length > 320)
         {
@@ -403,7 +448,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<ImmutableArray<MailboxUnreadCount>> MailboxUnreadCountsAsync(AccountId account, CancellationToken cancellationToken)
+    public Task<ImmutableArray<MailboxUnreadCount>> MailboxUnreadCountsAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection =>
         {
@@ -436,7 +484,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<ImmutableArray<MailboxSnapshot>> MailboxesAsync(CancellationToken cancellationToken)
+    public Task<ImmutableArray<MailboxSnapshot>> MailboxesAsync(
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection =>
         {
@@ -466,7 +516,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task SaveCapabilitiesAsync(AccountId account, Capabilities capabilities, CancellationToken cancellationToken)
+    public Task SaveCapabilitiesAsync(
+        AccountId account,
+        Capabilities capabilities,
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync(connection =>
         {
@@ -481,7 +535,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<Failure> SaveIdentityAsync(AccountId account, ComposeIdentity identity, CancellationToken cancellationToken)
+    public Task<Failure> SaveIdentityAsync(
+        AccountId account,
+        ComposeIdentity identity,
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync(connection =>
         {
@@ -507,7 +565,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<ImmutableArray<DraftSnapshot>> DraftsAsync(AccountId account, CancellationToken cancellationToken)
+    public Task<ImmutableArray<DraftSnapshot>> DraftsAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection =>
         {
@@ -559,12 +620,12 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                     reader.GetString(0),
                     reader.GetString(1),
                     new BlobReference(
-    Guid.ParseExact(reader.GetString(2), "N"),
-    account,
-    reader.GetInt64(3),
-    reader.GetString(4),
-    reader.GetBoolean(5)
-)
+                        Guid.ParseExact(reader.GetString(2), "N"),
+                        account,
+                        reader.GetInt64(3),
+                        reader.GetString(4),
+                        reader.GetBoolean(5)
+                    )
                 ));
             }
 
@@ -572,7 +633,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<ImmutableArray<OutboxEntry>> OutboxAsync(AccountId account, CancellationToken cancellationToken)
+    public Task<ImmutableArray<OutboxEntry>> OutboxAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection =>
         {
@@ -597,7 +661,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     }
 
     /// <summary>Checks every account and row; presentation page limits must never admit an unsafe shutdown.</summary>
-    public Task<bool> HasActiveSubmissionsAsync(CancellationToken cancellationToken)
+    public Task<bool> HasActiveSubmissionsAsync(
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection => Convert.ToInt64(Scalar(
             connection,
@@ -665,7 +731,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }
     }
 
-    public Task AddAccountAsync(AccountId account, string displayName, CancellationToken cancellationToken)
+    public Task AddAccountAsync(
+        AccountId account,
+        string displayName,
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync(connection =>
         {
@@ -681,7 +751,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<Checkpoint?> ReadCheckpointAsync(AccountId account, string scope, CancellationToken cancellationToken)
+    public Task<Checkpoint?> ReadCheckpointAsync(
+        AccountId account,
+        string scope,
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync<Checkpoint?>(connection =>
         {
@@ -709,7 +783,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task CommitAsync(MailboxSnapshot mailbox, MetadataPage page, CancellationToken cancellationToken)
+    public Task CommitAsync(
+        MailboxSnapshot mailbox,
+        MetadataPage page,
+        CancellationToken cancellationToken
+    )
     {
         if (mailbox.Account != page.Checkpoint.Account || mailbox.RemoteKey != page.Checkpoint.Scope ||
             page.Messages.Any(message => message.Account != mailbox.Account || message.Provider.Account != mailbox.Account) ||
@@ -757,9 +835,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
 
                 long id = Convert.ToInt64(
                     Scalar(
-    connection,
-    transaction,
-    """
+                        connection,
+                        transaction,
+                        """
                     INSERT INTO Messages(AccountId,ProviderKey,MessageIdHeader,Subject,Participants,Date,Size,
                         IsRead,Flagged,Availability,NativeThreadId)
                     VALUES($a,$k,$h,$s,$p,$d,$z,$r,$f,$v,$t)
@@ -769,18 +847,18 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                         Flagged=CASE WHEN Messages.Pending IN (0,6,7) THEN excluded.Flagged ELSE Messages.Flagged END
                     RETURNING MessageId;
                     """,
-    ("$a", message.Account.Value),
-    ("$k", message.Provider.Key),
-    ("$h", message.MessageIdHeader),
-    ("$s", message.Subject),
-    ("$p", message.Participants),
-    ("$d", message.Date.ToUnixTimeMilliseconds()),
-    ("$z", message.Size),
-    ("$r", message.Read),
-    ("$f", message.Flagged),
-    ("$v", (int)ContentAvailability.Missing),
-    ("$t", message.NativeThreadId)
-),
+                        ("$a", message.Account.Value),
+                        ("$k", message.Provider.Key),
+                        ("$h", message.MessageIdHeader),
+                        ("$s", message.Subject),
+                        ("$p", message.Participants),
+                        ("$d", message.Date.ToUnixTimeMilliseconds()),
+                        ("$z", message.Size),
+                        ("$r", message.Read),
+                        ("$f", message.Flagged),
+                        ("$v", (int)ContentAvailability.Missing),
+                        ("$t", message.NativeThreadId)
+                    ),
                     CultureInfo.InvariantCulture
                 );
                 Execute(
@@ -904,7 +982,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         );
     }
 
-    public Task CommitAccountAsync(CanonicalPage page, CancellationToken cancellationToken)
+    public Task CommitAccountAsync(
+        CanonicalPage page,
+        CancellationToken cancellationToken
+    )
     {
         AccountId account = page.Checkpoint.Account;
         if (page.Checkpoint.Scope != "$account" || page.Messages.Length > 1000 ||
@@ -941,9 +1022,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 cancellationToken.ThrowIfCancellationRequested();
                 long id = Convert.ToInt64(
                     Scalar(
-    connection,
-    transaction,
-    """
+                        connection,
+                        transaction,
+                        """
                     INSERT INTO Messages(AccountId,ProviderKey,MessageIdHeader,Subject,Participants,Date,Size,
                         IsRead,Flagged,Availability,NativeThreadId)
                     VALUES($a,$k,$h,$s,$p,$d,$z,$r,$f,0,$t)
@@ -953,17 +1034,17 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                         Flagged=CASE WHEN Messages.Pending IN(0,6,7) THEN excluded.Flagged ELSE Messages.Flagged END
                     RETURNING MessageId;
                     """,
-    ("$a", account.Value),
-    ("$k", message.Provider.Key),
-    ("$h", message.MessageIdHeader),
-    ("$s", message.Subject),
-    ("$p", message.Participants),
-    ("$d", message.Date.ToUnixTimeMilliseconds()),
-    ("$z", message.Size),
-    ("$r", message.Read),
-    ("$f", message.Flagged),
-    ("$t", message.NativeThreadId)
-),
+                        ("$a", account.Value),
+                        ("$k", message.Provider.Key),
+                        ("$h", message.MessageIdHeader),
+                        ("$s", message.Subject),
+                        ("$p", message.Participants),
+                        ("$d", message.Date.ToUnixTimeMilliseconds()),
+                        ("$z", message.Size),
+                        ("$r", message.Read),
+                        ("$f", message.Flagged),
+                        ("$t", message.NativeThreadId)
+                    ),
                     CultureInfo.InvariantCulture
                 );
                 Reindex(connection, transaction, id);
@@ -1176,7 +1257,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<long> EvictAsync(AccountId account, long budgetBytes, CancellationToken cancellationToken)
+    public Task<long> EvictAsync(
+        AccountId account,
+        long budgetBytes,
+        CancellationToken cancellationToken
+    )
     {
         ArgumentOutOfRangeException.ThrowIfNegative(budgetBytes);
         return WriteAsync(connection =>
@@ -1249,7 +1334,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<int> CleanupDisposableOrphansAsync(DateTimeOffset olderThan, CancellationToken cancellationToken)
+    public Task<int> CleanupDisposableOrphansAsync(
+        DateTimeOffset olderThan,
+        CancellationToken cancellationToken
+    )
     {
         if (olderThan > _time.GetUtcNow() - TimeSpan.FromHours(1))
         {
@@ -1282,7 +1370,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<Outcome<SearchPage>> SearchAsync(SearchRequest request, CancellationToken cancellationToken)
+    public Task<Outcome<SearchPage>> SearchAsync(
+        SearchRequest request,
+        CancellationToken cancellationToken
+    )
     {
         if (request.Limit is < 1 or > 200 || request.Terms.Length > 1024 ||
             (!request.Unified && request.Account is null) || (request.Unified && request.Account is not null) ||
@@ -1558,7 +1649,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     }
 
     /// <summary>Retains verified Gmail profile binding in versioned account preferences without changing the EF schema.</summary>
-    public Task<Failure> BindGoogleAccountAsync(AccountId account, GoogleAccountBinding binding, CancellationToken cancellationToken)
+    public Task<Failure> BindGoogleAccountAsync(
+        AccountId account,
+        GoogleAccountBinding binding,
+        CancellationToken cancellationToken
+    )
     {
         if (!binding.IsValid)
         {
@@ -1576,21 +1671,32 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             object? retained = Scalar(connection, transaction, "SELECT Value FROM Preferences WHERE Scope=$s AND Key='google-binding';", ("$s", scope));
             if (kind != "Imap" && kind != "Google" || retained is string json && ReadGoogleBinding(json) != binding ||
                 kind == "Google" && retained is not string ||
-                kind == "Imap" && Convert.ToInt64(Scalar(connection, transaction,
-                    "SELECT COUNT(*) FROM ImapInstances WHERE AccountId=$a;", ("$a", account.Value)), CultureInfo.InvariantCulture) != 0)
+                kind == "Imap" && Convert.ToInt64(Scalar(
+                    connection,
+                    transaction,
+                    "SELECT COUNT(*) FROM ImapInstances WHERE AccountId=$a;",
+                    ("$a", account.Value)
+                ), CultureInfo.InvariantCulture) != 0)
             {
                 return Failure.NeedsReview;
             }
-            Execute(connection, transaction,
+            Execute(
+                connection,
+                transaction,
                 "INSERT INTO Preferences(Scope,Key,Value,PayloadVersion) VALUES($s,'google-binding',$v,1) ON CONFLICT(Scope,Key) DO NOTHING;",
-                ("$s", scope), ("$v", JsonSerializer.Serialize(binding)));
+                ("$s", scope),
+                ("$v", JsonSerializer.Serialize(binding))
+            );
             Execute(connection, transaction, "UPDATE Accounts SET ProviderKind='Google' WHERE AccountId=$a;", ("$a", account.Value));
             transaction.Commit();
             return Failure.None;
         }, cancellationToken);
     }
 
-    public Task<bool> QueueAsync(MutationIntent intent, CancellationToken cancellationToken)
+    public Task<bool> QueueAsync(
+        MutationIntent intent,
+        CancellationToken cancellationToken
+    )
     {
         if (intent.PayloadVersion != 1 || intent.Id.Value == Guid.Empty || intent.Provider.Account != intent.Account)
         {
@@ -1641,7 +1747,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<OperationEntry?> ReadNextAsync(AccountId account, CancellationToken cancellationToken)
+    public Task<OperationEntry?> ReadNextAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync<OperationEntry?>(connection =>
         {
@@ -1662,7 +1771,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<OperationEntry?> ClaimAsync(AccountId account, DateTimeOffset now, CancellationToken cancellationToken)
+    public Task<OperationEntry?> ClaimAsync(
+        AccountId account,
+        DateTimeOffset now,
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync<OperationEntry?>(connection =>
         {
@@ -1743,6 +1856,54 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             );
             if (changed != 0)
             {
+                if (state == PendingState.Completed && claim.Intent.Kind == MutationKind.Move &&
+                    claim.Intent.Provider.Imap is ImapIdentity source && claim.Intent.Destination != source.Mailbox)
+                {
+                    // A confirmed move removes the source immediately. Destination UIDs must still
+                    // come from reconciliation; never invent an IMAP identity from the source UID.
+                    Execute(
+                        connection,
+                        transaction,
+                        "DELETE FROM Memberships WHERE AccountId=$a AND MessageId=$m AND FolderId IN " +
+                        "(SELECT FolderId FROM Collections WHERE AccountId=$a AND RemoteKey=$k);",
+                        ("$a", claim.Intent.Account.Value),
+                        ("$m", claim.Intent.Target.Value),
+                        ("$k", source.Mailbox)
+                    );
+                }
+                if (state == PendingState.Completed && claim.Intent.Kind == MutationKind.Move && claim.Intent.Provider.Imap is null)
+                {
+                    // Canonical IDs survive label moves. Apply the acknowledged request with its
+                    // operation result so the next local query does not wait for another history pass.
+                    if (claim.Intent.Destination != "INBOX")
+                    {
+                        Execute(
+                            connection,
+                            transaction,
+                            "DELETE FROM Memberships WHERE AccountId=$a AND MessageId=$m AND FolderId IN " +
+                            "(SELECT FolderId FROM Collections WHERE AccountId=$a AND RemoteKey='INBOX');",
+                            ("$a", claim.Intent.Account.Value),
+                            ("$m", claim.Intent.Target.Value)
+                        );
+                    }
+                    if (claim.Intent.Destination is string destination)
+                    {
+                        Execute(
+                            connection,
+                            transaction,
+                            """
+                            INSERT INTO Memberships(AccountId,MessageId,FolderId,SeenGeneration)
+                            SELECT $a,$m,c.FolderId,COALESCE((SELECT Generation FROM SyncState
+                                WHERE AccountId=$a AND Scope='$account'),'')
+                            FROM Collections c WHERE c.AccountId=$a AND c.RemoteKey=$k
+                            ON CONFLICT(AccountId,MessageId,FolderId) DO NOTHING;
+                            """,
+                            ("$a", claim.Intent.Account.Value),
+                            ("$m", claim.Intent.Target.Value),
+                            ("$k", destination)
+                        );
+                    }
+                }
                 Execute(
                     connection,
                     transaction,
@@ -1808,7 +1969,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<DraftSnapshot?> ReadAsync(Guid id, AccountId account, CancellationToken cancellationToken)
+    public Task<DraftSnapshot?> ReadAsync(
+        Guid id,
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection => ReadDraft(connection, null, id, account), cancellationToken);
     }
@@ -1872,7 +2037,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<bool> QueueAsync(FrozenSubmission submission, CancellationToken cancellationToken)
+    public Task<bool> QueueAsync(
+        FrozenSubmission submission,
+        CancellationToken cancellationToken
+    )
     {
         if (!submission.Mime.Protected || submission.Recipients.IsDefaultOrEmpty ||
             submission.Recipients.Distinct(StringComparer.OrdinalIgnoreCase).Count() != submission.Recipients.Length)
@@ -1926,25 +2094,35 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<bool> CancelQueuedAsync(Guid id, AccountId account, long revision, CancellationToken cancellationToken)
+    public Task<bool> CancelQueuedAsync(
+        Guid id,
+        AccountId account,
+        long revision,
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync(
             connection => Execute(
-    connection,
-    null,
-    "UPDATE OutboxSubmissions SET State=$cancelled,Revision=Revision+1 " +
+                connection,
+                null,
+                "UPDATE OutboxSubmissions SET State=$cancelled,Revision=Revision+1 " +
             "WHERE SubmissionId=$id AND AccountId=$account AND Revision=$revision AND State=$queued;",
-    ("$cancelled", (int)SubmissionState.Cancelled),
-    ("$id", id.ToString("N")),
-    ("$account", account.Value),
-    ("$revision", revision),
-    ("$queued", (int)SubmissionState.Queued)
-) == 1,
+                ("$cancelled", (int)SubmissionState.Cancelled),
+                ("$id", id.ToString("N")),
+                ("$account", account.Value),
+                ("$revision", revision),
+                ("$queued", (int)SubmissionState.Queued)
+            ) == 1,
             cancellationToken
         );
     }
 
-    public Task<bool> PrepareSentCopyRetryAsync(Guid id, AccountId account, long revision, CancellationToken cancellationToken)
+    public Task<bool> PrepareSentCopyRetryAsync(
+        Guid id,
+        AccountId account,
+        long revision,
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync(connection => Execute(
             connection,
@@ -1959,17 +2137,28 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         ) == 1, cancellationToken);
     }
 
-    public Task<OutboxEntry?> ClaimAsync(AccountId account, CancellationToken cancellationToken)
+    public Task<OutboxEntry?> ClaimAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return ClaimSubmissionAsync(null, account, cancellationToken);
     }
 
-    public Task<OutboxEntry?> ClaimAsync(Guid id, AccountId account, CancellationToken cancellationToken)
+    public Task<OutboxEntry?> ClaimAsync(
+        Guid id,
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return ClaimSubmissionAsync(id, account, cancellationToken);
     }
 
-    public Task<bool> FinishAsync(OutboxEntry claim, SubmissionOutcome outcome, CancellationToken cancellationToken)
+    public Task<bool> FinishAsync(
+        OutboxEntry claim,
+        SubmissionOutcome outcome,
+        CancellationToken cancellationToken
+    )
     {
         if (outcome.State is not (SubmissionState.Accepted or SubmissionState.Rejected or
             SubmissionState.PartiallyAccepted or SubmissionState.Uncertain) ||
@@ -2016,7 +2205,12 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<bool> CompleteSentCopyAsync(Guid id, AccountId account, long revision, CancellationToken cancellationToken)
+    public Task<bool> CompleteSentCopyAsync(
+        Guid id,
+        AccountId account,
+        long revision,
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync(connection => Execute(
             connection,
@@ -2032,7 +2226,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         ) == 1, cancellationToken);
     }
 
-    public Task<OutboxEntry?> ClaimSentCopyAsync(Guid id, AccountId account, CancellationToken cancellationToken)
+    public Task<OutboxEntry?> ClaimSentCopyAsync(
+        Guid id,
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync<OutboxEntry?>(connection =>
         {
@@ -2054,7 +2252,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task RecoverAsync(CancellationToken cancellationToken)
+    public Task RecoverAsync(
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync(connection =>
         {
@@ -2123,7 +2323,12 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         // Connection lifetimes belong to individual operations; pooling is disabled.
     }
 
-    public Task<bool> ResolveAsync(OperationId id, AccountId account, bool retry, CancellationToken cancellationToken)
+    public Task<bool> ResolveAsync(
+        OperationId id,
+        AccountId account,
+        bool retry,
+        CancellationToken cancellationToken
+    )
     {
         return ResolveOperationAsync(id, account, null, retry, cancellationToken);
     }
@@ -2139,7 +2344,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         return ResolveOperationAsync(id, account, revision, retry, cancellationToken);
     }
 
-    public Task<ImmutableArray<CommandSnapshot>> CommandsAsync(AccountId account, CancellationToken cancellationToken)
+    public Task<ImmutableArray<CommandSnapshot>> CommandsAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection =>
         {
@@ -2207,7 +2415,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    private Task<OutboxEntry?> ClaimSubmissionAsync(Guid? id, AccountId account, CancellationToken cancellationToken)
+    private Task<OutboxEntry?> ClaimSubmissionAsync(
+        Guid? id,
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return WriteAsync<OutboxEntry?>(connection =>
         {
@@ -2249,7 +2461,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    private static ComposeIdentity? ReadIdentity(string json)
+    private static ComposeIdentity? ReadIdentity(
+        string json
+    )
     {
         try
         {
@@ -2262,7 +2476,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }
     }
 
-    private static Capabilities? ReadCapabilities(string json)
+    private static Capabilities? ReadCapabilities(
+        string json
+    )
     {
         if (json == "{}")
         {
@@ -2279,7 +2495,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }
     }
 
-    Task<OutboxEntry?> IOutboxStore.ReadAsync(Guid id, AccountId account, CancellationToken cancellationToken)
+    Task<OutboxEntry?> IOutboxStore.ReadAsync(
+        Guid id,
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync<OutboxEntry?>(connection =>
         {
@@ -2407,6 +2627,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             BlobStore.VerifyPath(_path + suffix);
         }
         SqliteConnection connection = new SqliteConnection(new SqliteConnectionStringBuilder
+
         {
             DataSource = _path,
             ForeignKeys = true,
@@ -2452,7 +2673,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         );
     }
 
-    private static void PreserveCorruption(string path)
+    private static void PreserveCorruption(
+        string path
+    )
     {
         BlobStore.VerifyPath(path);
         string location = path + ".recovery-" + Guid.NewGuid().ToString("N");
@@ -2475,7 +2698,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         return _time.GetUtcNow().ToUnixTimeMilliseconds();
     }
 
-    private static void Reindex(SqliteConnection connection, SqliteTransaction transaction, long id)
+    private static void Reindex(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long id
+    )
     {
         Execute(connection, transaction, "DELETE FROM SearchText WHERE rowid=$i;", ("$i", id));
         Execute(
@@ -2490,12 +2717,18 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         );
     }
 
-    private static bool TargetMatches(SqliteConnection connection, SqliteTransaction transaction, MutationIntent intent)
+    private static bool TargetMatches(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        MutationIntent intent
+    )
     {
         return TargetMatches(connection, transaction, intent.Account, intent.Target, intent.Provider);
     }
 
-    private static GoogleAccountBinding? ReadGoogleBinding(string json)
+    private static GoogleAccountBinding? ReadGoogleBinding(
+        string json
+    )
     {
         try
         {
@@ -2508,7 +2741,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }
     }
 
-    private static MicrosoftAccountBinding? ReadMicrosoftBinding(string json)
+    private static MicrosoftAccountBinding? ReadMicrosoftBinding(
+        string json
+    )
     {
         try
         {
@@ -2531,16 +2766,16 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     {
         long count = Convert.ToInt64(
             Scalar(
-    connection,
-    transaction,
-    """
+                connection,
+                transaction,
+                """
             SELECT count(*) FROM Messages m WHERE m.AccountId=$a AND m.MessageId=$m AND m.ProviderKey=$k
             AND EXISTS(SELECT 1 FROM Memberships x WHERE x.AccountId=m.AccountId AND x.MessageId=m.MessageId)
             """,
-    ("$a", account.Value),
-    ("$m", target.Value),
-    ("$k", provider.Key)
-),
+                ("$a", account.Value),
+                ("$m", target.Value),
+                ("$k", provider.Key)
+            ),
             CultureInfo.InvariantCulture
         );
         ImapIdentity? imap = provider.Imap;
@@ -2565,7 +2800,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         ), CultureInfo.InvariantCulture) == 1;
     }
 
-    private static MessageSnapshot ReadMessage(SqliteDataReader reader)
+    private static MessageSnapshot ReadMessage(
+        SqliteDataReader reader
+    )
     {
         AccountId account = new AccountId(reader.GetInt64(1));
         ImapIdentity? imap = reader.IsDBNull(13) ? null :
@@ -2594,7 +2831,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         );
     }
 
-    private static OperationEntry ReadOperation(SqliteDataReader reader)
+    private static OperationEntry ReadOperation(
+        SqliteDataReader reader
+    )
     {
         MutationIntent intent = JsonSerializer.Deserialize<MutationIntent>(reader.GetString(0)) ??
             throw new InvalidDataException("Missing operation payload.");
@@ -2616,7 +2855,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         );
     }
 
-    private static OutboxEntry ReadOutbox(SqliteDataReader reader)
+    private static OutboxEntry ReadOutbox(
+        SqliteDataReader reader
+    )
     {
         FrozenSubmission submission = JsonSerializer.Deserialize<FrozenSubmission>(reader.GetString(0)) ??
             throw new InvalidDataException("Missing frozen submission.");
@@ -2665,12 +2906,12 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             reader.GetInt64(4),
             reader.GetInt64(5),
             new BlobReference(
-    Guid.ParseExact(reader.GetString(6), "N"),
-    account,
-    reader.GetInt64(11),
-    reader.GetString(12),
-    reader.GetBoolean(13)
-),
+                Guid.ParseExact(reader.GetString(6), "N"),
+                account,
+                reader.GetInt64(11),
+                reader.GetString(12),
+                reader.GetBoolean(13)
+            ),
             reader.IsDBNull(7) ? null : JsonSerializer.Deserialize<ProviderIdentity>(reader.GetString(7)),
             reader.IsDBNull(8) ? null : reader.GetString(8),
             reader.GetBoolean(9),

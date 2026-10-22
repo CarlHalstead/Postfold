@@ -234,7 +234,8 @@ public sealed class WindowsHtmlIsolation : IDisposable
             ";document.body.style.fontSize=" + JsonSerializer.Serialize(size.ToString(System.Globalization.CultureInfo.InvariantCulture) + "px") +
             ";document.body.style.color=" + JsonSerializer.Serialize(foreground) +
             ";document.body.style.backgroundColor=" + JsonSerializer.Serialize(background) +
-            ";document.documentElement.style.scrollBehavior='auto';";
+            ";document.documentElement.style.scrollBehavior='auto';" +
+            "document.querySelectorAll('pre').forEach(p=>{p.style.fontFamily='inherit';p.style.whiteSpace='pre-wrap';p.style.overflowWrap='anywhere';});";
         // Trusted host CSSOM assignments; message scripting and CSS remain disabled by native settings and CSP.
         return _core.ExecuteScriptAsync(script).WaitAsync(cancellationToken);
     }

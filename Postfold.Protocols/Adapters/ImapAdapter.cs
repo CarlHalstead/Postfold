@@ -455,7 +455,7 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
                 cancellationToken
             ).ConfigureAwait(false);
             IMessageSummary? summary = metadata.SingleOrDefault(item => item.UniqueId == uid);
-            BodyPartText? body = summary?.TextBody ?? summary?.HtmlBody;
+            BodyPartText? body = summary?.HtmlBody ?? summary?.TextBody;
             if (body is null)
             {
                 return Outcome<Stream>.Fail(Failure.NotFound);

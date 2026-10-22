@@ -222,9 +222,12 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
                 _selected.Provider != value.Provider);
             if (SetProperty(ref _selected, value))
             {
-                _load = OpenSelectedAsync(opened);
-                _reads.RemoveAll(item => item.IsCompletedSuccessfully || item.IsCanceled);
-                _reads.Add(_load);
+                if (opened || value is null || _content is null && _load.IsCompleted)
+                {
+                    _load = OpenSelectedAsync(opened);
+                    _reads.RemoveAll(item => item.IsCompletedSuccessfully || item.IsCanceled);
+                    _reads.Add(_load);
+                }
                 NotifyCommands();
                 OnPropertyChanged(nameof(SelectedRow));
                 NotifyReader();
@@ -239,7 +242,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         Strings.Get("MoveCapabilityUnknown") : !capabilities.NativeMove && !capabilities.SelectiveExpunge ?
         Strings.Get("MoveCapabilityUnsupported") : "";
 
-    public async Task InitialiseAsync()
+    public async Task InitialiseAsync(bool preserveLoadedRows = false)
     {
         if (_application is null)
         {
@@ -256,7 +259,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         ImmutableArray<MailboxSnapshot> mailboxes = await _application.Catalog.MailboxesAsync(_lifetime.Token);
         if (Scope is not null && Accounts.SequenceEqual(accounts) && Mailboxes.SequenceEqual(mailboxes))
         {
-            await RefreshAsync(false);
+            await RefreshAsync(false, preserveLoadedRows: preserveLoadedRows);
             return;
         }
 
@@ -346,7 +349,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         NotifyCommands();
         OnPropertyChanged(nameof(NavigationSelection));
         UpdatingNavigation = false;
-        await RefreshAsync(false);
+        await RefreshAsync(false, preserveLoadedRows: preserveLoadedRows);
     }
 
     /// <summary>Runs initial mail sync after setup closes, owned by the main window's cancellable lifetime.</summary>
@@ -366,7 +369,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     }
 
     /// <summary>Loads a page; navigation echoes can retain a page whose scope and filters are still valid.</summary>
-    public async Task RefreshAsync(bool next, bool onlyIfInvalidated = false)
+    public async Task RefreshAsync(bool next, bool onlyIfInvalidated = false, bool preserveLoadedRows = false)
     {
         if (_application is null || Scope is null || next && _continuation is null || onlyIfInvalidated && _pageScope is not null)
         {
@@ -401,6 +404,30 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             {
                 Continuation = next ? _continuation : null
             }, token);
+            if (!next && preserveLoadedRows && result.IsSuccess)
+            {
+                int loaded = Math.Max(100, Messages.Count);
+                ImmutableArray<MessageSnapshot>.Builder refreshed = result.Value!.Messages.ToBuilder();
+                string? continuation = result.Value.Continuation;
+                while (refreshed.Count < loaded && continuation is not null)
+                {
+                    Outcome<SearchPage> following = await _application.SearchAsync(request with
+                    {
+                        Continuation = continuation
+                    }, token);
+                    if (!following.IsSuccess)
+                    {
+                        result = following;
+                        break;
+                    }
+                    refreshed.AddRange(following.Value!.Messages);
+                    continuation = following.Value.Continuation;
+                }
+                if (result.IsSuccess)
+                {
+                    result = Outcome<SearchPage>.Success(new SearchPage(refreshed.ToImmutable(), continuation));
+                }
+            }
             if (generation != _searchGeneration || token.IsCancellationRequested)
             {
                 return;
@@ -493,6 +520,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         Body = message is null ? "" : Strings.Get("MessageLoading");
         Attachments.Clear();
         _content = null;
+        OnPropertyChanged(nameof(Content));
         NotifyReader();
         if (_application is null || message is null)
         {
@@ -536,12 +564,14 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
                 Attachments.Add(attachment);
             }
             NotifyReader();
+            OnPropertyChanged(nameof(Content));
         }
         catch (OperationCanceledException)
         {
         }
         catch (System.IO.IOException)
         {
+            Body = Strings.Get("Missing");
             Status = Strings.Describe(Failure.Unavailable);
         }
     }

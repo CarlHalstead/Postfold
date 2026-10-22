@@ -10,6 +10,7 @@ using Postfold.Core.Models.Operations;
 using Postfold.Core.Models.Outbox;
 using Postfold.Core.Models.Search;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
@@ -31,6 +32,7 @@ public sealed class MailApplication : IMailApplication
     private readonly ISynchronisationStore _attachmentStore;
     private readonly IAccountEngines _engines;
     private readonly long _maximumBytes;
+    private readonly ConcurrentDictionary<AccountId, SemaphoreSlim> _synchronisation = new ConcurrentDictionary<AccountId, SemaphoreSlim>();
 
     public MailApplication(
         IClientCatalog catalog,
@@ -252,33 +254,16 @@ public sealed class MailApplication : IMailApplication
 
     public async Task<Failure> SynchroniseAsync(AccountId account, CancellationToken cancellationToken)
     {
-        IMailAccountEngine? engine = _engines.Find(account);
-        if (engine is null)
+        SemaphoreSlim gate = _synchronisation.GetOrAdd(account, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return Failure.Unavailable;
+            return await SynchroniseAccountAsync(account, cancellationToken).ConfigureAwait(false);
         }
-
-        if (engine.Mailboxes.IsDefaultOrEmpty)
+        finally
         {
-            return Failure.NeedsReview;
+            gate.Release();
         }
-
-        foreach (MailboxSnapshot mailbox in engine.Mailboxes)
-        {
-            if (!mailbox.Selectable)
-            {
-                continue;
-            }
-
-            Failure result = await engine.ReconcileAsync(mailbox.RemoteKey, cancellationToken).ConfigureAwait(false);
-            if (result != Failure.None)
-            {
-                return result;
-            }
-        }
-
-        await _capabilities.SaveCapabilitiesAsync(account, engine.Capabilities, cancellationToken).ConfigureAwait(false);
-        return await engine.ProcessMutationsAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<Outcome<DraftSnapshot>> SaveDraftAsync(
@@ -495,5 +480,36 @@ public sealed class MailApplication : IMailApplication
             retry,
             cancellationToken
         ).ConfigureAwait(false) ? Failure.None : Failure.NeedsReview;
+    }
+
+    private async Task<Failure> SynchroniseAccountAsync(AccountId account, CancellationToken cancellationToken)
+    {
+        IMailAccountEngine? engine = _engines.Find(account);
+        if (engine is null)
+        {
+            return Failure.Unavailable;
+        }
+
+        if (engine.Mailboxes.IsDefaultOrEmpty)
+        {
+            return Failure.NeedsReview;
+        }
+
+        foreach (MailboxSnapshot mailbox in engine.Mailboxes)
+        {
+            if (!mailbox.Selectable)
+            {
+                continue;
+            }
+
+            Failure result = await engine.ReconcileAsync(mailbox.RemoteKey, cancellationToken).ConfigureAwait(false);
+            if (result != Failure.None)
+            {
+                return result;
+            }
+        }
+
+        await _capabilities.SaveCapabilitiesAsync(account, engine.Capabilities, cancellationToken).ConfigureAwait(false);
+        return await engine.ProcessMutationsAsync(cancellationToken).ConfigureAwait(false);
     }
 }

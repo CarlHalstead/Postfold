@@ -482,7 +482,7 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
             _window.ConfigureHtml(_html);
             _window.ConfigureIdentity(_host.Identity);
             _window.OpenAccountSetupIfNeeded();
-            _synchronising = SynchroniseAccountsAsync(model);
+            _synchronising = SynchroniseAccountsAsync(model, application);
             long observedMessages = model.CachedMessageCount;
             model.PropertyChanged += (_, change) =>
             {
@@ -661,30 +661,24 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
         }
     }
 
-    private async Task SynchroniseAccountsAsync(MainWindowViewModel model)
+    private async Task SynchroniseAccountsAsync(MainWindowViewModel model, IMailApplication application)
     {
-        try
+        if (_host is null)
         {
-            if (_host is null)
+            return;
+        }
+        MailSynchronisationLoop synchronisation = new MailSynchronisationLoop(application, TimeProvider.System);
+        await synchronisation.RunAsync(async (_, result, cancellationToken) =>
+        {
+            await Dispatcher.UIThread.InvokeAsync(async () =>
             {
-                return;
-            }
-            foreach (Postfold.Core.Models.Accounts.AccountConfiguration account in model.Accounts.ToArray())
-            {
-                Failure result = await _host.Application.SynchroniseAsync(account.Id, _lifetime.Token);
-                await model.InitialiseAsync();
+                cancellationToken.ThrowIfCancellationRequested();
+                await model.InitialiseAsync(preserveLoadedRows: true);
                 if (result != Failure.None)
                 {
                     model.ReportReadingResult(result);
                 }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (IOException)
-        {
-            model.ReportReadingResult(Failure.Unavailable);
-        }
+            });
+        }, _lifetime.Token);
     }
 }

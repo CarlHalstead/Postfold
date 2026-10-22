@@ -49,6 +49,7 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
     private MessageSnapshot? _message;
     private Guid _context;
     private HtmlResourceDocument? _document;
+    private Dictionary<string, byte[]> _inlineImages = [];
     private bool _disposed;
 
     public WindowsHtmlReadingService(
@@ -155,6 +156,8 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
             }
 
             _document = prepared.Value!;
+            _inlineImages = new Dictionary<string, byte[]>(_document.Resources, StringComparer.Ordinal);
+            _document.Resources.Clear();
             await EnsureNativeAsync(deadline.Token);
             deadline.Token.ThrowIfCancellationRequested();
             if (!Current(message, context))
@@ -215,6 +218,10 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
             }
 
             document = _document;
+            foreach (KeyValuePair<string, byte[]> image in _inlineImages)
+            {
+                document.Resources.TryAdd(image.Key, image.Value);
+            }
             long pixels = document.Resources.Values.Sum(Pixels);
             long bytes = document.Resources.Values.Sum(value => (long)value.Length);
             foreach (HtmlImageRequest request in document.Plan.RemoteImages)
@@ -423,6 +430,7 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
         _message = null;
         _context = Guid.NewGuid();
         _document = null;
+        _inlineImages.Clear();
         if (OperatingSystem.IsWindows())
         {
             if (_isolation is not null && !_isolation.HasFailed)
@@ -454,6 +462,7 @@ public sealed class WindowsHtmlReadingService : IHtmlReadingService
         // A browser-process failure closes its controller. Detach before changing visibility:
         // a layout update on the retained adapter would call SetBounds on that closed controller.
         _window.ReleaseHtmlSurface();
+        _window.ReportHtmlFailure(Failure.Unavailable);
         _model.ReportReadingResult(Failure.Unavailable);
     }
 

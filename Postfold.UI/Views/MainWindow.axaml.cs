@@ -46,6 +46,8 @@ public sealed partial class MainWindow : Window
     private IClientAppearance? _appearance;
     private AppearanceSettings _settings = AppearanceSettings.Default;
     private IMailApplication? _application;
+    private IHtmlReadingService? _htmlReader;
+    private long _htmlReadGeneration;
     private IAccountSetup? _setup;
     private IAccountManagement? _management;
     private IClientIdentity? _identity;
@@ -227,6 +229,14 @@ public sealed partial class MainWindow : Window
         SetHtmlSurface(null);
     }
 
+    /// <summary>Shows a renderer failure without exposing another message or an alternate reading mode.</summary>
+    public void ReportHtmlFailure(Failure failure)
+    {
+        TextBlock status = this.FindControl<TextBlock>("HtmlReadingStatus")!;
+        status.IsVisible = true;
+        status.Text = Strings.Describe(failure);
+    }
+
     public void ConfigureIdentity(IClientIdentity identity)
     {
         _identity = identity;
@@ -234,20 +244,10 @@ public sealed partial class MainWindow : Window
 
     public void ConfigureHtml(IHtmlReadingService reader)
     {
-        this.FindControl<MenuItem>("HtmlButton")!.IsEnabled = reader.IsQualified;
+        _htmlReader = reader;
+        this.FindControl<SelectableTextBlock>("PlainPreview")!.IsVisible = false;
         this.FindControl<MenuItem>("ImagesButton")!.IsEnabled = reader.IsQualified;
-        Wire("HtmlButton", async () =>
-        {
-            if (DataContext is MainWindowViewModel model && model.Selected is MessageSnapshot message)
-            {
-                Failure result = await reader.ReadAsync(message, true, _lifetime.Token);
-                if (model.Selected?.Account == message.Account && model.Selected.Id == message.Id &&
-                    model.Selected.Provider == message.Provider)
-                {
-                    model.ReportReadingResult(result);
-                }
-            }
-        });
+        Track(ReadHtmlAsync);
         Wire("ImagesButton", () =>
         {
             if (DataContext is MainWindowViewModel model && model.Selected is MessageSnapshot message)
@@ -333,7 +333,6 @@ public sealed partial class MainWindow : Window
         this.FindControl<Button>("SettingsButton")!.IsEnabled = true;
         Wire("WorkButton", () => { OpenWorkMenu(); return Task.CompletedTask; });
         Wire("DetailsButton", () => { ShowMessageDetails(); return Task.CompletedTask; });
-        Wire("PlainButton", () => { SetHtmlSurface(null); return Task.CompletedTask; });
         Wire("CheckEmptyAttachmentsButton", async () =>
         {
             if (DataContext is MainWindowViewModel model)
@@ -1683,6 +1682,41 @@ Content = FormControls.Page("", panel, footer)
         if (args.PropertyName == nameof(MainWindowViewModel.HasMore))
         {
             UpdatePagination();
+        }
+        if (args.PropertyName == nameof(MainWindowViewModel.Content) && _htmlReader is not null)
+        {
+            Track(ReadHtmlAsync);
+        }
+        if (args.PropertyName == nameof(MainWindowViewModel.Body) && _htmlReader is not null && _pageModel?.Content is null)
+        {
+            this.FindControl<TextBlock>("HtmlReadingStatus")!.Text = _pageModel?.Body;
+        }
+    }
+
+    private async Task ReadHtmlAsync()
+    {
+        long generation = ++_htmlReadGeneration;
+        if (_htmlReader is null || DataContext is not MainWindowViewModel model)
+        {
+            return;
+        }
+
+        TextBlock status = this.FindControl<TextBlock>("HtmlReadingStatus")!;
+        status.IsVisible = true;
+        status.Text = model.Content is null ? model.Body : Strings.Get("MessageLoading");
+        if (model.Content is null || model.Selected is not MessageSnapshot message)
+        {
+            SetHtmlSurface(null);
+            return;
+        }
+
+        Failure result = await _htmlReader.ReadAsync(message, false, _lifetime.Token);
+        if (generation == _htmlReadGeneration && model.Selected?.Account == message.Account && model.Selected.Id == message.Id &&
+            model.Selected.Provider == message.Provider)
+        {
+            status.IsVisible = result != Failure.None;
+            status.Text = result == Failure.None ? string.Empty : Strings.Describe(result);
+            model.ReportReadingResult(result);
         }
     }
 

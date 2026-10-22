@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -173,7 +174,12 @@ public sealed class MimePipeline : IMimePipeline, IMimeDraftReader, IMimeDraftWr
             using MimeMessage message = await LoadAsync(source, cancellationToken).ConfigureAwait(false);
             MimeEntity body = message.Body ?? throw new InvalidDataException("Missing MIME body.");
             _ = Enumerate(body);
-            (TextPart? Html, MultipartRelated? Scope) selected = SelectHtml(body, null);
+            (TextPart? Html, MultipartRelated? Scope) selected = SelectTextBody(body, null, true);
+            bool plain = selected.Html is null;
+            if (plain)
+            {
+                selected = SelectTextBody(body, null, false);
+            }
             if (selected.Html is null || selected.Html.Content is null)
             {
                 return Outcome<MimeHtmlDocument>.Fail(Failure.NotFound);
@@ -185,7 +191,7 @@ public sealed class MimePipeline : IMimePipeline, IMimeDraftReader, IMimeDraftWr
                 await selected.Html.Content.DecodeToAsync(bounded, cancellationToken).ConfigureAwait(false);
             }
 
-            string html = selected.Html.Text;
+            string html = plain ? "<pre>" + WebUtility.HtmlEncode(selected.Html.Text) + "</pre>" : selected.Html.Text;
             if (System.Text.Encoding.UTF8.GetByteCount(html) > 262144)
             {
                 return Outcome<MimeHtmlDocument>.Fail(Failure.Validation);
@@ -285,7 +291,7 @@ public sealed class MimePipeline : IMimePipeline, IMimeDraftReader, IMimeDraftWr
         return WriteComposeAsync(content, destination, true, cancellationToken);
     }
 
-    private static (TextPart? Html, MultipartRelated? Scope) SelectHtml(MimeEntity entity, MultipartRelated? scope)
+    private static (TextPart? Html, MultipartRelated? Scope) SelectTextBody(MimeEntity entity, MultipartRelated? scope, bool html)
     {
         if (entity.IsAttachment || entity is MessagePart)
         {
@@ -294,12 +300,12 @@ public sealed class MimePipeline : IMimePipeline, IMimeDraftReader, IMimeDraftWr
 
         if (entity is TextPart text)
         {
-            return text.IsHtml ? (text, scope) : (null, null);
+            return (html ? text.IsHtml : text.IsPlain) ? (text, scope) : (null, null);
         }
 
         if (entity is MultipartRelated related)
         {
-            return related.Root is MimeEntity root ? SelectHtml(root, related) : (null, null);
+            return related.Root is MimeEntity root ? SelectTextBody(root, related, html) : (null, null);
         }
 
         if (entity is Multipart multipart)
@@ -307,7 +313,7 @@ public sealed class MimePipeline : IMimePipeline, IMimeDraftReader, IMimeDraftWr
             for (int offset = 0; offset < multipart.Count; offset++)
             {
                 int index = multipart is MultipartAlternative ? multipart.Count - offset - 1 : offset;
-                (TextPart? Html, MultipartRelated? Scope) selected = SelectHtml(multipart[index], scope);
+                (TextPart? Html, MultipartRelated? Scope) selected = SelectTextBody(multipart[index], scope, html);
                 if (selected.Html is not null)
                 {
                     return selected;

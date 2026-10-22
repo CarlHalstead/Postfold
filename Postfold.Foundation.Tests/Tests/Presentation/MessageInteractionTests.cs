@@ -25,6 +25,76 @@ namespace Postfold.Foundation.Tests.Tests.Presentation;
 public sealed class MessageInteractionTests
 {
     [AvaloniaTest]
+    public async Task InitialiseAsync_WhenBackgroundRefreshRuns_PreservesLoadedPagesSelectionAndCachedBody()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        ImmutableArray<MessageSnapshot> first = Enumerable.Range(1, 100).Select(id => Message() with
+        {
+            Id = new MessageId(id),
+            Read = true
+        }).ToImmutableArray();
+        ImmutableArray<MessageSnapshot> second = Enumerable.Range(101, 100).Select(id => Message() with
+        {
+            Id = new MessageId(id),
+            Read = true
+        }).ToImmutableArray();
+        application.SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>()).Returns(call =>
+            Outcome<SearchPage>.Success(call.Arg<SearchRequest>().Continuation is null ?
+                new SearchPage(first, "second") : new SearchPage(second, null)));
+        application.ReadAsync(Arg.Any<MessageSnapshot>(), true, Arg.Any<CancellationToken>())
+            .Returns(Outcome<MimeSnapshot>.Success(new MimeSnapshot("Synthetic", "sender", null, "Cached body", null, [])));
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        await model.RefreshAsync(true);
+        await model.OpenMessageAsync(second[20]);
+
+        // Act
+        await model.InitialiseAsync(preserveLoadedRows: true);
+
+        // Assert
+        Assert.That(model.Messages, Has.Count.EqualTo(200));
+        Assert.That(model.Selected, Is.EqualTo(second[20]));
+        Assert.That(model.Body, Is.EqualTo("Cached body"));
+        await application.Received(1).ReadAsync(second[20], true, Arg.Any<CancellationToken>());
+    }
+
+    [AvaloniaTest]
+    public async Task OpenMessageAsync_WhenHtmlReaderIsConfigured_RendersAutomaticallyWithoutLoadingImagesOrReloadingOnFlagChanges()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        application.ReadAsync(Arg.Any<MessageSnapshot>(), true, Arg.Any<CancellationToken>())
+            .Returns(Outcome<MimeSnapshot>.Success(new MimeSnapshot("Synthetic", "sender", null, "Text", "<p>HTML</p>", [])));
+        IHtmlReadingService reader = Substitute.For<IHtmlReadingService>();
+        reader.IsQualified.Returns(true);
+        reader.ReadAsync(Arg.Any<MessageSnapshot>(), false, Arg.Any<CancellationToken>()).Returns(Failure.None);
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        MainWindow window = new MainWindow
+        {
+            DataContext = model
+        };
+        window.ConfigureHtml(reader);
+        MessageSnapshot message = Message() with { Read = true };
+
+        // Act
+        await model.OpenMessageAsync(message);
+        await window.WaitForActionsAsync();
+        model.Selected = model.Selected! with { Flagged = true };
+        await window.WaitForActionsAsync();
+
+        // Assert
+        await reader.Received(1).ReadAsync(message, false, Arg.Any<CancellationToken>());
+        await reader.DidNotReceiveWithAnyArgs().LoadImagesAsync(default!, default);
+        await application.Received(1).ReadAsync(message, true, Arg.Any<CancellationToken>());
+        Assert.That(window.FindControl<MenuItem>("HtmlButton"), Is.Null);
+        Assert.That(window.FindControl<MenuItem>("PlainButton"), Is.Null);
+        Assert.That(window.FindControl<SelectableTextBlock>("PlainPreview")!.IsVisible, Is.False);
+        await window.FlushComposeAsync();
+    }
+
+    [AvaloniaTest]
     public async Task OpenMessageAsync_WhenTheMailboxGenerationChanges_DoesNotOverwriteTheNewRow()
     {
         // Arrange
@@ -103,7 +173,9 @@ public sealed class MessageInteractionTests
     [AvaloniaTest]
     [TestCase(false)]
     [TestCase(true)]
-    public async Task FolderDrop_WhenTheTargetAccountVaries_AcceptsOnlyTheSelectedMessagesAccount(bool foreign)
+    public async Task FolderDrop_WhenTheTargetAccountVaries_AcceptsOnlyTheSelectedMessagesAccount(
+        bool foreign
+    )
     {
         // Arrange
         IMailApplication application = Application();
@@ -125,7 +197,10 @@ public sealed class MessageInteractionTests
         model.Messages.Add(message);
         model.RegroupMessages();
         model.Selected = message;
-        MainWindow window = new MainWindow { DataContext = model };
+        MainWindow window = new MainWindow
+        {
+            DataContext = model
+        };
         window.Configure(application, null);
         window.Show();
         try
@@ -166,7 +241,9 @@ public sealed class MessageInteractionTests
     [TestCase("Unselectable")]
     [TestCase("SameFolder")]
     [TestCase("ChangedSelection")]
-    public async Task DropMessageAsync_WhenTheTargetIsInvalid_DoesNotRecordAMove(string reason)
+    public async Task DropMessageAsync_WhenTheTargetIsInvalid_DoesNotRecordAMove(
+        string reason
+    )
     {
         // Arrange
         IMailApplication application = Application();

@@ -18,7 +18,7 @@ namespace Postfold.Foundation.Tests.Tests.HtmlReading;
 public sealed class HtmlQualificationTests
 {
     [AvaloniaTest]
-    public async Task ReadAsync_WhenNativeQualificationIsMissing_RemainsPlainTextAndNeverLoadsContentOrImages()
+    public async Task ReadAsync_WhenNativeQualificationIsMissing_OffersNoModeSwitchAndNeverLoadsContentOrImages()
     {
         // Arrange
         IMailApplication application = Substitute.For<IMailApplication>();
@@ -58,9 +58,11 @@ public sealed class HtmlQualificationTests
         // Assert
         Assert.That(rendered, Is.EqualTo(Failure.Unavailable));
         Assert.That(images, Is.EqualTo(Failure.Unavailable));
-        Assert.That(window.FindControl<MenuItem>("HtmlButton")!.IsEnabled, Is.False);
+        Assert.That(window.FindControl<MenuItem>("HtmlButton"), Is.Null);
+        Assert.That(window.FindControl<MenuItem>("PlainButton"), Is.Null);
         Assert.That(window.FindControl<MenuItem>("ImagesButton")!.IsEnabled, Is.False);
         Assert.That(window.FindControl<ScrollViewer>("PlainPreviewScroll")!.IsVisible, Is.True);
+        Assert.That(window.FindControl<SelectableTextBlock>("PlainPreview")!.IsVisible, Is.False);
         Assert.That(window.FindControl<ContentControl>("HtmlSurface")!.Content, Is.Null);
         await application.DidNotReceiveWithAnyArgs().ReadHtmlAsync(default!, default, default);
         await fetcher.DidNotReceiveWithAnyArgs().FetchAsync(default!, default, default);

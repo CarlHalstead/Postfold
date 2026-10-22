@@ -13,6 +13,25 @@ namespace Postfold.Foundation.Tests.Tests.Mime;
 public sealed class HtmlMimeTests
 {
     [Test]
+    public async Task ReadHtmlAsync_WhenOnlyPlainTextExists_EscapesItInTheSameHtmlReader()
+    {
+        // Arrange
+        using MemoryStream source = new MemoryStream(Encoding.UTF8.GetBytes(
+            "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n<script>alert('x')</script> & text\r\nnext line"
+        ));
+
+        // Act
+        Outcome<MimeHtmlDocument> result = await new MimePipeline(1048576, 100).ReadHtmlAsync(source, CancellationToken.None);
+
+        // Assert
+        Assert.That(result.IsSuccess, Is.True);
+        Assert.That(result.Value!.Html, Does.StartWith("<pre>&lt;script&gt;"));
+        Assert.That(result.Value.Html, Does.Contain("&amp; text"));
+        Assert.That(result.Value.Html, Does.Contain("next line</pre>"));
+        Assert.That(result.Value.Images, Is.Empty);
+    }
+
+    [Test]
     public async Task ReadHtmlAsync_WhenCidOccursInDifferentAlternatives_UsesOnlySelectedRelatedScope()
     {
         // Arrange
