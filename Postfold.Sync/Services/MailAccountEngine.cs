@@ -498,11 +498,24 @@ public sealed class MailAccountEngine : IMailAccountEngine
             return Task.FromResult(Failure.Unavailable);
         }
 
+        IAccountWork work = new BodyFetchWork(message, _content, _blobs, _mime, _syncStore, _limits.MaximumMimeBytes, fullMessage);
+        if (_content is IConcurrentMessageContentReader)
+        {
+            work = new ConcurrentReadWork(work);
+        }
         return _scheduler.EnqueueAsync(
             Account,
-            new BodyFetchWork(message, _content, _blobs, _mime, _syncStore, _limits.MaximumMimeBytes, fullMessage),
+            work,
             WorkPriority.Interactive,
             cancellationToken
         );
+    }
+
+    private sealed class ConcurrentReadWork(IAccountWork work) : IConcurrentAccountWork
+    {
+        public Task<Failure> RunAsync(CancellationToken cancellationToken)
+        {
+            return work.RunAsync(cancellationToken);
+        }
     }
 }

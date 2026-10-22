@@ -46,6 +46,6 @@ public sealed class IdentityTests
         Assert.That(rejected, Is.EqualTo(Failure.Validation));
         Assert.That(accounts.Single(account => account.Id == EngineFixture.Account).Identity, Is.EqualTo(primary));
         Assert.That(accounts.Single(account => account.Id == new AccountId(2)).Identity, Is.Null);
-        Assert.That(accounts[0].Outgoing.Username, Is.EqualTo("login-name"));
+        Assert.That(accounts[0].Outgoing!.Username, Is.EqualTo("login-name"));
     }
 }

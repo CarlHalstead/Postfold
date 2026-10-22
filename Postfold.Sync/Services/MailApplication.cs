@@ -258,6 +258,11 @@ public sealed class MailApplication : IMailApplication
             return Failure.Unavailable;
         }
 
+        if (engine.Mailboxes.IsDefaultOrEmpty)
+        {
+            return Failure.NeedsReview;
+        }
+
         foreach (MailboxSnapshot mailbox in engine.Mailboxes)
         {
             if (!mailbox.Selectable)

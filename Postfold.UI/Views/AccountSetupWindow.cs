@@ -14,6 +14,7 @@ using System.Globalization;
 using System.Linq;
 using System.Net.Mail;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace Postfold.UI.Views;
 
@@ -21,7 +22,9 @@ public sealed class AccountSetupWindow : Window
 {
     private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
 
-    public AccountSetupWindow(IAccountSetup setup)
+    public AccountSetupWindow(
+        IAccountSetup setup
+    )
     {
         Title = Strings.Setup;
         Width = 620;
@@ -29,11 +32,25 @@ public sealed class AccountSetupWindow : Window
         MinWidth = 360;
         MinHeight = 360;
         StackPanel form = new StackPanel
+
         {
             Margin = new Thickness(24),
             Spacing = 12
         };
+        IProviderAccounts? providers = setup as IProviderAccounts;
+        string providerKind = "Imap";
+        form.Children.Add(new TextBlock
+        {
+            Text = Strings.Get("ProviderLoginHint"),
+            TextWrapping = TextWrapping.Wrap
+        });
+        StackPanel providerActions = new StackPanel
+        {
+            Spacing = 8
+        };
+        form.Children.Add(providerActions);
         StackPanel login = new StackPanel
+
         {
             Name = "LoginStep",
             Spacing = 12
@@ -43,55 +60,88 @@ public sealed class AccountSetupWindow : Window
         email.MaxLength = 320;
         TextBox password = FormControls.AddField(login, "AccountPassword", password: true);
         password.Name = "IncomingPassword";
-        login.Children.Add(new TextBlock
+        TextBlock loginHint = new TextBlock
+
         {
             Text = Strings.LoginHint,
             TextWrapping = TextWrapping.Wrap
-        });
+        };
+        login.Children.Add(loginHint);
         StackPanel servers = new StackPanel
+
         {
             Name = "ServerStep",
             Spacing = 12,
             IsVisible = false
         };
         form.Children.Add(servers);
-        servers.Children.Add(new TextBlock { Text = Strings.ReceivingSettings, FontWeight = FontWeight.SemiBold });
         servers.Children.Add(new TextBlock
+        {
+            Text = Strings.ReceivingSettings,
+            FontWeight = FontWeight.SemiBold
+        });
+        servers.Children.Add(new TextBlock
+
         {
             Text = Strings.ServerHint,
             TextWrapping = TextWrapping.Wrap
         });
         StackPanel incomingHostGroup = new StackPanel();
         TextBox incomingHost = FormControls.AddField(incomingHostGroup, "IncomingHost");
-        StackPanel incomingPortGroup = new StackPanel { Spacing = 4 };
-        StackPanel incomingTlsGroup = new StackPanel { Spacing = 4 };
+        StackPanel incomingPortGroup = new StackPanel
+        {
+            Spacing = 4
+        };
+        StackPanel incomingTlsGroup = new StackPanel
+        {
+            Spacing = 4
+        };
         TextBox incomingPort = FormControls.AddField(incomingPortGroup, "IncomingPort", "993");
         ComboBox incomingTls = TlsChoice("IncomingTls", incomingTlsGroup);
         incomingTlsGroup.Children.Add(incomingTls);
         servers.Children.Add(HostAndPort(incomingHostGroup, incomingPortGroup));
         servers.Children.Add(incomingTlsGroup);
-        servers.Children.Add(new TextBlock { Text = Strings.SendingSettings, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 12, 0, 0) });
+        servers.Children.Add(new TextBlock
+        {
+            Text = Strings.SendingSettings,
+            FontWeight = FontWeight.SemiBold,
+            Margin = new Thickness(0, 12, 0, 0)
+        });
         StackPanel outgoingHostGroup = new StackPanel();
         TextBox outgoingHost = FormControls.AddField(outgoingHostGroup, "OutgoingHost");
-        StackPanel outgoingPortGroup = new StackPanel { Spacing = 4 };
-        StackPanel outgoingTlsGroup = new StackPanel { Spacing = 4 };
+        StackPanel outgoingPortGroup = new StackPanel
+        {
+            Spacing = 4
+        };
+        StackPanel outgoingTlsGroup = new StackPanel
+        {
+            Spacing = 4
+        };
         TextBox outgoingPort = FormControls.AddField(outgoingPortGroup, "OutgoingPort", "465");
         ComboBox outgoingTls = TlsChoice("OutgoingTls", outgoingTlsGroup);
         outgoingTlsGroup.Children.Add(outgoingTls);
         servers.Children.Add(HostAndPort(outgoingHostGroup, outgoingPortGroup));
         servers.Children.Add(outgoingTlsGroup);
         TextBlock status = new TextBlock
+
         {
             Name = "SetupStatus",
             TextWrapping = TextWrapping.Wrap
         };
         AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
         WrapPanel loginActions = new WrapPanel();
-        WrapPanel serverActions = new WrapPanel { IsVisible = false };
-        StackPanel footer = new StackPanel { Spacing = 8 };
+        WrapPanel serverActions = new WrapPanel
+        {
+            IsVisible = false
+        };
+        StackPanel footer = new StackPanel
+        {
+            Spacing = 8
+        };
         footer.Children.Add(loginActions);
         footer.Children.Add(serverActions);
         Button back = new Button
+
         {
             Name = "BackLogin",
             Content = FormControls.Icon(MailIcons.Back),
@@ -101,7 +151,7 @@ public sealed class AccountSetupWindow : Window
         AutomationProperties.SetName(back, Strings.Get("Back"));
         ToolTip.SetTip(back, Strings.Get("Back"));
         string? configuredEmail = null;
-        FormControls.AddActionButton(loginActions, "ContinueServers", async () =>
+        Button next = FormControls.AddActionButton(loginActions, "ContinueServers", async () =>
         {
             if (!MailAddress.TryCreate(email.Text, out MailAddress? address) || address.Address != email.Text)
             {
@@ -110,12 +160,12 @@ public sealed class AccountSetupWindow : Window
                 return;
             }
             string currentEmail = address.Address;
-            if (configuredEmail != currentEmail)
+            if (configuredEmail != currentEmail && providerKind == "Imap")
             {
                 status.Text = Strings.Get("SetupDiscovering");
                 AccountServerSettings? discovered = await setup.DiscoverAsync(currentEmail, _lifetime.Token);
                 _lifetime.Token.ThrowIfCancellationRequested();
-                if (email.Text != currentEmail)
+                if (email.Text != currentEmail || providerKind != "Imap")
                 {
                     status.Text = "";
                     return;
@@ -150,7 +200,8 @@ public sealed class AccountSetupWindow : Window
             back.IsVisible = true;
             incomingHost.Focus();
             status.Text = "";
-        }, status).Classes.Add("primary");
+        }, status);
+        next.Classes.Add("primary");
         back.Click += (_, _) =>
         {
             servers.IsVisible = false;
@@ -220,6 +271,34 @@ public sealed class AccountSetupWindow : Window
                 Close();
             }
         }, status).Classes.Add("primary");
+        foreach (string kind in new[] { "Google", "Microsoft" })
+        {
+            Button signIn = FormControls.AddActionButton(providerActions, "SignIn" + kind, async () =>
+            {
+                SelectProvider(kind);
+                await ConnectProviderAsync();
+            }, status);
+            Grid caption = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("24,12,*")
+            };
+            caption.Children.Add(ProviderIcons.Create(kind));
+            TextBlock label = new TextBlock
+            {
+                Text = Strings.Get("SignIn" + kind),
+                TextWrapping = TextWrapping.Wrap
+            };
+            Grid.SetColumn(label, 2);
+            caption.Children.Add(label);
+            signIn.Content = caption;
+            signIn.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
+            signIn.HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
+        }
+        FormControls.AddActionButton(providerActions, "ProviderImap", () =>
+        {
+            SelectProvider("Imap");
+            return Task.CompletedTask;
+        }, status);
         FormControls.AddActionButton(footer, "SkipSetup", () =>
         {
             Close();
@@ -231,9 +310,78 @@ public sealed class AccountSetupWindow : Window
         Opened += (_, _) => email.Focus();
         Closed += (_, _) => { password.Text = ""; CancelSetup(); };
 
-        Grid HostAndPort(StackPanel host, StackPanel port)
+        void SelectProvider(string kind)
+        {
+            providerKind = kind;
+            password.Text = "";
+            email.Text = "";
+            login.IsVisible = kind == "Imap";
+            loginHint.Text = Strings.Get(kind == "Imap" ? "LoginHint" : "ProviderLoginHint");
+            servers.IsVisible = false;
+            loginActions.IsVisible = kind == "Imap";
+            serverActions.IsVisible = false;
+            back.IsVisible = false;
+            status.Text = "";
+            if (kind == "Imap")
+            {
+                email.Focus();
+            }
+        }
+
+        async Task ConnectProviderAsync()
+        {
+            if (providers is null)
+            {
+                status.Text = Strings.Get("ProviderConfigurationMissing");
+                return;
+            }
+            string kind = providerKind;
+            Failure available = providers.Providers.FirstOrDefault(item => item.ProviderKind == kind)?.Failure ?? Failure.Unavailable;
+            if (available != Failure.None)
+            {
+                status.Text = Strings.Get(available == Failure.PolicyBlocked ? "ProviderPolicyMissing" : "ProviderConfigurationMissing");
+                return;
+            }
+            providerActions.IsEnabled = false;
+            login.IsEnabled = false;
+            servers.IsEnabled = false;
+            next.IsEnabled = false;
+            back.IsEnabled = false;
+            status.Text = Strings.Get("ProviderConnecting");
+            try
+            {
+                ProviderConnectionResult result = await providers.ConnectProviderAsync(
+                    new ProviderSetupRequest(kind, Synchronise: false),
+                    _lifetime.Token
+                );
+                status.Text = result.Cancelled ? Strings.Get("ProviderCancelled") : result.Duplicate ? Strings.Get("DuplicateAccount") :
+                    result.Failure != Failure.None ? Strings.Describe(result.Failure) :
+                    Strings.Get("InitialSync") + ": " + Strings.Describe(result.Synchronisation);
+                if (result.Account is AccountId account)
+                {
+                    AccountAdded?.Invoke(account);
+                    Close();
+                }
+            }
+            finally
+            {
+                providerActions.IsEnabled = true;
+                login.IsEnabled = true;
+                servers.IsEnabled = true;
+                next.IsEnabled = true;
+                back.IsEnabled = true;
+                password.Text = "";
+                email.Focus();
+            }
+        }
+
+        Grid HostAndPort(
+            StackPanel host,
+            StackPanel port
+        )
         {
             Grid row = new Grid
+
             {
                 ColumnDefinitions = new ColumnDefinitions("9*,12,1*")
             };
@@ -246,9 +394,13 @@ public sealed class AccountSetupWindow : Window
             return row;
         }
 
-        ComboBox TlsChoice(string key, StackPanel target)
+        ComboBox TlsChoice(
+            string key,
+            StackPanel target
+        )
         {
             TextBlock label = new TextBlock
+
             {
                 Text = Strings.Get(key),
                 TextWrapping = TextWrapping.Wrap
@@ -256,12 +408,14 @@ public sealed class AccountSetupWindow : Window
             label.Classes.Add("caption");
             target.Children.Add(label);
             ComboBox choice = new ComboBox
+
             {
                 Name = key,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
                 ItemsSource = Enum.GetValues<TlsMode>(),
                 SelectedIndex = 0,
                 ItemTemplate = new FuncDataTemplate<TlsMode>((value, _) => new TextBlock
+
                 {
                     Text = Strings.Describe(value)
                 })

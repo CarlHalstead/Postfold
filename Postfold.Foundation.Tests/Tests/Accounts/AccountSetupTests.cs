@@ -169,15 +169,15 @@ public sealed class AccountSetupTests
         if (incomingTrusted)
         {
             Assert.That(result.Mailboxes, Is.Not.Empty);
-            Assert.That(accounts[0].Incoming.Port, Is.EqualTo(incomingServer.Port));
-            Assert.That(accounts[0].Outgoing.Port, Is.EqualTo(outgoingServer.Port));
+            Assert.That(accounts[0].Incoming!.Port, Is.EqualTo(incomingServer.Port));
+            Assert.That(accounts[0].Outgoing!.Port, Is.EqualTo(outgoingServer.Port));
             Assert.That(accounts[0].Identity!.Sender, Is.EqualTo("sender@synthetic.invalid"));
             Assert.That(
-                (await secure.ReadAsync(accounts[0].Incoming.CredentialKey, CancellationToken.None)).Value!.Secret,
+                (await secure.ReadAsync(accounts[0].Incoming!.CredentialKey, CancellationToken.None)).Value!.Secret,
                 Is.EqualTo("incoming-secret")
             );
             Assert.That(
-                (await secure.ReadAsync(accounts[0].Outgoing.CredentialKey, CancellationToken.None)).Value!.Secret,
+                (await secure.ReadAsync(accounts[0].Outgoing!.CredentialKey, CancellationToken.None)).Value!.Secret,
                 Is.EqualTo("outgoing-secret")
             );
         }

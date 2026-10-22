@@ -10,6 +10,7 @@ using Postfold.Core.Models.Mime;
 using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.UI.Models;
+using Postfold.UI.Policies;
 using Postfold.UI.Resources;
 using System;
 using System.Collections.Generic;
@@ -75,7 +76,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     public bool UpdatingNavigation { get; private set; }
     public NavigationItemViewModel? NavigationSelection
     {
-        get => Navigation.Concat(Navigation.SelectMany(item => item.Children)).FirstOrDefault(item => item.Scope == Scope);
+        get => Navigation.SelectMany(item => item.DescendantsAndSelf()).FirstOrDefault(item => item.Scope == Scope);
         set
         {
             if (!UpdatingNavigation && value is not null)
@@ -246,8 +247,9 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         }
 
         MailScope? previous = Scope;
-        Dictionary<AccountId, bool> expanded = Navigation.Where(item => item.Scope.IsAccount)
-            .ToDictionary(item => item.Scope.Account!.Value, item => item.IsExpanded);
+        Dictionary<(AccountId Account, FolderId? Folder), bool> expanded = Navigation.SelectMany(item => item.DescendantsAndSelf())
+            .Where(item => item.Scope.Account is not null)
+            .ToDictionary(item => (item.Scope.Account!.Value, item.Scope.Folder), item => item.IsExpanded);
         CachedMessageCount = await _application.Catalog.CachedMessageCountAsync(_lifetime.Token);
         OnPropertyChanged(nameof(CachedMessageCount));
         ImmutableArray<AccountConfiguration> accounts = await _application.Catalog.AccountsAsync(_lifetime.Token);
@@ -267,7 +269,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             Accounts.Add(account);
         }
 
-        foreach (MailboxSnapshot mailbox in mailboxes)
+        foreach (MailboxSnapshot mailbox in mailboxes.DistinctBy(item => (item.Account, item.Id)))
         {
             Mailboxes.Add(mailbox);
         }
@@ -279,7 +281,12 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
                 .OrderBy(item => item.Role == MailboxRole.Unresolved ? int.MaxValue : (int)item.Role)
                 .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
             {
-                string name = mailbox.Role == MailboxRole.Inbox ? Strings.Get("Inbox") : mailbox.Name;
+                if (account.ProviderKind == "Google" && mailbox.RemoteKey == "YELLOW_STAR" &&
+                    Mailboxes.Any(item => item.Account == account.Id && item.RemoteKey == "STARRED"))
+                {
+                    continue;
+                }
+                string name = MailboxName(account, mailbox);
                 Scopes.Add(new MailScope("    " + name, mailbox.Account, mailbox.Id, false, account.Name));
             }
         }
@@ -290,25 +297,72 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         Navigation.Clear();
         foreach (MailScope scope in Scopes.Where(item => !item.IsFolder))
         {
-            ImmutableArray<NavigationItemViewModel> children = scope.IsAccount ?
-                Scopes.Where(item => item.IsFolder && item.Account == scope.Account)
-                    .Select(item => new NavigationItemViewModel(item, [],
-                        Mailboxes.First(mailbox => mailbox.Account == item.Account && mailbox.Id == item.Folder).Role))
-                    .ToImmutableArray() : [];
+            MailScope[] folders = Scopes.Where(item => item.IsFolder && item.Account == scope.Account).ToArray();
+            Dictionary<MailScope, MailScope?> parents = new Dictionary<MailScope, MailScope?>();
+            bool gmail = Accounts.FirstOrDefault(item => item.Id == scope.Account)?.ProviderKind == "Google";
+            Dictionary<FolderId, MailboxSnapshot> accountMailboxes = Mailboxes.Where(item => item.Account == scope.Account).ToDictionary(item => item.Id);
+            Dictionary<string, MailScope> names = gmail ? folders.ToDictionary(item => accountMailboxes[item.Folder!.Value].Name, StringComparer.Ordinal) : [];
+            foreach (MailScope folder in folders)
+            {
+                MailScope? parent = null;
+                if (gmail)
+                {
+                    string name = accountMailboxes[folder.Folder!.Value].Name;
+                    for (int separator = name.LastIndexOf('/'); separator > 0; separator = name.LastIndexOf('/', separator - 1))
+                    {
+                        if (names.TryGetValue(name[..separator], out parent))
+                        {
+                            break;
+                        }
+                    }
+                }
+                parents.Add(folder, parent);
+            }
+            ImmutableArray<NavigationItemViewModel> children = BuildChildren(null, 0);
             Navigation.Add(new NavigationItemViewModel(scope, children)
             {
-                IsExpanded = scope.Account is not AccountId account || expanded.GetValueOrDefault(account, true)
+                IsExpanded = scope.Account is not AccountId account || expanded.GetValueOrDefault((account, scope.Folder), true)
             });
+
+            ImmutableArray<NavigationItemViewModel> BuildChildren(MailScope? parent, int depth)
+            {
+                return folders.Where(folder => parents[folder] == parent).Select(folder =>
+                {
+                    MailboxSnapshot mailbox = accountMailboxes[folder.Folder!.Value];
+                    string name = parent is null ? folder.Name.TrimStart() : mailbox.Name[(accountMailboxes[parent.Folder!.Value].Name.Length + 1)..];
+                    return new NavigationItemViewModel(folder, BuildChildren(folder, depth + 1), mailbox.Role, name, depth)
+                    {
+                        IsExpanded = expanded.GetValueOrDefault((folder.Account!.Value, folder.Folder), true)
+                    };
+                }).ToImmutableArray();
+            }
         }
         AccountId? firstAccount = Accounts.FirstOrDefault()?.Id;
         MailboxSnapshot? inbox = Mailboxes.FirstOrDefault(mailbox => mailbox.Account == firstAccount && mailbox.Role == MailboxRole.Inbox);
-        Scope = Scopes.FirstOrDefault(item => item == previous) ??
+        Scope = Scopes.FirstOrDefault(item => previous is not null && item.Account == previous.Account &&
+            item.Folder == previous.Folder && item.InboxOnly == previous.InboxOnly) ??
             Scopes.FirstOrDefault(item => item.Account == firstAccount && item.Folder == inbox?.Id) ??
             Scopes.FirstOrDefault();
         NotifyCommands();
         OnPropertyChanged(nameof(NavigationSelection));
         UpdatingNavigation = false;
         await RefreshAsync(false);
+    }
+
+    /// <summary>Runs initial mail sync after setup closes, owned by the main window's cancellable lifetime.</summary>
+    public async Task SynchroniseAccountAsync(AccountId account)
+    {
+        if (_application is null)
+        {
+            return;
+        }
+        Status = Strings.Get("Synchronising");
+        Failure result = await _application.SynchroniseAsync(account, _lifetime.Token);
+        await InitialiseAsync();
+        if (result != Failure.None)
+        {
+            Status = Strings.Describe(result);
+        }
     }
 
     /// <summary>Loads a page; navigation echoes can retain a page whose scope and filters are still valid.</summary>
@@ -418,7 +472,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             Selected = message;
             return _load;
         }
-        if (Selected.Read || _markingRead.Contains((message.Account, message.Id, message.Provider)))
+        if (!_load.IsCompleted || Selected.Read && Content is not null || _markingRead.Contains((message.Account, message.Id, message.Provider)))
         {
             return _load;
         }
@@ -436,7 +490,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         _reading = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         CancellationToken token = _reading.Token;
         MessageSnapshot? message = Selected;
-        Body = "";
+        Body = message is null ? "" : Strings.Get("MessageLoading");
         Attachments.Clear();
         _content = null;
         NotifyReader();
@@ -461,8 +515,23 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             }
 
             _content = result.Value;
-            Body = result.Value!.PlainText ?? Strings.Get("HtmlUnavailable");
-            foreach (AttachmentSnapshot attachment in result.Value.Attachments)
+            if (string.IsNullOrWhiteSpace(_content!.PlainText) && _content.Html is string html)
+            {
+                Outcome<string> text = HtmlPolicy.ReadText(html);
+                if (text.IsSuccess)
+                {
+                    _content = _content with
+                    {
+                        PlainText = text.Value
+                    };
+                }
+                else
+                {
+                    Status = Strings.Describe(text.Failure);
+                }
+            }
+            Body = _content.PlainText ?? Strings.Get("HtmlUnavailable");
+            foreach (AttachmentSnapshot attachment in _content.Attachments)
             {
                 Attachments.Add(attachment);
             }
@@ -536,6 +605,13 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
 
     public bool CanMutate()
     {
+        if (Selected is MessageSnapshot message && message.Provider.Imap is null)
+        {
+            return message.Provider.Account == message.Account && !string.IsNullOrEmpty(message.Provider.Key) &&
+                Accounts.Any(item => item.Id == message.Account && item.ProviderKind == "Google" &&
+                    item.GoogleBinding is { IsValid: true } && item.Capabilities is { NativeMove: true }) &&
+                Messages.Any(item => item.Account == message.Account && item.Id == message.Id && item.Provider == message.Provider);
+        }
         return Selected?.Provider.Imap is ImapIdentity identity && Mailboxes.Any(item =>
             item.Account == Selected.Account && item.RemoteKey == identity.Mailbox && item.Selectable && item.Writable);
     }
@@ -610,10 +686,37 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(SelectedRow));
     }
 
+    private static string MailboxName(AccountConfiguration account, MailboxSnapshot mailbox)
+    {
+        if (account.ProviderKind != "Google")
+        {
+            return mailbox.Role == MailboxRole.Inbox ? Strings.Get("Inbox") : mailbox.Name;
+        }
+        string? key = mailbox.RemoteKey switch
+        {
+            "INBOX" => "Inbox",
+            "SENT" => "GmailSent",
+            "DRAFT" => "GmailDrafts",
+            "TRASH" => "GmailTrash",
+            "SPAM" => "GmailSpam",
+            "STARRED" or "YELLOW_STAR" => "GmailStarred",
+            "IMPORTANT" => "GmailImportant",
+            "UNREAD" => "Unread",
+            "CHAT" => "GmailChats",
+            "CATEGORY_PERSONAL" => "GmailPrimary",
+            "CATEGORY_PROMOTIONS" => "GmailPromotions",
+            "CATEGORY_SOCIAL" => "GmailSocial",
+            "CATEGORY_UPDATES" => "GmailUpdates",
+            "CATEGORY_FORUMS" => "GmailForums",
+            _ => null
+        };
+        return key is null ? mailbox.Name : Strings.Get(key);
+    }
+
     private async Task OpenSelectedAsync(bool opened)
     {
         // Reading owns selection cancellation; an already requested read-state change owns the application lifetime.
-        Task reading = ReadSelectedAsync(false);
+        Task reading = ReadSelectedAsync(true);
         MessageSnapshot? message = Selected;
         if (opened && message is not null && !message.Read && CanMutate() && _application is not null &&
             _markingRead.Add((message.Account, message.Id, message.Provider)))
@@ -706,7 +809,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         foreach ((AccountId account, ImmutableArray<MailboxUnreadCount> counts, bool available) in results)
         {
             NavigationItemViewModel[] folders = Navigation.Where(item => item.Scope.Account == account)
-                .SelectMany(item => item.Children).ToArray();
+                .SelectMany(item => item.DescendantsAndSelf()).Where(item => item.IsFolder).ToArray();
             foreach (NavigationItemViewModel folder in folders)
             {
                 folder.UnreadCount = !available || counts.IsDefault ? null : counts.FirstOrDefault(count =>
@@ -732,7 +835,10 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private async Task MutateAsync(MutationKind kind, string? destination)
+    private async Task MutateAsync(
+        MutationKind kind,
+        string? destination
+    )
     {
         MessageSnapshot? message = Selected;
         if (_application is null || message is null || !CanMutate())
@@ -752,8 +858,14 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private Task MoveRoleAsync(MailboxRole role)
+    private Task MoveRoleAsync(
+        MailboxRole role
+    )
     {
+        if (role == MailboxRole.Archive && Accounts.Any(item => item.Id == Selected?.Account && item.ProviderKind == "Google"))
+        {
+            return MutateAsync(MutationKind.Move, null);
+        }
         MailboxSnapshot[] destinations = Mailboxes.Where(item => item.Account == Selected?.Account &&
             item.Role == role && item.Writable).ToArray();
         if (destinations.Length != 1)
@@ -812,8 +924,14 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private bool CanMoveRole(MailboxRole role)
+    private bool CanMoveRole(
+        MailboxRole role
+    )
     {
+        if (role == MailboxRole.Archive && Accounts.Any(item => item.Id == Selected?.Account && item.ProviderKind == "Google"))
+        {
+            return CanMove;
+        }
         return CanMove && Mailboxes.Count(item => item.Account == Selected!.Account &&
             item.Role == role && item.Selectable && item.Writable) == 1;
     }

@@ -17,6 +17,7 @@ public sealed class AccountScheduler : IAccountScheduler
     private readonly Dictionary<AccountId, List<ScheduledWork>> _queues = new Dictionary<AccountId, List<ScheduledWork>>();
     private readonly Queue<AccountId> _turns = new Queue<AccountId>();
     private readonly HashSet<AccountId> _active = new HashSet<AccountId>();
+    private readonly HashSet<AccountId> _activeReads = new HashSet<AccountId>();
     private readonly List<Task> _running = new List<Task>();
     private readonly Dictionary<AccountId, Task> _accountTasks = new Dictionary<AccountId, Task>();
     private readonly Dictionary<AccountId, CancellationTokenSource> _accountStops = new Dictionary<AccountId, CancellationTokenSource>();
@@ -213,24 +214,43 @@ public sealed class AccountScheduler : IAccountScheduler
                     }
                     _running.RemoveAll(task => task.IsCompleted);
                     int turns = _turns.Count;
-                    while (turns-- > 0 && _active.Count < _workers && _turns.TryDequeue(out AccountId account))
+                    while (turns-- > 0 && _turns.TryDequeue(out AccountId account))
                     {
                         if (!_queues.TryGetValue(account, out List<ScheduledWork>? queue))
                         {
                             continue;
                         }
 
-                        if (queue.Count == 0 && !_active.Contains(account))
+                        if (queue.Count == 0 && !_active.Contains(account) && !_activeReads.Contains(account))
                         {
                             _queues.Remove(account);
                             continue;
                         }
 
-                        if (!_active.Contains(account) && queue.Count > 0)
+                        // One bounded read slot remains available even when all serial account workers
+                        // are syncing. Only explicitly independent, interactive reads can use it.
+                        ScheduledWork? read = _activeReads.Count == 0 ? queue.FirstOrDefault(item =>
+                            item.Priority == WorkPriority.Interactive && item.Work is IConcurrentAccountWork) : null;
+                        if (read is not null)
                         {
+                            queue.Remove(read);
+                            _count--;
+                            _activeReads.Add(account);
+                            ready.Add(read);
+                        }
+
+                        if (!_active.Contains(account) && _active.Count < _workers)
+                        {
+                            List<ScheduledWork> serial = queue.Where(item => item.Work is not IConcurrentAccountWork ||
+                                item.Priority != WorkPriority.Interactive).ToList();
+                            if (serial.Count == 0)
+                            {
+                                _turns.Enqueue(account);
+                                continue;
+                            }
                             ScheduledWork work = _interactiveTurns < 3 ?
-                                queue.OrderBy(item => item.Priority).First() :
-                                queue.FirstOrDefault(item => item.Priority == WorkPriority.Reconciliation) ?? queue[0];
+                                serial.OrderBy(item => item.Priority).First() :
+                                serial.FirstOrDefault(item => item.Priority == WorkPriority.Reconciliation) ?? serial[0];
                             _interactiveTurns = work.Priority == WorkPriority.Interactive ? _interactiveTurns + 1 : 0;
                             queue.Remove(work);
                             _count--;
@@ -246,7 +266,8 @@ public sealed class AccountScheduler : IAccountScheduler
                         CancellationToken stop = _accountStops[work.Account].Token;
                         Task task = Task.Run(() => RunAsync(work, stop));
                         _running.Add(task);
-                        _accountTasks[work.Account] = task;
+                        Task? previous = _accountTasks.GetValueOrDefault(work.Account);
+                        _accountTasks[work.Account] = previous is { IsCompleted: false } ? Task.WhenAll(previous, task) : task;
                     }
                 }
             }
@@ -318,7 +339,14 @@ public sealed class AccountScheduler : IAccountScheduler
         {
             lock (_gate)
             {
-                _active.Remove(work.Account);
+                if (work.Priority == WorkPriority.Interactive && work.Work is IConcurrentAccountWork)
+                {
+                    _activeReads.Remove(work.Account);
+                }
+                else
+                {
+                    _active.Remove(work.Account);
+                }
             }
 
             _signal.Writer.TryWrite(0);

@@ -74,7 +74,7 @@
                                         <Border Name="PART_LayoutRoot" CornerRadius="8" Background="{TemplateBinding Background}" Focusable="True" TemplatedControl.IsTemplateFocusTarget="True">
                                             <Grid Name="PART_Header" ColumnDefinitions="*,Auto" Background="Transparent" PointerPressed="AccountHeaderPointerPressed" DragDrop.AllowDrop="True" DragDrop.DragOver="FolderDragOver" DragDrop.Drop="FolderDrop">
                                                 <ContentPresenter Name="PART_HeaderPresenter" Content="{TemplateBinding Header}" ContentTemplate="{TemplateBinding HeaderTemplate}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" />
-                                                <ToggleButton Name="PART_ExpandCollapseChevron" Grid.Column="1" Theme="{StaticResource FluentTreeViewExpandCollapseChevron}" VerticalAlignment="Center" Focusable="False" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw" IsChecked="{TemplateBinding IsExpanded, Mode=TwoWay}" />
+                                                <ToggleButton Name="PART_ExpandCollapseChevron" Grid.Column="1" Theme="{StaticResource FluentTreeViewExpandCollapseChevron}" VerticalAlignment="Center" Focusable="False" AutomationProperties.AccessibilityView="Raw" IsChecked="{TemplateBinding IsExpanded, Mode=TwoWay}" />
                                             </Grid>
                                         </Border>
                                         <controls:AnimatedDisclosure IsExpanded="{TemplateBinding IsExpanded}">
@@ -133,7 +133,7 @@
                                     <MenuItem Name="AllFilterMenu" Header="{x:Static ui:Strings.AllMail}" Click="AllFilterClicked" />
                                     <MenuItem Name="UnreadFilterMenu" Header="{x:Static ui:Strings.Unread}" ToggleType="CheckBox" IsChecked="{Binding UnreadOnly, Mode=OneWay}" Click="UnreadFilterClicked" />
                                     <Separator />
-                                    <MenuItem Header="{x:Static ui:Strings.Refresh}" Command="{Binding SynchroniseCommand}" />
+                                    <MenuItem Header="{x:Static ui:Strings.Synchronise}" Command="{Binding SynchroniseCommand}" />
                                     <MenuItem Header="{x:Static ui:Strings.More}" Command="{Binding MoreCommand}" IsVisible="{Binding HasMore}" />
                                     <MenuItem Header="{x:Static ui:Strings.SearchScopeHint}" Click="SearchHelpClicked" />
                                 </ContextMenu>

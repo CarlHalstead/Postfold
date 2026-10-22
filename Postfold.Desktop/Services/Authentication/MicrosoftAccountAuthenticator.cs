@@ -207,7 +207,8 @@ public sealed class MicrosoftAccountAuthenticator : IAccountAuthenticator, IAsyn
                 result.AccessToken,
                 result.ExpiresOn,
                 result.TenantId,
-                "https://outlook.office.com"
+                "https://outlook.office.com",
+                result.Account.Username
             )) :
                 Outcome<AccessToken>.Fail(Failure.CredentialStorageUnavailable);
         }

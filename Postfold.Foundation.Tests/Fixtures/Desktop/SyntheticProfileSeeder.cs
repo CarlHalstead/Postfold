@@ -261,7 +261,7 @@ internal sealed class SyntheticProfileSeeder
         ImmutableArray<MailboxSnapshot> all = await _profile.MailboxesAsync(cancellationToken).ConfigureAwait(false);
         foreach (AccountConfiguration account in await _profile.AccountsAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (account.Incoming.Host != "synthetic.invalid")
+            if (account.Incoming?.Host != "synthetic.invalid")
             {
                 continue;
             }

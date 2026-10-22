@@ -482,7 +482,7 @@ public sealed class SafeRestartTests
         TaskCompletionSource previewCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource htmlCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         MessageSnapshot message = EngineFixture.Message(1);
-        application.ReadAsync(message, false, Arg.Any<CancellationToken>()).Returns(call =>
+        application.ReadAsync(message, true, Arg.Any<CancellationToken>()).Returns(call =>
         {
             call.Arg<CancellationToken>().Register(() => previewCancelled.TrySetResult());
             return preview.Task;
@@ -495,6 +495,7 @@ public sealed class SafeRestartTests
         MainWindowViewModel model = new MainWindowViewModel(application);
         session.Window.DataContext = model;
         model.Selected = message;
+        string previousBody = model.Body;
         WindowsHtmlReadingService renderer = new WindowsHtmlReadingService(session.Window, application,
             Substitute.For<IRemoteImageFetcher>(), Path.Combine(profiles, "renderer"), qualified: true);
         rendererField.SetValue(session, renderer);
@@ -515,7 +516,7 @@ public sealed class SafeRestartTests
         Assert.That(waitedForRenderer, Is.True);
         Assert.That(waitedForPreview, Is.True);
         Assert.That(result, Is.EqualTo(Failure.None));
-        Assert.That(model.Body, Is.Empty);
+        Assert.That(model.Body, Is.EqualTo(previousBody));
         using FileStream lease = new FileStream(Path.Combine(profiles, "default", "profile.db.lease"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         foreach (Window child in session.Window.OwnedWindows.ToArray())
         {

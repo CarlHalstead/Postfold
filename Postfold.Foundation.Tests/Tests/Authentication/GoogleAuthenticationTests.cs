@@ -43,6 +43,50 @@ public sealed class GoogleAuthenticationTests
         Assert.That(await fixture.Callback!, Does.Not.Contain("synthetic-code"));
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task AcquireAsync_WhenDesktopRegistrationRequiresClientSecret_UsesItForExchangeAndRefresh(bool configured)
+    {
+        // Arrange
+        await using AuthenticationFixture fixture = new AuthenticationFixture
+        {
+            RequiredGoogleClientSecret = "synthetic-desktop-client-field"
+        };
+        fixture.TokenJson = fixture.TokenJson.Replace("3600", "30", StringComparison.Ordinal);
+        await using GoogleAccountAuthenticator service = new GoogleAccountAuthenticator(
+            new AccountId(1),
+            "synthetic-client",
+            fixture,
+            fixture,
+            fixture.Http,
+            TimeProvider.System,
+            TimeSpan.FromSeconds(10),
+            clientSecret: configured ? fixture.RequiredGoogleClientSecret : null
+        );
+
+        // Act
+        Outcome<AccessToken> connected = await service.AcquireAsync(true, CancellationToken.None);
+        Outcome<AccessToken> refreshed = await service.AcquireAsync(false, CancellationToken.None);
+
+        // Assert
+        Assert.That(connected.IsSuccess, Is.EqualTo(configured));
+        Assert.That(refreshed.IsSuccess, Is.EqualTo(configured));
+        Assert.That(fixture.Stored.Count, Is.EqualTo(configured ? 1 : 0));
+        Assert.That(fixture.TokenRequests.Count, Is.EqualTo(configured ? 2 : 1));
+        Assert.That(AuthenticationFixture.Query(fixture.Authorization!).ContainsKey("client_secret"), Is.False);
+        if (configured)
+        {
+            Assert.That(fixture.TokenRequests.All(request =>
+                AuthenticationFixture.Query(new Uri("https://fixture.test/?" + request))["client_secret"] == fixture.RequiredGoogleClientSecret), Is.True);
+            Assert.That(AuthenticationFixture.Query(new Uri("https://fixture.test/?" + fixture.TokenRequests.Last()))["grant_type"], Is.EqualTo("refresh_token"));
+        }
+        else
+        {
+            Assert.That(connected.Failure, Is.EqualTo(Failure.Validation));
+            Assert.That(refreshed.Failure, Is.EqualTo(Failure.NeedsAuthentication));
+        }
+    }
+
     [TestCase("code=x")]
     [TestCase("code=x&state=wrong")]
     [TestCase("code=x&state={state}&state={state}")]

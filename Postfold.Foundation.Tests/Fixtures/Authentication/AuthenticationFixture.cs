@@ -32,11 +32,13 @@ internal sealed class AuthenticationFixture : HttpMessageHandler, IProtectedToke
     internal Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? ProviderRequest { get; set; }
     internal Func<HttpRequestMessage, CancellationToken, Task>? BeforeRequest { get; set; }
     internal string? CodeChallengeOverride { get; set; }
+    internal string? RequiredGoogleClientSecret { get; set; }
     internal string? CallbackQuery { get; set; }
     internal string? CallbackHost { get; set; }
     internal string CallbackPath { get; set; } = "/";
     internal Failure StoreFailure { get; set; }
     internal Failure WriteFailure { get; set; }
+    internal Failure DeleteFailure { get; set; }
     internal Failure BrowserFailure { get; set; }
     internal HttpStatusCode TokenStatus { get; set; } = HttpStatusCode.OK;
     internal bool SendCallback { get; set; } = true;
@@ -89,6 +91,10 @@ internal sealed class AuthenticationFixture : HttpMessageHandler, IProtectedToke
     public Task<Outcome<bool>> DeleteAsync(string key, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (DeleteFailure != Failure.None)
+        {
+            return Task.FromResult(Outcome<bool>.Fail(DeleteFailure));
+        }
         Stored.Remove(key);
         return Task.FromResult(Outcome<bool>.Success(true));
     }
@@ -136,6 +142,11 @@ internal sealed class AuthenticationFixture : HttpMessageHandler, IProtectedToke
                     json = "{\"error\":\"invalid_grant\"}";
                     status = HttpStatusCode.BadRequest;
                 }
+            }
+            if (RequiredGoogleClientSecret is not null && fields.GetValueOrDefault("client_secret") != RequiredGoogleClientSecret)
+            {
+                json = "{\"error\":\"invalid_request\",\"error_description\":\"client_secret is missing.\"}";
+                status = HttpStatusCode.BadRequest;
             }
         }
         else if (uri == "https://gmail.googleapis.com/gmail/v1/users/me/profile")

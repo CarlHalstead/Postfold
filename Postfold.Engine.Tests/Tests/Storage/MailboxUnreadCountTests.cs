@@ -6,6 +6,7 @@ using Postfold.Core.Models.Mailboxes;
 using Postfold.Core.Models.Messages;
 using Postfold.Core.Models.Operations;
 using Postfold.Core.Models.Search;
+using Postfold.Core.Models.Synchronisation;
 using Postfold.Engine.Tests.Fixtures;
 using Postfold.Engine.Tests.Fixtures.Storage;
 using Postfold.Storage.Services;
@@ -21,6 +22,45 @@ namespace Postfold.Engine.Tests.Tests.Storage;
 
 public sealed class MailboxUnreadCountTests
 {
+    [Test]
+    public async Task MailboxUnreadCountsAsync_WhenGmailHasReadAndUnreadMail_CountsUnreadLabelsAndPendingLocalReadOnly()
+    {
+        // Arrange
+        await using SqliteProfile profile = await EngineFixture.OpenAsync(EngineFixture.DirectoryPath());
+        MessageSnapshot unread = EngineFixture.Message(1) with
+        {
+            Provider = new ProviderIdentity(EngineFixture.Account, "unread", null)
+        };
+        MessageSnapshot read = EngineFixture.Message(2) with
+        {
+            Provider = new ProviderIdentity(EngineFixture.Account, "read", null),
+            Read = true
+        };
+        await profile.CommitAccountAsync(new CanonicalPage(
+            new Checkpoint(EngineFixture.Account, "$account", "gmail", "cursor", 0, true),
+            [EngineFixture.Mailbox() with
+            {
+                RemoteKey = "SPAM",
+                Name = "Spam"
+            }],
+            [unread, read],
+            [new MembershipChange("unread", "SPAM", true), new MembershipChange("read", "SPAM", true)],
+            [],
+            true
+        ), CancellationToken.None);
+        MessageSnapshot local = (await profile.SearchAsync(new SearchRequest(EngineFixture.Account, false, "", null, true, 10), CancellationToken.None)).Value!.Messages.Single();
+
+        // Act
+        long before = (await profile.MailboxUnreadCountsAsync(EngineFixture.Account, CancellationToken.None)).Single().Count;
+        await profile.QueueAsync(new MutationIntent(new OperationId(Guid.NewGuid()), local.Account, local.Id, local.Provider, MutationKind.SetRead, true, null), CancellationToken.None);
+        long after = (await profile.MailboxUnreadCountsAsync(EngineFixture.Account, CancellationToken.None)).Single().Count;
+
+        // Assert
+        Assert.That(before, Is.EqualTo(1));
+        Assert.That(after, Is.Zero);
+        Assert.That((await profile.SearchAsync(new SearchRequest(EngineFixture.Account, false, "", null, false, 10), CancellationToken.None)).Value!.Messages, Has.Length.EqualTo(2));
+    }
+
     [Test]
     public async Task MailboxUnreadCountsAsync_WhenMailExceedsTheLoadedPage_CountsOnlyItsAccountAndPendingReadProjection()
     {

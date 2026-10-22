@@ -24,7 +24,7 @@
   <data name="RemoveAccountComposeOpen" xml:space="preserve"><value>Close this account’s compose windows first. Their edits must be saved before removing the account.</value></data>
   <data name="RemoveAccountWorkBlocked" xml:space="preserve"><value>Account removal is blocked to preserve drafts or unresolved sends and changes. Review Local drafts and Pending actions first.</value></data>
   <data name="More" xml:space="preserve"><value>Load more messages</value></data>
-  <data name="Retrieve" xml:space="preserve"><value>Retrieve content</value></data>
+  <data name="Retrieve" xml:space="preserve"><value>Reload message content</value></data>
   <data name="Read" xml:space="preserve"><value>Toggle read</value></data>
   <data name="Flag" xml:space="preserve"><value>Toggle flag</value></data>
   <data name="Archive" xml:space="preserve"><value>Archive</value></data>
@@ -32,12 +32,25 @@
   <data name="Reply" xml:space="preserve"><value>Reply</value></data>
   <data name="Forward" xml:space="preserve"><value>Forward</value></data>
   <data name="SearchHint" xml:space="preserve"><value>Search messages. Select one account or choose all accounts.</value></data>
-  <data name="HtmlUnavailable" xml:space="preserve"><value>This message contains HTML. Choose Read HTML in More message actions to open it safely.</value></data>
+  <data name="HtmlUnavailable" xml:space="preserve"><value>This message has no text content.</value></data>
   <data name="UnifiedInbox" xml:space="preserve"><value>Unified inbox</value></data>
   <data name="Inbox" xml:space="preserve"><value>Inbox</value></data>
   <data name="UnifiedSearch" xml:space="preserve"><value>All accounts — local search</value></data>
   <data name="Ready" xml:space="preserve"><value>Ready</value></data>
-  <data name="Missing" xml:space="preserve"><value>Content is unavailable. Retrieve it while online.</value></data>
+  <data name="Missing" xml:space="preserve"><value>This message could not be loaded. Cached content remains available offline; uncached content requires a working connection.</value></data>
+  <data name="MessageLoading" xml:space="preserve"><value>Loading message…</value></data>
+  <data name="GmailSpam" xml:space="preserve"><value>Spam</value></data>
+  <data name="GmailStarred" xml:space="preserve"><value>Starred</value></data>
+  <data name="GmailImportant" xml:space="preserve"><value>Important</value></data>
+  <data name="GmailChats" xml:space="preserve"><value>Chats</value></data>
+  <data name="GmailPrimary" xml:space="preserve"><value>Primary</value></data>
+  <data name="GmailPromotions" xml:space="preserve"><value>Promotions</value></data>
+  <data name="GmailSocial" xml:space="preserve"><value>Social</value></data>
+  <data name="GmailUpdates" xml:space="preserve"><value>Updates</value></data>
+  <data name="GmailForums" xml:space="preserve"><value>Forums</value></data>
+  <data name="GmailSent" xml:space="preserve"><value>Sent</value></data>
+  <data name="GmailDrafts" xml:space="preserve"><value>Drafts</value></data>
+  <data name="GmailTrash" xml:space="preserve"><value>Trash</value></data>
   <data name="NoResults" xml:space="preserve"><value>No messages match in this scope</value></data>
   <data name="Pending" xml:space="preserve"><value>Durable command recorded; check pending status</value></data>
   <data name="Scope" xml:space="preserve"><value>Navigation and search scope</value></data>
@@ -156,8 +169,8 @@
   <data name="TlsMode.Implicit" xml:space="preserve"><value>TLS from connection start</value></data>
   <data name="TlsMode.RequiredStartTls" xml:space="preserve"><value>Mandatory STARTTLS; no fallback</value></data>
   <data name="Failure.TlsRejected" xml:space="preserve"><value>TLS or certificate validation failed; a secure connection is required</value></data>
-  <data name="Failure.PolicyBlocked" xml:space="preserve"><value>Connection blocked by this profile's network policy</value></data>
-  <data name="Failure.CredentialStorageUnavailable" xml:space="preserve"><value>Secure credential storage is unavailable; account passwords could not be saved.</value></data>
+  <data name="Failure.PolicyBlocked" xml:space="preserve"><value>Connection blocked by a network, consent or provider policy; review account connection settings.</value></data>
+  <data name="Failure.CredentialStorageUnavailable" xml:space="preserve"><value>Secure storage is unavailable; sign-in details could not be read, saved or removed safely.</value></data>
   <data name="DestinationDenied" xml:space="preserve"><value>Access to the selected destination was denied</value></data>
   <data name="IncomingPort" xml:space="preserve"><value>Port</value></data>
   <data name="OutgoingPort" xml:space="preserve"><value>Port</value></data>
@@ -318,4 +331,31 @@
   <data name="UpdateVerificationFailed" xml:space="preserve"><value>The update could not be verified. Nothing will be installed. Check again later; if this continues, retain the update files for review.</value></data>
   <data name="UpdateConnectionFailed" xml:space="preserve"><value>The update service could not be reached or local files were unavailable. Check your connection and try again when retry is available.</value></data>
   <data name="UpdatePolicyBlocked" xml:space="preserve"><value>This operation is not permitted by the saved update preferences, connection policy or release compatibility. Review your preferences and connection before checking again.</value></data>
+  <data name="ProviderChoice" xml:space="preserve"><value>Account type</value></data>
+  <data name="ProviderImap" xml:space="preserve"><value>Other email (password)</value></data>
+  <data name="ProviderGoogle" xml:space="preserve"><value>Gmail</value></data>
+  <data name="ProviderMicrosoft" xml:space="preserve"><value>Outlook.com or Microsoft 365</value></data>
+  <data name="ConnectProvider" xml:space="preserve"><value>Connect in browser</value></data>
+  <data name="ProviderLoginHint" xml:space="preserve"><value>Choose Google or Microsoft to sign in through your browser. Your account address is returned automatically. Mail is cached on this computer without Postfold-level encryption; Windows protects sign-in tokens.</value></data>
+  <data name="SignInGoogle" xml:space="preserve"><value>Sign in with Google</value></data>
+  <data name="SignInMicrosoft" xml:space="preserve"><value>Sign in with Microsoft</value></data>
+  <data name="Synchronising" xml:space="preserve"><value>Syncing mail…</value></data>
+  <data name="ProviderConfigurationMissing" xml:space="preserve"><value>Connection unavailable: the owner has not supplied a public application registration. Password setup remains available for other email accounts.</value></data>
+  <data name="ProviderPolicyMissing" xml:space="preserve"><value>Gmail connection is unavailable while the owner resolves provider policy and offline-storage requirements.</value></data>
+  <data name="ProviderConnecting" xml:space="preserve"><value>Connecting… Complete sign-in in your browser, or close this window to cancel.</value></data>
+  <data name="ProviderRetained" xml:space="preserve"><value>The account was saved. Open its connection settings to reconnect; your local mail and work are retained.</value></data>
+  <data name="ProviderConnection" xml:space="preserve"><value>Account connection</value></data>
+  <data name="ProviderConnectionHint" xml:space="preserve"><value>Reconnect checks this same mailbox. Deleting local sign-in tokens stops silent access until you reconnect; it retains the account, cached mail, drafts and pending work. Removing an account locally is a separate action in Settings. Held drafts and uncertain sends still require review after reconnecting.</value></data>
+  <data name="ProviderNotChecked" xml:space="preserve"><value>Connection has not been checked in this window. Cached mail does not prove current server access.</value></data>
+  <data name="GoogleRevokeHint" xml:space="preserve"><value>Revoke Gmail access requests server grant revocation and then deletes local tokens. It does not erase cached mail or copies already sent.</value></data>
+  <data name="MicrosoftRevokeHint" xml:space="preserve"><value>To revoke Microsoft server access, use your account's application permissions or ask your administrator. Deleting local tokens does not revoke that grant. Your organization may restrict sign-in or mail protocols; retain its security settings.</value></data>
+  <data name="ReconnectProvider" xml:space="preserve"><value>Reconnect in browser</value></data>
+  <data name="DeleteProviderTokens" xml:space="preserve"><value>Delete local sign-in tokens</value></data>
+  <data name="RevokeProvider" xml:space="preserve"><value>Revoke Gmail access</value></data>
+  <data name="ProviderTokensDeleted" xml:space="preserve"><value>Local tokens deleted. Reconnect to resume access. Mail and protected work are retained; server consent is unchanged.</value></data>
+  <data name="ProviderGrantRevoked" xml:space="preserve"><value>Gmail grant revoked and local tokens deleted. Mail and protected work are retained.</value></data>
+  <data name="GmailDraftHoldHint" xml:space="preserve"><value>Existing Gmail drafts are kept locally for review: Gmail cannot safely replace a draft while another client may edit it. Your local work is preserved. Review versions to inspect any changed remote copy; an unchanged remote copy is held without a conflict. Reconnecting does not overwrite or retry held drafts.</value></data>
+  <data name="ProviderCancelled" xml:space="preserve"><value>Connection cancelled. Local mail and work are retained.</value></data>
+  <data name="DraftHeld" xml:space="preserve"><value>Kept locally — review required before remote update or sending</value></data>
+  <data name="ProviderWorking" xml:space="preserve"><value>Updating account connection…</value></data>
 </root>

@@ -289,7 +289,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<ImmutableArray<AccountConfiguration>> AccountsAsync(CancellationToken cancellationToken)
+    public Task<ImmutableArray<AccountConfiguration>> AccountsAsync(
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection =>
         {
@@ -306,19 +308,20 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             ImmutableArray<AccountConfiguration>.Builder accounts = ImmutableArray.CreateBuilder<AccountConfiguration>();
             while (reader.Read())
             {
-                if (!reader.GetString(2).StartsWith("[", StringComparison.Ordinal))
+                bool google = reader.GetString(5) == "Google";
+                if (!reader.GetString(2).StartsWith("[", StringComparison.Ordinal) && !google)
                 {
                     continue;
                 }
 
-                MailEndpoint[] endpoints = JsonSerializer.Deserialize<MailEndpoint[]>(reader.GetString(2))!;
-                if (endpoints.Length == 2)
+                MailEndpoint[] endpoints = google ? [] : JsonSerializer.Deserialize<MailEndpoint[]>(reader.GetString(2))!;
+                if (google || endpoints.Length == 2)
                 {
                     accounts.Add(new AccountConfiguration(
                         new AccountId(reader.GetInt64(0)),
                         reader.GetString(1),
-                        endpoints[0],
-                        endpoints[1],
+                        google ? null : endpoints[0],
+                        google ? null : endpoints[1],
                         ReadCapabilities(reader.GetString(3)),
                         reader.IsDBNull(4) ? null : ReadIdentity(reader.GetString(4)),
                         reader.GetString(5),
@@ -1414,6 +1417,76 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
+    /// <summary>Atomically retains a verified provider identity and explicit mailbox before any initial page is fetched.</summary>
+    public Task<Failure> ProvisionProviderAccountAsync(
+        AccountConfiguration account,
+        CancellationToken cancellationToken
+    )
+    {
+        if (account.Id.Value <= 0 || account.ProviderKind == "Google" &&
+            (account.GoogleBinding is not { IsValid: true } || account.Incoming is not null || account.Outgoing is not null) ||
+            account.ProviderKind == "Microsoft" && (account.MicrosoftBinding is not { IsValid: true } ||
+                account.Incoming is null || account.Outgoing is null) ||
+            account.ProviderKind is not ("Google" or "Microsoft") || account.Identity is not { IsValid: true })
+        {
+            return Task.FromResult(Failure.Validation);
+        }
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            using (SqliteCommand existing = Command(
+                connection,
+                transaction,
+                "SELECT a.AccountId,a.Configuration,p.Value,g.Value,a.ProviderKind FROM Accounts a " +
+                "LEFT JOIN Preferences p ON p.Scope='identity:'||a.AccountId AND p.Key='primary' " +
+                "LEFT JOIN Preferences g ON g.Scope='account:'||a.AccountId AND g.Key='google-binding' WHERE a.Active=1;"
+            ))
+            using (SqliteDataReader reader = existing.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    string address = !reader.IsDBNull(3) ? ReadGoogleBinding(reader.GetString(3))?.Address ?? "" :
+                        !reader.IsDBNull(2) ? ReadIdentity(reader.GetString(2))?.Sender ?? "" : "";
+                    if ((reader.GetString(4) == "Microsoft" || string.IsNullOrEmpty(address)) && reader.GetString(1).StartsWith("[", StringComparison.Ordinal))
+                    {
+                        address = JsonSerializer.Deserialize<MailEndpoint[]>(reader.GetString(1))?.FirstOrDefault()?.Username ?? "";
+                    }
+                    if (reader.GetInt64(0) == account.Id.Value || string.Equals(address, account.Address, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return Failure.NeedsReview;
+                    }
+                }
+            }
+            Execute(
+                connection,
+                transaction,
+                "INSERT INTO Accounts(AccountId,ProviderKind,DisplayName,Configuration,CredentialReference) VALUES($a,$p,$n,$c,'');",
+                ("$a", account.Id.Value),
+                ("$p", account.ProviderKind),
+                ("$n", account.Name),
+                ("$c", account.ProviderKind == "Google" ? "[]" : JsonSerializer.Serialize(new[] { account.Incoming, account.Outgoing }))
+            );
+            string scope = "account:" + account.Id.Value.ToString(CultureInfo.InvariantCulture);
+            Execute(
+                connection,
+                transaction,
+                "INSERT INTO Preferences(Scope,Key,Value,PayloadVersion) VALUES($s,$k,$v,1);",
+                ("$s", scope),
+                ("$k", account.ProviderKind == "Google" ? "google-binding" : "microsoft-binding"),
+                ("$v", account.ProviderKind == "Google" ? JsonSerializer.Serialize(account.GoogleBinding) : JsonSerializer.Serialize(account.MicrosoftBinding))
+            );
+            Execute(
+                connection,
+                transaction,
+                "INSERT INTO Preferences(Scope,Key,Value,PayloadVersion) VALUES($s,'primary',$v,1);",
+                ("$s", "identity:" + account.Id.Value.ToString(CultureInfo.InvariantCulture)),
+                ("$v", JsonSerializer.Serialize(account.Identity))
+            );
+            transaction.Commit();
+            return Failure.None;
+        }, cancellationToken);
+    }
+
     public Task ConfigureAccountAsync(
         AccountId account,
         MailEndpoint incoming,
@@ -2089,7 +2162,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    public Task<string> ExplainSearchAsync(CancellationToken cancellationToken)
+    public Task<string> ExplainSearchAsync(
+        CancellationToken cancellationToken
+    )
     {
         return ReadAsync(connection =>
         {

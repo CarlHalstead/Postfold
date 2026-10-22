@@ -2,8 +2,10 @@ using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
 using Postfold.Core.Models;
 using Postfold.Core.Models.Accounts;
+using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Mailboxes;
 using Postfold.Core.Models.Synchronisation;
+using Postfold.Desktop.Models.Authentication;
 using Postfold.Desktop.Services.Authentication;
 using Postfold.Protocols.Adapters;
 using Postfold.Protocols.Services;
@@ -17,13 +19,14 @@ using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Mail;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Postfold.Desktop.Composition;
 
 /// <summary>Explicitly opened composition root; constructing the desktop window never connects an account.</summary>
-public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IAccountProvisioner, IAsyncDisposable
+public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IAccountProvisioner, IProviderAccounts, IAsyncDisposable
 {
     private readonly SqliteProfile _profile;
     private readonly AccountScheduler _scheduler;
@@ -41,6 +44,9 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
     private readonly Dictionary<AccountId, HttpClient> _googleHttp = new Dictionary<AccountId, HttpClient>();
     private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
     private bool _stopping;
+    private IProtectedTokenStore? _providerTokens;
+    private ISystemBrowser? _providerBrowser;
+    private ProviderClientConfiguration _providerClients = new ProviderClientConfiguration();
 
     private DesktopMailRuntime(SqliteProfile profile, IWorkPolicy policy, TimeProvider time, EngineLimits limits)
     {
@@ -56,6 +62,11 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
     public ILocalMailQuery Query => _profile;
     public IClientCatalog Catalog => _profile;
     public bool NetworkAllowed => _policy.AllowNetwork;
+    public ImmutableArray<ProviderAvailability> Providers =>
+    [
+        new ProviderAvailability("Google", _providerClients.Availability("Google")),
+        new ProviderAvailability("Microsoft", _providerClients.Availability("Microsoft"))
+    ];
     public IClientAppearance Appearance => new ClientAppearance(_profile);
     public IClientIdentity Identity => new ClientIdentity(_profile);
     public IDesktopPreferenceStore DesktopPreferences => _profile;
@@ -78,6 +89,275 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
     internal Microsoft.Identity.Client.IMsalHttpClientFactory? AuthenticationHttpFactory { get; set; }
     internal Action<ImapAdapter, SmtpSubmitter>? ConfigureFixtureTransports { get; set; }
     internal Func<HttpClient>? GoogleHttpFactory { get; set; }
+
+    /// <summary>Selected by Desktop before restoration; contains public registration references only.</summary>
+    public void ConfigureProviderClients(
+        ProviderClientConfiguration configuration
+    )
+    {
+        if (_accounts.Count != 0)
+        {
+            throw new InvalidOperationException("Public client configuration must precede account restoration.");
+        }
+        _providerClients = configuration;
+    }
+
+    public async Task<ProviderConnectionResult> ConnectProviderAsync(
+        ProviderSetupRequest request,
+        CancellationToken cancellationToken
+    )
+    {
+        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
+        await _connections.WaitAsync(linked.Token).ConfigureAwait(false);
+        AccountId? owned = null;
+        bool retained = false;
+        IAccountAuthenticator? provisional = null;
+        bool authenticated = false;
+        try
+        {
+            ObjectDisposedException.ThrowIf(_stopping, this);
+            Failure availability = _providerClients.Availability(request.ProviderKind);
+            if (availability != Failure.None || !_policy.AllowNetwork)
+            {
+                return new ProviderConnectionResult(availability != Failure.None ? availability : Failure.PolicyBlocked);
+            }
+            if (_providerTokens is null || _providerBrowser is null)
+            {
+                return new ProviderConnectionResult(Failure.CredentialStorageUnavailable);
+            }
+            if (!string.IsNullOrEmpty(request.Address) && (!MailAddress.TryCreate(request.Address, out MailAddress? address) || address.Address != request.Address) ||
+                request.ProviderKind == "Google" && (request.Incoming is not null || request.Outgoing is not null) ||
+                request.ProviderKind == "Microsoft" && (request.Incoming is not null || request.Outgoing is not null) &&
+                    (!ValidProviderEndpoint(request.Incoming, request.Address) || !ValidProviderEndpoint(request.Outgoing, request.Address)))
+            {
+                return new ProviderConnectionResult(Failure.Validation);
+            }
+            if ((await _profile.AccountsAsync(linked.Token).ConfigureAwait(false)).Any(item =>
+                string.Equals(item.Address, request.Address, StringComparison.OrdinalIgnoreCase)))
+            {
+                return new ProviderConnectionResult(Failure.NeedsReview, Duplicate: true);
+            }
+            AccountId id = await _profile.NextAccountIdAsync(linked.Token).ConfigureAwait(false);
+            owned = id;
+            IAccountAuthenticator authenticator;
+            if (request.ProviderKind == "Google")
+            {
+                GoogleAccountAuthenticator google = new GoogleAccountAuthenticator(
+                    id,
+                    _providerClients.GoogleClientId!,
+                    _providerTokens,
+                    _providerBrowser,
+                    GoogleHttp(id),
+                    _time,
+                    TimeSpan.FromMinutes(2),
+                    string.IsNullOrEmpty(request.Address) ? null : request.Address,
+                    _providerClients.GoogleClientSecret
+                );
+                _googleAuthenticators.Add(id, google);
+                authenticator = google;
+            }
+            else
+            {
+                MicrosoftAccountAuthenticator microsoft = new MicrosoftAccountAuthenticator(
+                    id,
+                    _providerClients.MicrosoftClientId!,
+                    _providerTokens,
+                    _providerBrowser,
+                    _time,
+                    TimeSpan.FromMinutes(2)
+                )
+
+                {
+                    HttpFactory = AuthenticationHttpFactory
+                };
+                _authenticators.Add(id, microsoft);
+                authenticator = microsoft;
+            }
+            provisional = authenticator;
+            Outcome<AccessToken> acquired = await authenticator.AcquireAsync(true, linked.Token).ConfigureAwait(false);
+            if (!acquired.IsSuccess)
+            {
+                return new ProviderConnectionResult(acquired.Failure);
+            }
+            AccessToken token = acquired.Value!;
+            authenticated = true;
+            string mailbox = string.IsNullOrEmpty(request.Address) ?
+                request.ProviderKind == "Google" ? token.Subject : token.Address ?? "" : request.Address;
+            if (!MailAddress.TryCreate(mailbox, out MailAddress? verifiedAddress) || verifiedAddress.Address != mailbox)
+            {
+                return new ProviderConnectionResult(await RollbackProviderSetupAsync(provisional, authenticated, Failure.NeedsReview).ConfigureAwait(false));
+            }
+            if ((await _profile.AccountsAsync(linked.Token).ConfigureAwait(false)).Any(item =>
+                string.Equals(item.Address, mailbox, StringComparison.OrdinalIgnoreCase)))
+            {
+                Failure duplicate = await RollbackProviderSetupAsync(provisional, authenticated, Failure.NeedsReview).ConfigureAwait(false);
+                return new ProviderConnectionResult(duplicate, Duplicate: duplicate == Failure.NeedsReview);
+            }
+            MailEndpoint? incoming = request.Incoming is null ? null : request.Incoming with
+            {
+                Username = mailbox
+            };
+            MailEndpoint? outgoing = request.Outgoing is null ? null : request.Outgoing with
+            {
+                Username = mailbox
+            };
+            if (request.ProviderKind == "Microsoft" && incoming is null && outgoing is null)
+            {
+                incoming = new MailEndpoint("outlook.office365.com", 993, TlsMode.Implicit, mailbox, "");
+                string smtpHost = token.Tenant == "9188040d-6c67-4c5b-b112-36a304b66dad" ? "smtp-mail.outlook.com" : "smtp.office365.com";
+                outgoing = new MailEndpoint(smtpHost, 587, TlsMode.RequiredStartTls, mailbox, "");
+            }
+            AccountConfiguration configuration = new AccountConfiguration(
+                id,
+                mailbox,
+                incoming,
+                outgoing,
+                Identity: new ComposeIdentity(mailbox),
+                ProviderKind: request.ProviderKind,
+                MicrosoftBinding: request.ProviderKind == "Microsoft" ?
+                    new MicrosoftAccountBinding(_providerClients.MicrosoftClientId!, token.Subject, token.Tenant ?? "") : null,
+                GoogleBinding: request.ProviderKind == "Google" ? new GoogleAccountBinding(_providerClients.GoogleClientId!, token.Subject) : null
+            );
+            // Verify the deliberately selected Exchange mailbox through both actual transports before retention.
+            if (request.ProviderKind == "Microsoft")
+            {
+                ITransportCredentials credentials = new MicrosoftTransportCredentials(configuration, authenticator, _time);
+                await using ImapAdapter probe = new ImapAdapter(id, incoming!, credentials, _limits.MaximumMimeBytes, _time);
+                SmtpSubmitter smtp = new SmtpSubmitter(id, outgoing!, credentials, _limits.MaximumMimeBytes);
+                ConfigureFixtureTransports?.Invoke(probe, smtp);
+                Outcome<ImmutableArray<MailboxSnapshot>> verified = await probe.DiscoverAsync(linked.Token).ConfigureAwait(false);
+                Failure outgoingResult = verified.IsSuccess ? await smtp.TestAsync(linked.Token).ConfigureAwait(false) : verified.Failure;
+                if (!verified.IsSuccess || outgoingResult != Failure.None)
+                {
+                    return new ProviderConnectionResult(await RollbackProviderSetupAsync(provisional, authenticated, outgoingResult).ConfigureAwait(false));
+                }
+                _credentials.Add(id, credentials);
+            }
+            Failure saved = await _profile.ProvisionProviderAccountAsync(configuration, linked.Token).ConfigureAwait(false);
+            if (saved != Failure.None)
+            {
+                Failure failure = await RollbackProviderSetupAsync(provisional, authenticated, saved).ConfigureAwait(false);
+                return new ProviderConnectionResult(failure, Duplicate: failure == Failure.NeedsReview);
+            }
+            retained = true;
+            _credentials.TryGetValue(id, out ITransportCredentials? source);
+            _accounts.Add(id, CreateRestoredAccount(configuration, [], null, source));
+            return await DiscoverProviderAsync(configuration, linked.Token, request.Synchronise).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            Failure failure = retained ? Failure.Unavailable :
+                await RollbackProviderSetupAsync(provisional, authenticated, Failure.Unavailable).ConfigureAwait(false);
+            return new ProviderConnectionResult(failure, retained ? owned : null, Cancelled: failure != Failure.CredentialStorageUnavailable);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            Failure failure = retained ? Failure.Unavailable :
+                await RollbackProviderSetupAsync(provisional, authenticated, Failure.Unavailable).ConfigureAwait(false);
+            return new ProviderConnectionResult(failure, retained ? owned : null);
+        }
+        finally
+        {
+            if (!retained && owned is AccountId id)
+            {
+                _credentials.Remove(id);
+                if (_authenticators.Remove(id, out MicrosoftAccountAuthenticator? microsoft))
+                {
+                    await microsoft.DisposeAsync().ConfigureAwait(false);
+                }
+                if (_googleAuthenticators.Remove(id, out GoogleAccountAuthenticator? google))
+                {
+                    await google.DisposeAsync().ConfigureAwait(false);
+                }
+                if (_googleHttp.Remove(id, out HttpClient? http))
+                {
+                    http.Dispose();
+                }
+            }
+            _connections.Release();
+        }
+    }
+
+    public async Task<ProviderConnectionResult> ReconnectProviderAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
+        await _connections.WaitAsync(linked.Token).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_stopping, this);
+            AccountConfiguration? configuration = (await _profile.AccountsAsync(linked.Token).ConfigureAwait(false)).FirstOrDefault(item => item.Id == account);
+            if (configuration is null || !_accounts.TryGetValue(account, out (IMailboxReader Adapter, MailAccountEngine Engine) previous))
+            {
+                return new ProviderConnectionResult(Failure.NotFound);
+            }
+            Failure availability = _providerClients.Availability(configuration.ProviderKind);
+            if (availability != Failure.None || !_policy.AllowNetwork)
+            {
+                return new ProviderConnectionResult(availability != Failure.None ? availability : Failure.PolicyBlocked, account);
+            }
+            if (configuration.ProviderKind == "Google" && configuration.GoogleBinding?.ClientId != _providerClients.GoogleClientId ||
+                configuration.ProviderKind == "Microsoft" && configuration.MicrosoftBinding?.ClientId != _providerClients.MicrosoftClientId)
+            {
+                return new ProviderConnectionResult(Failure.NeedsReview, account);
+            }
+            IAccountAuthenticator? authenticator = ProviderAuthenticator(account);
+            if (authenticator is null)
+            {
+                return new ProviderConnectionResult(Failure.CredentialStorageUnavailable, account);
+            }
+            FolderRoles? roles = await _profile.ReadRolesAsync(account, linked.Token).ConfigureAwait(false);
+            ImmutableArray<MailboxSnapshot> mailboxes = previous.Engine.Mailboxes;
+            await previous.Engine.DisposeAsync().ConfigureAwait(false);
+            await _scheduler.SuspendAsync(account).ConfigureAwait(false);
+            await previous.Adapter.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                Outcome<AccessToken> acquired = await authenticator.AcquireAsync(true, linked.Token).ConfigureAwait(false);
+                if (!acquired.IsSuccess)
+                {
+                    return new ProviderConnectionResult(acquired.Failure, account);
+                }
+            }
+            finally
+            {
+                _credentials.TryGetValue(account, out ITransportCredentials? source);
+                _accounts[account] = CreateRestoredAccount(configuration, mailboxes, roles, source);
+                _scheduler.Resume(account);
+            }
+            return await DiscoverProviderAsync(configuration, linked.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return new ProviderConnectionResult(Failure.Unavailable, account, Cancelled: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            return new ProviderConnectionResult(Failure.Unavailable, account);
+        }
+        finally
+        {
+            _connections.Release();
+        }
+    }
+
+    public Task<Failure> DeleteProviderTokensAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        return ChangeProviderAccessAsync(account, false, cancellationToken);
+    }
+
+    public Task<Failure> RevokeProviderAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        return ChangeProviderAccessAsync(account, true, cancellationToken);
+    }
 
     public IMailAccountEngine? Find(AccountId account)
     {
@@ -177,6 +457,8 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         {
             ObjectDisposedException.ThrowIf(_stopping, this);
             ImmutableArray<MailboxSnapshot> mailboxes = await _profile.MailboxesAsync(linked.Token).ConfigureAwait(false);
+            _providerTokens = tokens;
+            _providerBrowser = browser;
             foreach (AccountConfiguration account in await _profile.AccountsAsync(linked.Token).ConfigureAwait(false))
             {
                 if (_accounts.ContainsKey(account.Id))
@@ -348,7 +630,11 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         }
     }
 
-    public async Task<Failure> SetRolesAsync(AccountId account, FolderRoles roles, CancellationToken cancellationToken)
+    public async Task<Failure> SetRolesAsync(
+        AccountId account,
+        FolderRoles roles,
+        CancellationToken cancellationToken
+    )
     {
         if (!roles.IsValid)
         {
@@ -384,7 +670,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
                 imap.SelectDraftMailbox(roles.Drafts, _profile.Blobs).Value;
             SmtpSubmitter smtp = new SmtpSubmitter(
                 account,
-                configuration.Outgoing,
+                configuration.Outgoing!,
                 _credentials[account],
                 _limits.MaximumMimeBytes
             );
@@ -623,6 +909,152 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         }
     }
 
+    private async Task<Failure> ChangeProviderAccessAsync(
+        AccountId account,
+        bool revoke,
+        CancellationToken cancellationToken
+    )
+    {
+        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
+        await _connections.WaitAsync(linked.Token).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_stopping, this);
+            IAccountAuthenticator? authenticator = ProviderAuthenticator(account);
+            if (authenticator is null || !_accounts.TryGetValue(account, out (IMailboxReader Adapter, MailAccountEngine Engine) previous))
+            {
+                return Failure.CredentialStorageUnavailable;
+            }
+            if (revoke && authenticator is not IAuthorizationRevoker)
+            {
+                return Failure.Unsupported;
+            }
+            if (revoke && !_policy.AllowNetwork)
+            {
+                return Failure.PolicyBlocked;
+            }
+            AccountConfiguration configuration = (await _profile.AccountsAsync(linked.Token).ConfigureAwait(false)).Single(item => item.Id == account);
+            FolderRoles? roles = await _profile.ReadRolesAsync(account, linked.Token).ConfigureAwait(false);
+            ImmutableArray<MailboxSnapshot> mailboxes = previous.Engine.Mailboxes;
+            await previous.Engine.DisposeAsync().ConfigureAwait(false);
+            await _scheduler.SuspendAsync(account).ConfigureAwait(false);
+            await previous.Adapter.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                return revoke ? (await ((IAuthorizationRevoker)authenticator).RevokeAsync(linked.Token).ConfigureAwait(false)).Failure :
+                    (await authenticator.DeleteCredentialsAsync(linked.Token).ConfigureAwait(false)).Failure;
+            }
+            finally
+            {
+                _credentials.TryGetValue(account, out ITransportCredentials? source);
+                _accounts[account] = CreateRestoredAccount(configuration, mailboxes, roles, source);
+                _scheduler.Resume(account);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            return Failure.Unavailable;
+        }
+        finally
+        {
+            _connections.Release();
+        }
+    }
+
+    private static async Task<Failure> RollbackProviderSetupAsync(
+        IAccountAuthenticator? authenticator,
+        bool authenticated,
+        Failure failure
+    )
+    {
+        if (authenticator is null || !authenticated)
+        {
+            return failure;
+        }
+        // No account was retained. Remove only this provisional local grant, never server consent.
+        try
+        {
+            Outcome<bool> deleted = await authenticator.DeleteCredentialsAsync(CancellationToken.None).ConfigureAwait(false);
+            return deleted.IsSuccess ? failure : Failure.CredentialStorageUnavailable;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or OperationCanceledException)
+        {
+            return Failure.CredentialStorageUnavailable;
+        }
+    }
+
+    private IAccountAuthenticator? ProviderAuthenticator(
+        AccountId account
+    )
+    {
+        return _googleAuthenticators.TryGetValue(account, out GoogleAccountAuthenticator? google) ? google :
+            _authenticators.GetValueOrDefault(account);
+    }
+
+    private async Task<ProviderConnectionResult> DiscoverProviderAsync(
+        AccountConfiguration configuration,
+        CancellationToken cancellationToken,
+        bool synchronise = true
+    )
+    {
+        (IMailboxReader adapter, MailAccountEngine engine) = _accounts[configuration.Id];
+        Outcome<ImmutableArray<MailboxSnapshot>> discovered = await adapter.DiscoverAsync(cancellationToken).ConfigureAwait(false);
+        if (!discovered.IsSuccess)
+        {
+            return new ProviderConnectionResult(discovered.Failure, configuration.Id);
+        }
+        if (discovered.Value.IsDefaultOrEmpty)
+        {
+            return new ProviderConnectionResult(Failure.NeedsReview, configuration.Id);
+        }
+        if (configuration.ProviderKind == "Microsoft")
+        {
+            SmtpSubmitter smtp = new SmtpSubmitter(configuration.Id, configuration.Outgoing!, _credentials[configuration.Id], _limits.MaximumMimeBytes);
+            ConfigureFixtureTransports?.Invoke((ImapAdapter)adapter, smtp);
+            Failure outgoing = await smtp.TestAsync(cancellationToken).ConfigureAwait(false);
+            if (outgoing != Failure.None)
+            {
+                return new ProviderConnectionResult(outgoing, configuration.Id);
+            }
+        }
+        await _profile.SaveMailboxesAsync(configuration.Id, discovered.Value, null, cancellationToken).ConfigureAwait(false);
+        await _profile.SaveCapabilitiesAsync(configuration.Id, adapter.Capabilities, cancellationToken).ConfigureAwait(false);
+        // Recompose only after discovery commits; role-dependent IMAP draft/sent ports use those snapshots.
+        await engine.DisposeAsync().ConfigureAwait(false);
+        await _scheduler.SuspendAsync(configuration.Id).ConfigureAwait(false);
+        await adapter.DisposeAsync().ConfigureAwait(false);
+        _credentials.TryGetValue(configuration.Id, out ITransportCredentials? source);
+        (IMailboxReader Adapter, MailAccountEngine Engine) restored = CreateRestoredAccount(configuration with
+        {
+            Capabilities = adapter.Capabilities
+        }, discovered.Value, await _profile.ReadRolesAsync(configuration.Id, CancellationToken.None).ConfigureAwait(false), source);
+        _accounts[configuration.Id] = restored;
+        _scheduler.Resume(configuration.Id);
+        Failure synchronisation = Failure.None;
+        foreach (MailboxSnapshot mailbox in restored.Engine.Mailboxes.Where(item => synchronise && item.Selectable).OrderByDescending(item => item.Role == MailboxRole.Inbox))
+        {
+            synchronisation = await restored.Engine.ReconcileAsync(mailbox.RemoteKey, cancellationToken).ConfigureAwait(false);
+            if (synchronisation != Failure.None || configuration.ProviderKind == "Google")
+            {
+                break;
+            }
+        }
+        return new ProviderConnectionResult(Failure.None, configuration.Id, synchronisation);
+    }
+
+    private bool ValidProviderEndpoint(
+        MailEndpoint? endpoint,
+        string address
+    )
+    {
+        return endpoint is not null && endpoint.Username == address && endpoint.Port is > 0 and <= 65535 &&
+            Enum.IsDefined(endpoint.Tls) && Uri.CheckHostName(endpoint.Host) != UriHostNameType.Unknown && endpoint.CredentialKey == "" &&
+            (ConfigureFixtureTransports is not null ||
+                endpoint.Host.Equals("outlook.office365.com", StringComparison.OrdinalIgnoreCase) ||
+                endpoint.Host.Equals("smtp.office365.com", StringComparison.OrdinalIgnoreCase) ||
+                endpoint.Host.Equals("smtp-mail.outlook.com", StringComparison.OrdinalIgnoreCase));
+    }
+
     private (IMailboxReader Adapter, MailAccountEngine Engine) CreateRestoredAccount(
         AccountConfiguration account,
         ImmutableArray<MailboxSnapshot> mailboxes,
@@ -635,7 +1067,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             return CreateGoogleAccount(account, mailboxes);
         }
         ArgumentNullException.ThrowIfNull(credentials);
-        ImapAdapter adapter = new ImapAdapter(account.Id, account.Incoming, credentials, _limits.MaximumMimeBytes, _time);
+        ImapAdapter adapter = new ImapAdapter(account.Id, account.Incoming!, credentials, _limits.MaximumMimeBytes, _time);
         adapter.RestoreMailboxes(mailboxes);
         adapter.RestoreCapabilities(account.Capabilities);
         adapter.SetRoles(roles);
@@ -645,7 +1077,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             adapter.SelectDraftMailbox(draftFolders[0].RemoteKey, _profile.Blobs).Value : null;
         ISentCopyStore? sent = mailboxes.Count(item => item.Role == MailboxRole.Sent && item.Selectable && item.Writable) == 1 ?
             adapter : null;
-        SmtpSubmitter smtp = new SmtpSubmitter(account.Id, account.Outgoing, credentials, _limits.MaximumMimeBytes);
+        SmtpSubmitter smtp = new SmtpSubmitter(account.Id, account.Outgoing!, credentials, _limits.MaximumMimeBytes);
         ConfigureFixtureTransports?.Invoke(adapter, smtp);
         MailAccountEngine engine = new MailAccountEngine(
             adapter,
@@ -690,7 +1122,8 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             GoogleHttp(account.Id),
             _time,
             TimeSpan.FromSeconds(30),
-            binding.Address
+            binding.Address,
+            binding.ClientId == _providerClients.GoogleClientId ? _providerClients.GoogleClientSecret : null
         );
         _googleAuthenticators.Add(account.Id, authenticator);
     }

@@ -64,7 +64,7 @@ public sealed class MicrosoftTransportTests
 
         // Act
         Outcome<Credential>[] resolved = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
-            credentials.ResolveAsync(account.Id, account.Incoming, CancellationToken.None)));
+            credentials.ResolveAsync(account.Id, account.Incoming!, CancellationToken.None)));
         Outcome<ImmutableArray<MailboxSnapshot>> folders = await adapter.DiscoverAsync(CancellationToken.None);
         Failure outgoing = await submitter.TestAsync(CancellationToken.None);
         await using MicrosoftAccountAuthenticator reopened = Authenticator(provider);
@@ -213,8 +213,8 @@ public sealed class MicrosoftTransportTests
         MicrosoftTransportCredentials credentials = new MicrosoftTransportCredentials(account, authenticator, TimeProvider.System);
 
         // Act
-        Outcome<Credential> result = await credentials.ResolveAsync(account.Id, account.Incoming, CancellationToken.None);
-        MailEndpoint foreign = account.Incoming with
+        Outcome<Credential> result = await credentials.ResolveAsync(account.Id, account.Incoming!, CancellationToken.None);
+        MailEndpoint foreign = account.Incoming! with
         {
             Host = "other.test"
         };
@@ -241,7 +241,7 @@ public sealed class MicrosoftTransportTests
         Guid draft = Guid.NewGuid();
         await using (SqliteProfile seed = await EngineFixture.OpenAsync(directory))
         {
-            await seed.ConfigureAccountAsync(configuration.Id, configuration.Incoming, configuration.Outgoing, CancellationToken.None);
+            await seed.ConfigureAccountAsync(configuration.Id, configuration.Incoming!, configuration.Outgoing!, CancellationToken.None);
             await seed.SaveMailboxesAsync(configuration.Id, [EngineFixture.Mailbox()], null, CancellationToken.None);
             await seed.SaveAsync(draft, configuration.Id, await EngineFixture.BlobAsync(seed, "retained local draft"), CancellationToken.None);
         }
@@ -269,7 +269,7 @@ public sealed class MicrosoftTransportTests
         Assert.That(missing, Is.EqualTo(Failure.NeedsAuthentication));
         Assert.That(retained.MicrosoftBinding, Is.EqualTo(Binding));
         Assert.That(retained.ProviderKind, Is.EqualTo("Microsoft"));
-        Assert.That(retained.Incoming, Is.EqualTo(configuration.Incoming));
+        Assert.That(retained.Incoming, Is.EqualTo(configuration.Incoming!));
         Assert.That((await reopened.Catalog.DraftsAsync(configuration.Id, CancellationToken.None)).Single().Id, Is.EqualTo(draft));
         await passwords.DidNotReceiveWithAnyArgs().ReadAsync(default!, default);
         await passwords.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default);
@@ -367,7 +367,7 @@ public sealed class MicrosoftTransportTests
         string directory = EngineFixture.DirectoryPath();
         await using (SqliteProfile seed = await EngineFixture.OpenAsync(directory))
         {
-            await seed.ConfigureAccountAsync(configuration.Id, configuration.Incoming, configuration.Outgoing, CancellationToken.None);
+            await seed.ConfigureAccountAsync(configuration.Id, configuration.Incoming!, configuration.Outgoing!, CancellationToken.None);
             await seed.SaveMailboxesAsync(configuration.Id, [EngineFixture.Mailbox()], null, CancellationToken.None);
             Assert.That(await seed.BindMicrosoftAccountAsync(configuration.Id, Binding, CancellationToken.None), Is.EqualTo(Failure.None));
         }
@@ -493,7 +493,7 @@ public sealed class MicrosoftTransportTests
         await using LocalMailServer smtp = Server(false);
         AccountConfiguration account = Configuration(imap, smtp);
         await using SqliteProfile profile = await EngineFixture.OpenAsync(directory);
-        await profile.ConfigureAccountAsync(account.Id, account.Incoming, account.Outgoing, CancellationToken.None);
+        await profile.ConfigureAccountAsync(account.Id, account.Incoming!, account.Outgoing!, CancellationToken.None);
         await profile.CommitAsync(EngineFixture.Mailbox(), EngineFixture.Page([EngineFixture.Message(1)]), CancellationToken.None);
         Guid draft = Guid.NewGuid();
         await profile.SaveAsync(draft, account.Id, await EngineFixture.BlobAsync(profile, Mime), CancellationToken.None);
@@ -603,7 +603,7 @@ public sealed class MicrosoftTransportTests
 
     private static ImapAdapter Adapter(AccountConfiguration account, ITransportCredentials credentials, LocalMailServer server)
     {
-        return new ImapAdapter(account.Id, account.Incoming, credentials, 1048576, TimeProvider.System)
+        return new ImapAdapter(account.Id, account.Incoming!, credentials, 1048576, TimeProvider.System)
         {
             FixtureAuthority = server.Authority
         };
@@ -611,7 +611,7 @@ public sealed class MicrosoftTransportTests
 
     private static SmtpSubmitter Submitter(AccountConfiguration account, ITransportCredentials credentials, LocalMailServer server)
     {
-        return new SmtpSubmitter(account.Id, account.Outgoing, credentials, 1048576)
+        return new SmtpSubmitter(account.Id, account.Outgoing!, credentials, 1048576)
         {
             FixtureAuthority = server.Authority
         };

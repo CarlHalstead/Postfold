@@ -166,7 +166,7 @@ public sealed class AttachmentSaveWindowTests
     private static IMailApplication Application()
     {
         IMailApplication application = Substitute.For<IMailApplication>();
-        application.ReadAsync(Arg.Any<MessageSnapshot>(), false, Arg.Any<CancellationToken>()).Returns(
+        application.ReadAsync(Arg.Any<MessageSnapshot>(), Arg.Any<bool>(), Arg.Any<CancellationToken>()).Returns(
             Outcome<MimeSnapshot>.Fail(Failure.NotFound)
         );
         application.ReadAttachmentsAsync(Arg.Any<MessageSnapshot>(), false, Arg.Any<CancellationToken>()).Returns(

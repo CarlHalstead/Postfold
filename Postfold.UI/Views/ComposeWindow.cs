@@ -58,6 +58,7 @@ public sealed class ComposeWindow : Window
     private bool _allowClose;
     private bool _frozen;
     private bool _conflict;
+    private bool _held;
     private bool _stopping;
     private bool _closing;
     private bool _canSubmit = true;
@@ -71,7 +72,8 @@ public sealed class ComposeWindow : Window
         bool conflict = false,
         Guid? predecessor = null,
         MessageSnapshot? original = null,
-        ImmutableArray<AttachmentSnapshot> originalAttachments = default
+        ImmutableArray<AttachmentSnapshot> originalAttachments = default,
+        bool held = false
     )
     {
         _application = application;
@@ -79,18 +81,21 @@ public sealed class ComposeWindow : Window
         _id = id ?? Guid.NewGuid();
         _predecessor = predecessor ?? content.Predecessor;
         _conflict = conflict;
+        _held = held;
         Title = Strings.Compose;
         Width = 760;
         Height = 760;
         MinWidth = 480;
         MinHeight = 480;
         StackPanel form = new StackPanel
+
         {
             Margin = new Thickness(24),
             Spacing = 12
         };
         _sender = content.Sender;
         _recipients = new AutoCompleteBox
+
         {
             Name = "Recipients",
             Text = string.Join(";", content.Recipients),
@@ -101,8 +106,15 @@ public sealed class ComposeWindow : Window
             MaxDropDownHeight = 240
         };
         Avalonia.Automation.AutomationProperties.SetName(_recipients, Strings.Recipients);
-        StackPanel recipients = new StackPanel { Spacing = 4 };
-        TextBlock recipientLabel = new TextBlock { Text = Strings.Recipients, TextWrapping = TextWrapping.Wrap };
+        StackPanel recipients = new StackPanel
+        {
+            Spacing = 4
+        };
+        TextBlock recipientLabel = new TextBlock
+        {
+            Text = Strings.Recipients,
+            TextWrapping = TextWrapping.Wrap
+        };
         recipientLabel.Classes.Add("caption");
         recipients.Children.Add(recipientLabel);
         recipients.Children.Add(_recipients);
@@ -121,11 +133,13 @@ public sealed class ComposeWindow : Window
         WrapPanel actions = new WrapPanel();
         _actionButtons = actions;
         StackPanel attachmentHeading = new StackPanel
+
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             Spacing = 8
         };
         attachmentHeading.Children.Add(new TextBlock
+
         {
             Text = Strings.Get("ComposeAttachments"),
             FontWeight = FontWeight.SemiBold,
@@ -140,16 +154,19 @@ public sealed class ComposeWindow : Window
         if (original is not null && !originalAttachments.IsDefaultOrEmpty)
         {
             ListBox originals = new ListBox
+
             {
                 ItemsSource = originalAttachments,
                 MaxHeight = 120
             };
             Avalonia.Automation.AutomationProperties.SetName(originals, Strings.Get("OriginalAttachments"));
             originals.ItemTemplate = new FuncDataTemplate<AttachmentSnapshot>((attachment, _) => attachment is null ? null : new TextBlock
+
             {
                 Text = attachment.Name
             });
             form.Children.Add(new TextBlock
+
             {
                 Text = Strings.Get("OriginalAttachments")
             });
@@ -170,10 +187,12 @@ public sealed class ComposeWindow : Window
                 return null;
             }
             Grid row = new Grid
+
             {
                 ColumnDefinitions = new ColumnDefinitions("*,Auto")
             };
             TextBlock name = new TextBlock
+
             {
                 Text = attachment.Name + " (" + attachment.Content.Length.ToString(
                     System.Globalization.CultureInfo.CurrentCulture
@@ -202,6 +221,7 @@ public sealed class ComposeWindow : Window
             ToolTip.SetTip(remove, Strings.Get("RemoveAttachment"));
             Grid.SetColumn(remove, 1);
             Border card = new Border
+
             {
                 Child = row,
                 BorderThickness = new Thickness(1),
@@ -215,6 +235,7 @@ public sealed class ComposeWindow : Window
         _attachmentList.ItemsSource = _attachments.ToArray();
         _attachmentList.IsVisible = _attachments.Count > 0;
         _attachmentControls.Children.Add(new ScrollViewer
+
         {
             Content = _attachmentList,
             MaxHeight = 160,
@@ -222,10 +243,14 @@ public sealed class ComposeWindow : Window
         });
         Button send = FormControls.AddActionButton(actions, "Send", QueueAsync, _status);
         _send = send;
-        send.IsEnabled = !conflict;
-        StackPanel footer = new StackPanel { Spacing = 8 };
+        send.IsEnabled = !conflict && !held;
+        StackPanel footer = new StackPanel
+        {
+            Spacing = 8
+        };
         footer.Children.Add(actions);
         TextBlock autosaveHint = new TextBlock
+
         {
             Text = Strings.Get("DraftAutosaveHint"),
             TextWrapping = TextWrapping.Wrap
@@ -298,7 +323,7 @@ public sealed class ComposeWindow : Window
                 await ShortcutAsync(AttachAsync);
             }
         };
-        _status.Text = conflict ? Strings.Conflict : "";
+        _status.Text = conflict ? Strings.Conflict : held ? Strings.Get("DraftHeld") : "";
     }
 
     public AccountId Account => _account;
@@ -325,8 +350,10 @@ public sealed class ComposeWindow : Window
                 Snapshot(),
                 CancellationToken.None
             );
-            _conflict |= saved.Value?.Conflict == true || saved.Value?.Held == true;
-            _status.Text = !saved.IsSuccess ? Strings.DraftFailed : _conflict ? Strings.Conflict : Strings.Saved;
+            _conflict |= saved.Value?.Conflict == true;
+            _held |= saved.Value?.Held == true;
+            _status.Text = !saved.IsSuccess ? Strings.DraftFailed : _conflict ? Strings.Conflict :
+                _held ? Strings.Get("DraftHeld") : Strings.Saved;
             return saved.IsSuccess;
         }
         catch (IOException)
@@ -533,7 +560,7 @@ public sealed class ComposeWindow : Window
 
     private async Task SendAsync()
     {
-        if ((_frozen && !_canSubmit) || _conflict || !await FlushAsync())
+        if ((_frozen && !_canSubmit) || _conflict || _held || !await FlushAsync())
         {
             return;
         }

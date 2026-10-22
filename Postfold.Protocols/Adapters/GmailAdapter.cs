@@ -26,7 +26,7 @@ using System.Threading.Tasks;
 namespace Postfold.Protocols.Adapters;
 
 /// <summary>Account-wide Gmail labels/history mapped to the shared engine. All background authentication is silent.</summary>
-public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, IMessageContentReader,
+public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, IConcurrentMessageContentReader,
     IMailboxMutator, IRemoteDraftStore, IMessageSubmitter, ISentCopyStore
 {
     private const int MetadataBytes = 4194304;
@@ -36,6 +36,7 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, IMes
     private readonly long _maximumBytes;
     private readonly TimeProvider _time;
     private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
+    private readonly SemaphoreSlim _contentGate = new SemaphoreSlim(1, 1);
     private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
 
     public GmailAdapter(
@@ -103,6 +104,8 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, IMes
         CancellationToken cancellationToken
     )
     {
+        // History can reference up to 1,000 changed messages. Allow quota-paced metadata and
+        // bounded provider cooldowns within one page; caller/account shutdown still cancels it.
         return RunAsync(async token =>
         {
             if (limit is < 1 or > 1000 || checkpoint is not null &&
@@ -290,7 +293,7 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, IMes
                     full
                 );
             }
-        }, cancellationToken);
+        }, cancellationToken, TimeSpan.FromMinutes(8));
     }
 
     public Task<Outcome<Stream>> OpenBodyAsync(
@@ -315,7 +318,7 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, IMes
                 throw new InvalidDataException();
             }
             return new MemoryStream(Decode(raw.RootElement), false);
-        }, cancellationToken);
+        }, cancellationToken, independentRead: true);
     }
 
     public async Task<Failure> ApplyAsync(
@@ -456,12 +459,14 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, IMes
     {
         await _shutdown.CancelAsync().ConfigureAwait(false);
         await _gate.WaitAsync().ConfigureAwait(false);
+        await _contentGate.WaitAsync().ConfigureAwait(false);
         try
         {
             _api.Dispose();
         }
         finally
         {
+            _contentGate.Release();
             _gate.Release();
         }
     }
@@ -531,12 +536,15 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, IMes
 
     private async Task<Outcome<TValue>> RunAsync<TValue>(
         Func<CancellationToken, Task<TValue>> action,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        TimeSpan? operationTimeout = null,
+        bool independentRead = false
     )
     {
-        using CancellationTokenSource timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2), _time);
+        using CancellationTokenSource timeout = new CancellationTokenSource(operationTimeout ?? TimeSpan.FromMinutes(2), _time);
         using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token, timeout.Token);
-        await _gate.WaitAsync(linked.Token).ConfigureAwait(false);
+        SemaphoreSlim gate = independentRead ? _contentGate : _gate;
+        await gate.WaitAsync(linked.Token).ConfigureAwait(false);
         try
         {
             return Outcome<TValue>.Success(await action(linked.Token).ConfigureAwait(false));
@@ -552,7 +560,7 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, IMes
         }
         finally
         {
-            _gate.Release();
+            gate.Release();
         }
     }
 

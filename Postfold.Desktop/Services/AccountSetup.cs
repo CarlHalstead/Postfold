@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace Postfold.Desktop.Services;
 
-public sealed class AccountSetup : IAccountSetup
+public sealed class AccountSetup : IAccountSetup, IProviderAccounts
 {
     private readonly IAccountProvisioner _host;
     private readonly ICredentialStore _secure;
@@ -34,11 +34,58 @@ public sealed class AccountSetup : IAccountSetup
         _discovery = discovery ?? new MailServerDiscovery();
     }
 
+    public ImmutableArray<ProviderAvailability> Providers => (_host as IProviderAccounts)?.Providers ?? [];
+
     public Task<AccountServerSettings> DiscoverAsync(string email, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return _host.NetworkAllowed ? _discovery.DiscoverAsync(email, cancellationToken) :
             Task.FromResult(new AccountServerSettings(null, null));
+    }
+
+    public async Task<ProviderConnectionResult> ConnectProviderAsync(
+        ProviderSetupRequest request,
+        CancellationToken cancellationToken
+    )
+    {
+        await _additions.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return _host is IProviderAccounts providers ?
+                await providers.ConnectProviderAsync(request, cancellationToken).ConfigureAwait(false) :
+                new ProviderConnectionResult(Failure.Unsupported);
+        }
+        finally
+        {
+            _additions.Release();
+        }
+    }
+
+    public Task<ProviderConnectionResult> ReconnectProviderAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        return _host is IProviderAccounts providers ? providers.ReconnectProviderAsync(account, cancellationToken) :
+            Task.FromResult(new ProviderConnectionResult(Failure.Unsupported));
+    }
+
+    public Task<Failure> DeleteProviderTokensAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        return _host is IProviderAccounts providers ? providers.DeleteProviderTokensAsync(account, cancellationToken) :
+            Task.FromResult(Failure.Unsupported);
+    }
+
+    public Task<Failure> RevokeProviderAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        return _host is IProviderAccounts providers ? providers.RevokeProviderAsync(account, cancellationToken) :
+            Task.FromResult(Failure.Unsupported);
     }
 
     public async Task<AccountSetupResult> AddAsync(AccountSetupRequest request, CancellationToken cancellationToken)
@@ -76,7 +123,7 @@ public sealed class AccountSetup : IAccountSetup
             return Failure.NotFound;
         }
 
-        if (configuration.ProviderKind != "Imap")
+        if (configuration.ProviderKind != "Imap" || configuration.Incoming is null || configuration.Outgoing is null)
         {
             return Failure.NeedsAuthentication;
         }
@@ -104,7 +151,10 @@ public sealed class AccountSetup : IAccountSetup
         return _host.SetRolesAsync(account, roles, cancellationToken);
     }
 
-    private async Task<AccountSetupResult> AddCoreAsync(AccountSetupRequest request, CancellationToken cancellationToken)
+    private async Task<AccountSetupResult> AddCoreAsync(
+        AccountSetupRequest request,
+        CancellationToken cancellationToken
+    )
     {
         if (!_host.NetworkAllowed)
         {
@@ -122,10 +172,13 @@ public sealed class AccountSetup : IAccountSetup
             cancellationToken
         ).ConfigureAwait(false);
         string address = request.Sender ?? request.Incoming.Username;
-        if (accounts.Any(account => string.Equals(account.Identity?.Sender ?? account.Incoming.Username,
-            address, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(account.Incoming.Host, request.Incoming.Host, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(account.Incoming.Username, request.Incoming.Username, StringComparison.OrdinalIgnoreCase)))
+        if (accounts.Any(account => string.Equals(
+            account.Address,
+            address,
+            StringComparison.OrdinalIgnoreCase
+        ) ||
+            string.Equals(account.Incoming?.Host, request.Incoming.Host, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(account.Incoming?.Username, request.Incoming.Username, StringComparison.OrdinalIgnoreCase)))
         {
             return new AccountSetupResult(Failure.Validation, Failure.Validation, Failure.Validation, [], Duplicate: true);
         }
@@ -187,8 +240,14 @@ public sealed class AccountSetup : IAccountSetup
                 }
             }
         }
-        return new AccountSetupResult(Failure.None, engine.Failure, outgoingResult, engine.Value?.Mailboxes ?? [],
-            identityResult, synchronisation);
+        return new AccountSetupResult(
+            Failure.None,
+            engine.Failure,
+            outgoingResult,
+            engine.Value?.Mailboxes ?? [],
+            identityResult,
+            synchronisation
+        );
     }
 
     private static bool Valid(MailEndpoint endpoint)

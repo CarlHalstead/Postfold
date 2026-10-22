@@ -14,6 +14,125 @@ namespace Postfold.Engine.Tests.Tests.Scheduling;
 public sealed class SchedulerTests
 {
     [Test]
+    public async Task EnqueueAsync_WhenSerialWorkersAreSyncing_RunsOneIndependentReadWithoutOverlappingSerialWork()
+    {
+        // Arrange
+        IWorkPolicy policy = Substitute.For<IWorkPolicy>();
+        await using AccountScheduler scheduler = new AccountScheduler(2, 10, 1, TimeProvider.System, policy, Substitute.For<IRetryDelayPolicy>());
+        TaskCompletionSource firstSync = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource secondSync = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        IAccountWork syncing = Substitute.For<IAccountWork>();
+        int started = 0;
+        syncing.RunAsync(Arg.Any<CancellationToken>()).Returns(async call =>
+        {
+            (Interlocked.Increment(ref started) == 1 ? firstSync : secondSync).TrySetResult();
+            await release.Task.WaitAsync(call.Arg<CancellationToken>());
+            return Failure.None;
+        });
+        AccountId account = new AccountId(1);
+        Task<Failure> first = scheduler.EnqueueAsync(account, syncing, WorkPriority.Reconciliation, CancellationToken.None);
+        Task<Failure> second = scheduler.EnqueueAsync(new AccountId(2), syncing, WorkPriority.Reconciliation, CancellationToken.None);
+        await Task.WhenAll(firstSync.Task, secondSync.Task).WaitAsync(TimeSpan.FromSeconds(10));
+        IAccountWork mutation = Substitute.For<IAccountWork>();
+        mutation.RunAsync(Arg.Any<CancellationToken>()).Returns(Failure.None);
+        Task<Failure> queuedMutation = scheduler.EnqueueAsync(account, mutation, WorkPriority.Interactive, CancellationToken.None);
+        IConcurrentAccountWork reading = Substitute.For<IConcurrentAccountWork>();
+        reading.RunAsync(Arg.Any<CancellationToken>()).Returns(Failure.None);
+
+        // Act
+        Failure result = await scheduler.EnqueueAsync(account, reading, WorkPriority.Interactive, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        bool serialStillHeld = !queuedMutation.IsCompleted && !first.IsCompleted && !second.IsCompleted;
+        release.TrySetResult();
+        await Task.WhenAll(first, second, queuedMutation).WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Assert
+        Assert.That(result, Is.EqualTo(Failure.None));
+        Assert.That(serialStillHeld, Is.True);
+        await reading.Received(1).RunAsync(Arg.Any<CancellationToken>());
+        await mutation.Received(1).RunAsync(Arg.Any<CancellationToken>());
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task SuspendAsync_WhenBothAccountLanesAreActive_CancelsAndDrainsBoth(bool dispose)
+    {
+        // Arrange
+        IWorkPolicy policy = Substitute.For<IWorkPolicy>();
+        await using AccountScheduler scheduler = new AccountScheduler(2, 10, 1, TimeProvider.System, policy, Substitute.For<IRetryDelayPolicy>());
+        AccountId account = new AccountId(1);
+        TaskCompletionSource syncEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource readEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        IAccountWork syncing = Substitute.For<IAccountWork>();
+        syncing.RunAsync(Arg.Any<CancellationToken>()).Returns(async call =>
+        {
+            syncEntered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+            return Failure.None;
+        });
+        IConcurrentAccountWork reading = Substitute.For<IConcurrentAccountWork>();
+        reading.RunAsync(Arg.Any<CancellationToken>()).Returns(async call =>
+        {
+            readEntered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+            return Failure.None;
+        });
+        Task<Failure> sync = scheduler.EnqueueAsync(account, syncing, WorkPriority.Reconciliation, CancellationToken.None);
+        await syncEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Task<Failure> read = scheduler.EnqueueAsync(account, reading, WorkPriority.Interactive, CancellationToken.None);
+        await readEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Act
+        if (dispose)
+        {
+            await scheduler.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        else
+        {
+            await scheduler.SuspendAsync(account).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+
+        // Assert
+        Assert.That(sync.IsCanceled, Is.True);
+        Assert.That(read.IsCanceled, Is.True);
+    }
+
+    [Test]
+    public async Task PauseAsync_WhenIndependentReadIsActive_DrainsItAndPreservesSingleReadCapacity()
+    {
+        // Arrange
+        IWorkPolicy policy = Substitute.For<IWorkPolicy>();
+        await using AccountScheduler scheduler = new AccountScheduler(2, 10, 1, TimeProvider.System, policy, Substitute.For<IRetryDelayPolicy>());
+        TaskCompletionSource entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        IConcurrentAccountWork reading = Substitute.For<IConcurrentAccountWork>();
+        CancellationToken observed = default;
+        reading.RunAsync(Arg.Any<CancellationToken>()).Returns(async call =>
+        {
+            observed = call.Arg<CancellationToken>();
+            entered.TrySetResult();
+            await release.Task.WaitAsync(observed);
+            return Failure.None;
+        });
+        Task<Failure> active = scheduler.EnqueueAsync(new AccountId(1), reading, WorkPriority.Interactive, CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Task<Failure> queued = scheduler.EnqueueAsync(new AccountId(2), reading, WorkPriority.Interactive, CancellationToken.None);
+
+        // Act
+        Task paused = scheduler.PauseAsync(CancellationToken.None);
+        bool pausedForRead = !paused.IsCompleted;
+        release.TrySetResult();
+        await paused.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Assert
+        Assert.That(pausedForRead, Is.True);
+        Assert.That(observed.IsCancellationRequested, Is.False);
+        Assert.That(await active, Is.EqualTo(Failure.None));
+        Assert.That(await queued, Is.EqualTo(Failure.PolicyBlocked));
+        await reading.Received(1).RunAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Test]
     public async Task PauseAsync_WhenWorkIsActive_ObservesWithoutCancellingAndNeverRestoresDiscardedCallbacks()
     {
         // Arrange

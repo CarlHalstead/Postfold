@@ -22,6 +22,7 @@ public sealed class GoogleAccountAuthenticator : IAccountAuthenticator, IAuthori
     public const string Scope = "https://www.googleapis.com/auth/gmail.modify";
     private readonly AccountId _account;
     private readonly string _clientId;
+    private readonly string? _clientSecret;
     private readonly string _key;
     private readonly IProtectedTokenStore _store;
     private readonly ISystemBrowser _browser;
@@ -41,7 +42,8 @@ public sealed class GoogleAccountAuthenticator : IAccountAuthenticator, IAuthori
         ISystemBrowser browser,
         TimeProvider time,
         TimeSpan timeout,
-        string? expectedSubject = null
+        string? expectedSubject = null,
+        string? clientSecret = null
     ) : this(
         account,
         clientId,
@@ -53,7 +55,8 @@ public sealed class GoogleAccountAuthenticator : IAccountAuthenticator, IAuthori
         }),
         time,
         timeout,
-        expectedSubject
+        expectedSubject,
+        clientSecret
     )
     {
         _ownsHttp = true;
@@ -67,7 +70,8 @@ public sealed class GoogleAccountAuthenticator : IAccountAuthenticator, IAuthori
         HttpClient http,
         TimeProvider time,
         TimeSpan timeout,
-        string? expectedSubject = null
+        string? expectedSubject = null,
+        string? clientSecret = null
     )
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
@@ -78,6 +82,7 @@ public sealed class GoogleAccountAuthenticator : IAccountAuthenticator, IAuthori
 
         _account = account;
         _clientId = clientId;
+        _clientSecret = clientSecret;
         _key = "google:" + clientId + ":" + account.Value.ToString(CultureInfo.InvariantCulture);
         _store = store;
         _browser = browser;
@@ -116,6 +121,11 @@ public sealed class GoogleAccountAuthenticator : IAccountAuthenticator, IAuthori
             {
                 ["client_id"] = _clientId
             };
+            // Google desktop registrations can require this field despite being public clients.
+            if (!string.IsNullOrWhiteSpace(_clientSecret))
+            {
+                fields["client_secret"] = _clientSecret;
+            }
             if (interactive)
             {
                 using GoogleAuthorizationAttempt attempt = new GoogleAuthorizationAttempt();

@@ -27,7 +27,6 @@ public sealed class SettingsWindow : Window
     private readonly ComboBox _accounts;
     private readonly TabControl _tabs;
     private bool _refreshingAccounts;
-    private event Action? AccountSelectionChanged;
 
     internal SettingsWindow(
         MainWindowViewModel model,
@@ -51,6 +50,7 @@ public sealed class SettingsWindow : Window
         MinHeight = 480;
         DockPanel root = new DockPanel();
         _accounts = new ComboBox
+
         {
             Name = "SettingsAccountSelection",
             ItemsSource = model.Accounts.ToArray(),
@@ -58,6 +58,7 @@ public sealed class SettingsWindow : Window
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
             Margin = new Thickness(24, 0, 24, 16),
             ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => new TextBlock
+
             {
                 Text = account?.Name ?? Strings.Get("ChooseAccount"),
                 TextTrimming = TextTrimming.CharacterEllipsis
@@ -67,9 +68,11 @@ public sealed class SettingsWindow : Window
         DockPanel.SetDock(_accounts, Dock.Top);
         root.Children.Add(_accounts);
         _tabs = new TabControl
+
         {
             Name = "SettingsSections",
             ItemsPanel = new FuncTemplate<Panel?>(() => new WrapPanel
+
             {
                 [KeyboardNavigation.TabNavigationProperty] = KeyboardNavigationMode.Continue
             })
@@ -93,7 +96,10 @@ public sealed class SettingsWindow : Window
                 AccountSelectionChanged?.Invoke();
             }
         };
-        void RefreshAccounts(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+        void RefreshAccounts(
+            object? sender,
+            System.ComponentModel.PropertyChangedEventArgs args
+        )
         {
             if (args.PropertyName != nameof(MainWindowViewModel.HasAccounts))
             {
@@ -129,9 +135,14 @@ public sealed class SettingsWindow : Window
             ComboBox theme = Choice(form, "Theme", themes.Select(Strings.Get).ToArray(), Array.IndexOf(themes, settings.Theme));
             ComboBox preview = Choice(form, "PreviewLayout", previews.Select(Strings.Get).ToArray(), Array.IndexOf(previews, settings.Preview));
             ComboBox density = Choice(form, "Density", densities.Select(Strings.Get).ToArray(), Array.IndexOf(densities, settings.Density));
-            TextBlock sizeLabel = new TextBlock { Text = Strings.Get("FontSize"), TextWrapping = TextWrapping.Wrap };
+            TextBlock sizeLabel = new TextBlock
+            {
+                Text = Strings.Get("FontSize"),
+                TextWrapping = TextWrapping.Wrap
+            };
             form.Children.Add(sizeLabel);
             Slider size = new Slider
+
             {
                 Name = "TextSize",
                 Minimum = 12,
@@ -141,8 +152,10 @@ public sealed class SettingsWindow : Window
                 IsSnapToTickEnabled = true
             };
             AutomationProperties.SetName(size, Strings.Get("FontSize"));
-            size.ValueChanged += (_, _) => sizeLabel.Text = Strings.Get("FontSize") + ": " + size.Value.ToString("0",
-                System.Globalization.CultureInfo.CurrentCulture);
+            size.ValueChanged += (_, _) => sizeLabel.Text = Strings.Get("FontSize") + ": " + size.Value.ToString(
+                "0",
+                System.Globalization.CultureInfo.CurrentCulture
+            );
             sizeLabel.Text += ": " + settings.FontSize.ToString("0", System.Globalization.CultureInfo.CurrentCulture);
             form.Children.Add(size);
             string[] fonts = new[] { Strings.Get("FontDefault") }.Concat(FontManager.Current.SystemFonts
@@ -174,7 +187,11 @@ public sealed class SettingsWindow : Window
         Control Accounts()
         {
             StackPanel form = Form();
-            TextBlock hint = new TextBlock { Text = Strings.Get("ChooseAccount"), TextWrapping = TextWrapping.Wrap };
+            TextBlock hint = new TextBlock
+            {
+                Text = Strings.Get("ChooseAccount"),
+                TextWrapping = TextWrapping.Wrap
+            };
             form.Children.Add(hint);
             TextBlock status = Status();
             Button restore = FormControls.AddActionButton(form, "Credentials", async () =>
@@ -204,6 +221,16 @@ public sealed class SettingsWindow : Window
             {
                 bool selected = _accounts.SelectedItem is AccountConfiguration;
                 restore.IsEnabled = selected && canRestoreCredentials;
+                restore.Content = new TextBlock
+
+                {
+                    Text = Strings.Get(_accounts.SelectedItem is AccountConfiguration { ProviderKind: not "Imap" } ? "ProviderConnection" : "Credentials"),
+                    TextWrapping = TextWrapping.Wrap
+                };
+                Avalonia.Automation.AutomationProperties.SetName(
+                    restore,
+                    Strings.Get(_accounts.SelectedItem is AccountConfiguration { ProviderKind: not "Imap" } ? "ProviderConnection" : "Credentials")
+                );
                 renameButton.IsEnabled = selected && canManage;
                 removeButton.IsEnabled = selected && canManage;
                 hint.Text = selected ? ((AccountConfiguration)_accounts.SelectedItem!).Name : Strings.Get("ChooseAccount");
@@ -220,7 +247,11 @@ public sealed class SettingsWindow : Window
             StackPanel footer = Footer();
             TextBox sender = FormControls.AddField(form, "Sender");
             sender.MaxLength = 320;
-            form.Children.Add(new TextBlock { Text = Strings.Get("IdentityHint"), TextWrapping = TextWrapping.Wrap });
+            form.Children.Add(new TextBlock
+            {
+                Text = Strings.Get("IdentityHint"),
+                TextWrapping = TextWrapping.Wrap
+            });
             TextBlock status = Status();
             AccountId? editing = null;
             Button save = FormControls.AddActionButton(footer, "SaveSettings", async () =>
@@ -275,11 +306,21 @@ public sealed class SettingsWindow : Window
         {
             StackPanel form = Form();
             StackPanel footer = Footer();
-            CheckBox tray = new CheckBox { Content = Strings.Get("TrayOptIn") };
-            CheckBox notifications = new CheckBox { Content = Strings.Get("PrivateNotifications") };
+            CheckBox tray = new CheckBox
+            {
+                Content = Strings.Get("TrayOptIn")
+            };
+            CheckBox notifications = new CheckBox
+            {
+                Content = Strings.Get("PrivateNotifications")
+            };
             form.Children.Add(tray);
             form.Children.Add(notifications);
-            form.Children.Add(new TextBlock { Text = Strings.Get("DesktopIntegrationHint"), TextWrapping = TextWrapping.Wrap });
+            form.Children.Add(new TextBlock
+            {
+                Text = Strings.Get("DesktopIntegrationHint"),
+                TextWrapping = TextWrapping.Wrap
+            });
             TextBlock status = Status();
             FormControls.AddActionButton(footer, "SaveSettings", async () =>
             {
@@ -334,6 +375,7 @@ public sealed class SettingsWindow : Window
             }
         }
     }
+    private event Action? AccountSelectionChanged;
 
     public void SelectSection(string section, AccountId? account = null)
     {

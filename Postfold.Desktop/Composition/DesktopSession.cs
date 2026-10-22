@@ -10,6 +10,7 @@ using Postfold.Core.Models.Synchronisation;
 using Postfold.Core.Models.Updates;
 using Postfold.Core.Services;
 using Postfold.Desktop.Interfaces;
+using Postfold.Desktop.Models.Authentication;
 using Postfold.Desktop.Models.Updates;
 using Postfold.Desktop.Services;
 using Postfold.Desktop.Services.Authentication;
@@ -589,7 +590,9 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
         return IntPtr.Zero;
     }
 
-    private Task<Outcome<DesktopMailRuntime>> OpenProfileAsync(string? directory = null)
+    private Task<Outcome<DesktopMailRuntime>> OpenProfileAsync(
+        string? directory = null
+    )
     {
         // Keep path-selection IO and any admission failure on the observed startup task.
         return Task.Run(async () =>
@@ -610,6 +613,9 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
                 // startup before draining them, including a partially restored runtime after IO failure.
                 _host = opened.Value!;
                 _secure = new WindowsCredentialStore(Path.Combine(selected, "credentials"));
+                _host.ConfigureProviderClients(ProviderClientConfiguration.Load(
+                    Environment.GetEnvironmentVariable("POSTFOLD_PUBLIC_CLIENT_CONFIGURATION")
+                ));
                 await _host.RestoreAccountsAsync(
                     _secure,
                     new WindowsTokenStore(Path.Combine(selected, "tokens")),

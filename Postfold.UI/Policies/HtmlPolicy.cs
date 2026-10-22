@@ -29,6 +29,27 @@ public static class HtmlPolicy
             "<meta http-equiv=\"Content-Security-Policy\" content=\"" + Csp + "\"></head><body>" + clean + "</body></html>");
     }
 
+    /// <summary>Provides readable HTML-only mail without activating a renderer or requesting external resources.</summary>
+    public static Outcome<string> ReadText(string html)
+    {
+        Outcome<string> clean = Sanitise(html, 262144);
+        if (!clean.IsSuccess)
+        {
+            return clean;
+        }
+        using AngleSharp.Html.Dom.IHtmlDocument document = new HtmlParser().ParseDocument(clean.Value!);
+        IHtmlCollection<IElement> blocks = document.QuerySelectorAll("p,br,div,li,tr,blockquote,pre,h1,h2,h3");
+        if (blocks.Length > 4096)
+        {
+            return Outcome<string>.Fail(Failure.Validation);
+        }
+        foreach (IElement block in blocks)
+        {
+            block.AppendChild(document.CreateTextNode("\n"));
+        }
+        return Outcome<string>.Success(document.Body?.TextContent.Trim() ?? "");
+    }
+
     public static Outcome<HtmlRenderPlan> Plan(string html, Guid context, IReadOnlyDictionary<string, string> cidResources)
     {
         if (Encoding.UTF8.GetByteCount(html) > 262144 || cidResources.Count > 32)

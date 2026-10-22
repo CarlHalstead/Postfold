@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -449,6 +450,10 @@ public sealed partial class MainWindow : Window
                     model.Mailboxes.Any(mailbox => mailbox.Id == scope.Folder && mailbox.Account == account &&
                         mailbox.Role == MailboxRole.Inbox)) ?? model.Scopes.FirstOrDefault(scope => scope.Account == account);
                 await model.RefreshAsync(false);
+                if (model.Accounts.FirstOrDefault(item => item.Id == account)?.ProviderKind is "Google" or "Microsoft")
+                {
+                    await model.SynchroniseAccountAsync(account);
+                }
             }
         });
         window.Closed += (_, _) => Track(async () =>
@@ -529,7 +534,8 @@ public sealed partial class MainWindow : Window
         Guid? id = null,
         bool conflict = false,
         Guid? predecessor = null,
-        AccountId? targetAccount = null
+        AccountId? targetAccount = null,
+        bool held = false
     )
     {
         MainWindowViewModel? model = DataContext as MainWindowViewModel;
@@ -566,7 +572,7 @@ public sealed partial class MainWindow : Window
         }
 
         ComposeContent content = activation ?? new ComposeContent(
-            account.Identity?.Sender ?? account.Outgoing.Username,
+                account.Identity?.Sender ?? account.GoogleBinding?.Address ?? account.Outgoing?.Username ?? account.Address,
             [],
             "",
             "",
@@ -596,7 +602,7 @@ public sealed partial class MainWindow : Window
 
         content = content with
         {
-            Sender = account.Identity?.Sender ?? account.Outgoing.Username
+            Sender = account.Identity?.Sender ?? account.GoogleBinding?.Address ?? account.Outgoing?.Username ?? account.Address
         };
 
         ComposeWindow window = new ComposeWindow(
@@ -607,7 +613,8 @@ public sealed partial class MainWindow : Window
             conflict,
             predecessor,
             kind == "Forward" ? model?.Selected : null,
-            kind == "Forward" && model is not null ? model.Attachments.ToImmutableArray() : []
+            kind == "Forward" && model is not null ? model.Attachments.ToImmutableArray() : [],
+            held
         );
         window.FontFamily = FontFamily;
         window.FontSize = FontSize;
@@ -628,6 +635,10 @@ public sealed partial class MainWindow : Window
             if (child is AccountSetupWindow setup)
             {
                 setup.CancelSetup();
+            }
+            if (child is ProviderAccountWindow connection)
+            {
+                connection.CancelConnection();
             }
         }
 
@@ -765,7 +776,9 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    public async Task CommandsAsync(AccountId account)
+    public async Task CommandsAsync(
+        AccountId account
+    )
     {
         if (_application is null || DataContext is not MainWindowViewModel model ||
             !model.Accounts.Any(item => item.Id == account))
@@ -774,40 +787,49 @@ public sealed partial class MainWindow : Window
         }
 
         ListBox list = new ListBox
+
         {
             ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token),
             Name = "PendingCommands",
             MaxHeight = 280,
             ItemTemplate = new FuncDataTemplate<CommandSnapshot>((command, _) => command is null ? null : new TextBlock
+
             {
                 Text = command.Subject + "\n" + Strings.Describe(command.Entry.Intent.Kind) + " — " +
-                                            Strings.Describe(command.Entry.State) + "\n" + Strings.Describe(command.Entry.Evidence),
+                                                        Strings.Describe(command.Entry.State) + "\n" + Strings.Describe(command.Entry.Evidence),
                 TextWrapping = TextWrapping.Wrap
             })
         };
         Avalonia.Automation.AutomationProperties.SetName(list, Strings.Commands);
         StackPanel panel = new StackPanel
+
         {
             Margin = new Thickness(12),
             Spacing = 8
         };
         panel.Children.Add(new TextBlock
+
         {
             Text = Strings.Get("CommandReviewHint"),
             TextWrapping = TextWrapping.Wrap
         });
         panel.Children.Add(list);
         CheckBox consent = new CheckBox
+
         {
             Content = Strings.Get("CommandRetryConsent"),
             IsChecked = false
         };
         list.SelectionChanged += (_, _) => consent.IsChecked = false;
         panel.Children.Add(consent);
-        StackPanel footer = new StackPanel { Spacing = 8 };
+        StackPanel footer = new StackPanel
+        {
+            Spacing = 8
+        };
         WrapPanel actions = new WrapPanel();
         footer.Children.Add(actions);
         TextBlock status = new TextBlock
+
         {
             TextWrapping = TextWrapping.Wrap
         };
@@ -840,26 +862,30 @@ public sealed partial class MainWindow : Window
         Control sends = await SendIssuesAsync(account);
         ListBox sendList = ((StackPanel)sends).Children.OfType<ListBox>().Single();
         TabControl tabs = new TabControl
+
         {
             Margin = new Thickness(24, 0, 24, 16),
             ItemsPanel = new FuncTemplate<Panel?>(() => new WrapPanel()),
             ItemsSource = new[]
             {
                 new TabItem
-                {
-                    Header = Strings.Get("MailNeedingAttention"),
-                    Content = FormControls.Page("", sends)
-                },
+
+{
+Header = Strings.Get("MailNeedingAttention"),
+Content = FormControls.Page("", sends)
+},
                 new TabItem
-                {
-                    Header = Strings.Get("FolderChanges"),
-                    Content = FormControls.Page("", panel, footer)
-                }
+
+{
+Header = Strings.Get("FolderChanges"),
+Content = FormControls.Page("", panel, footer)
+}
             },
             SelectedIndex = sendList.ItemCount > 0 ? 0 : 1
         };
         DockPanel page = new DockPanel();
         TextBlock heading = new TextBlock
+
         {
             Text = Strings.Commands,
             FontWeight = FontWeight.SemiBold,
@@ -870,6 +896,7 @@ public sealed partial class MainWindow : Window
         page.Children.Add(heading);
         page.Children.Add(tabs);
         ShowWindow(new Window
+
         {
             Title = Strings.Commands,
             Width = 760,
@@ -882,7 +909,9 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    public async Task DraftsAsync(AccountId account)
+    public async Task DraftsAsync(
+        AccountId account
+    )
     {
         if (_application is null || DataContext is not MainWindowViewModel model || !model.Accounts.Any(item => item.Id == account))
         {
@@ -891,25 +920,41 @@ public sealed partial class MainWindow : Window
 
         ImmutableArray<DraftSnapshot> drafts = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
         ListBox list = new ListBox
+
         {
             ItemsSource = drafts,
             ItemTemplate = new FuncDataTemplate<DraftSnapshot>((draft, _) => draft is null ? null : new TextBlock
+
             {
                 Text = Strings.Get("DraftRevision") + " " + draft.Revision + " — " +
-                                            Strings.Get(draft.Conflict || draft.Held ? "Conflict" : "Saved"),
+                                                        Strings.Get(draft.Conflict ? "Conflict" : draft.Held ? "DraftHeld" : "Saved"),
                 TextWrapping = TextWrapping.Wrap
             })
         };
         StackPanel panel = new StackPanel
+
         {
             Margin = new Thickness(12),
             Spacing = 8
         };
         panel.Children.Add(list);
-        StackPanel footer = new StackPanel { Spacing = 8 };
+        if (model.Accounts.Any(item => item.Id == account && item.ProviderKind == "Google"))
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Name = "GmailDraftHoldHint",
+                Text = Strings.Get("GmailDraftHoldHint"),
+                TextWrapping = TextWrapping.Wrap
+            });
+        }
+        StackPanel footer = new StackPanel
+        {
+            Spacing = 8
+        };
         WrapPanel actions = new WrapPanel();
         footer.Children.Add(actions);
         TextBlock status = new TextBlock
+
         {
             TextWrapping = TextWrapping.Wrap
         };
@@ -930,8 +975,9 @@ public sealed partial class MainWindow : Window
                     OpenCompose(
                         activation: content.Value,
                         id: draft.Id,
-                        conflict: draft.Conflict || draft.Held,
-                        targetAccount: draft.Account
+                        conflict: draft.Conflict,
+                        targetAccount: draft.Account,
+                        held: draft.Held
                     );
                 }
             }
@@ -942,6 +988,10 @@ public sealed partial class MainWindow : Window
             {
                 status.Text = Strings.Describe(await _application.PushDraftAsync(draft.Account, draft.Id, _lifetime.Token));
                 list.ItemsSource = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
+                if (DataContext is MainWindowViewModel model && model.Accounts.Any(item => item.Id == account && item.ProviderKind == "Google"))
+                {
+                    status.Text += " " + Strings.Get("GmailDraftHoldHint");
+                }
             }
         }, status);
         FormControls.AddActionButton(actions, "ReviewVersions", async () =>
@@ -953,6 +1003,7 @@ public sealed partial class MainWindow : Window
         }, status);
         footer.Children.Add(status);
         Window window = new Window
+
         {
             Title = Strings.Drafts,
             Width = 760,
@@ -960,6 +1011,43 @@ public sealed partial class MainWindow : Window
             Content = FormControls.Page(Strings.Drafts, panel, footer)
         };
         ShowWindow(window);
+    }
+
+    public void OpenSettings(string section = "Appearance", AccountId? account = null)
+    {
+        if (DataContext is not MainWindowViewModel model)
+        {
+            return;
+        }
+        if (_settingsDialog is null)
+        {
+            SettingsWindow window = new SettingsWindow(
+                model,
+                _settings,
+                _appearance,
+                _identity,
+                _desktop,
+                ApplyAppearance,
+                selected => _setup is null ? Task.CompletedTask : CredentialsAsync(_setup, selected),
+                selected => { if (_management is not null) { RenameAccount(_management, selected); } },
+                selected => { if (_management is not null) { RemoveAccount(_management, selected); } },
+                _management is not null,
+                _setup is not null,
+                _updates
+            );
+            _settingsDialog = window;
+            window.Closed += (_, _) => _settingsDialog = null;
+            window.SelectSection(section, account ?? model.Scope?.Account);
+            ShowWindow(window);
+        }
+        else
+        {
+            if (account is not null || section != "Appearance")
+            {
+                _settingsDialog.SelectSection(section, account);
+            }
+            _settingsDialog.Activate();
+        }
     }
 
     private void MessagePointerPressed(object? sender, PointerPressedEventArgs args)
@@ -1042,23 +1130,28 @@ public sealed partial class MainWindow : Window
         return destination is not null && model.CanDropMessage(message, destination) ? destination : null;
     }
 
-    private async Task<Control> SendIssuesAsync(AccountId account)
+    private async Task<Control> SendIssuesAsync(
+        AccountId account
+    )
     {
         IMailApplication application = _application!;
         StackPanel panel = new StackPanel
+
         {
             Spacing = 12
         };
         ListBox list = new ListBox
+
         {
             Name = "SendIssues",
             MaxHeight = 240,
             ItemTemplate = new FuncDataTemplate<OutboxEntry>((entry, _) => entry is null ? null : new TextBlock
+
             {
                 Text = (string.IsNullOrWhiteSpace(entry.Submission.Subject) ? Strings.Get("NoSubject") : entry.Submission.Subject) +
-                    "\n" + string.Join("; ", entry.Submission.Recipients) + "\n" + Strings.Get("SendStatus." + entry.State) +
-                    (entry.Evidence is { Failure: not (Failure.None or Failure.NeedsReview) } evidence
-                        ? "\n" + Strings.Describe(evidence.Failure) : ""),
+                                "\n" + string.Join("; ", entry.Submission.Recipients) + "\n" + Strings.Get("SendStatus." + entry.State) +
+                                (entry.Evidence is { Failure: not (Failure.None or Failure.NeedsReview) } evidence
+                                    ? "\n" + Strings.Describe(evidence.Failure) : ""),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(8)
             })
@@ -1066,14 +1159,17 @@ public sealed partial class MainWindow : Window
         Avalonia.Automation.AutomationProperties.SetName(list, Strings.Get("MailNeedingAttention"));
         list.Classes.Add("mail");
         TextBlock status = new TextBlock
+
         {
             TextWrapping = TextWrapping.Wrap
         };
         StackPanel details = new StackPanel
+
         {
             Spacing = 8
         };
         TextBlock empty = new TextBlock
+
         {
             Text = Strings.Get("NoSendIssues"),
             TextWrapping = TextWrapping.Wrap
@@ -1113,6 +1209,7 @@ public sealed partial class MainWindow : Window
             else if (entry.State is SubmissionState.Accepted or SubmissionState.SentCopyPending)
             {
                 CheckBox consent = new CheckBox
+
                 {
                     Content = Strings.Get("SentCopyConsent")
                 };
@@ -1139,13 +1236,15 @@ public sealed partial class MainWindow : Window
                 if (entry.Evidence is not null)
                 {
                     details.Children.Add(new TextBlock
+
                     {
                         Text = string.Join("\n", entry.Evidence.Recipients.Select(recipient =>
-                            recipient.Address + " — " + Strings.Describe(recipient.State))),
+                                                    recipient.Address + " — " + Strings.Describe(recipient.State))),
                         TextWrapping = TextWrapping.Wrap
                     });
                 }
                 CheckBox consent = new CheckBox
+
                 {
                     Content = Strings.Get("ResendConsent"),
                     IsVisible = uncertain
@@ -1185,7 +1284,10 @@ public sealed partial class MainWindow : Window
         return panel;
     }
 
-    private async Task CredentialsAsync(IAccountSetup setup, AccountId selectedAccount)
+    private async Task CredentialsAsync(
+        IAccountSetup setup,
+        AccountId selectedAccount
+    )
     {
         if (_application is null)
         {
@@ -1193,14 +1295,34 @@ public sealed partial class MainWindow : Window
         }
 
         ImmutableArray<AccountConfiguration> accounts = await _application.Catalog.AccountsAsync(_lifetime.Token);
+        AccountConfiguration? selectedProvider = accounts.FirstOrDefault(item => item.Id == selectedAccount && item.ProviderKind != "Imap");
+        if (selectedProvider is not null)
+        {
+            if (setup is not IProviderAccounts providers)
+            {
+                (DataContext as MainWindowViewModel)?.ReportReadingResult(Failure.Unsupported);
+                return;
+            }
+            ShowWindow(new ProviderAccountWindow(providers, selectedProvider, async () =>
+            {
+                if (DataContext is MainWindowViewModel model)
+                {
+                    await model.InitialiseAsync();
+                }
+            }));
+            return;
+        }
+        accounts = accounts.Where(item => item.ProviderKind == "Imap").ToImmutableArray();
         CancellationTokenSource credentialsLifetime = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         CancellationToken credentialsToken = credentialsLifetime.Token;
         StackPanel form = new StackPanel
+
         {
             Margin = new Thickness(24),
             Spacing = 12
         };
         Window window = new Window
+
         {
             Title = Strings.Credentials,
             Width = 520,
@@ -1208,21 +1330,25 @@ public sealed partial class MainWindow : Window
             FontFamily = FontFamily,
             FontSize = FontSize,
             Content = new ScrollViewer
+
             {
                 Content = form
             }
         };
         ComboBox account = new ComboBox
+
         {
             ItemsSource = accounts,
             SelectedItem = accounts.FirstOrDefault(item => item.Id == selectedAccount),
             ItemTemplate = new FuncDataTemplate<AccountConfiguration>((item, _) => item is null ? null : new TextBlock
+
             {
                 Text = item.Name
             })
         };
         Avalonia.Automation.AutomationProperties.SetName(account, Strings.Get("Account"));
         form.Children.Add(new TextBlock
+
         {
             Text = Strings.Get("CredentialsHint"),
             TextWrapping = TextWrapping.Wrap
@@ -1234,12 +1360,13 @@ public sealed partial class MainWindow : Window
             credentials.Clear();
             if (account.SelectedItem is AccountConfiguration selected)
             {
-                credentials.Shared.IsChecked = selected.Incoming.Username == selected.Outgoing.Username;
+                credentials.Shared.IsChecked = selected.Incoming?.Username == selected.Outgoing?.Username;
             }
         }
         account.SelectionChanged += (_, _) => SelectAccount();
         SelectAccount();
         TextBlock status = new TextBlock
+
         {
             TextWrapping = TextWrapping.Wrap
         };
@@ -1280,43 +1407,6 @@ public sealed partial class MainWindow : Window
             credentialsLifetime.Dispose();
         };
         ShowWindow(window);
-    }
-
-    public void OpenSettings(string section = "Appearance", AccountId? account = null)
-    {
-        if (DataContext is not MainWindowViewModel model)
-        {
-            return;
-        }
-        if (_settingsDialog is null)
-        {
-            SettingsWindow window = new SettingsWindow(
-                model,
-                _settings,
-                _appearance,
-                _identity,
-                _desktop,
-                ApplyAppearance,
-                selected => _setup is null ? Task.CompletedTask : CredentialsAsync(_setup, selected),
-                selected => { if (_management is not null) { RenameAccount(_management, selected); } },
-                selected => { if (_management is not null) { RemoveAccount(_management, selected); } },
-                _management is not null,
-                _setup is not null,
-                _updates
-            );
-            _settingsDialog = window;
-            window.Closed += (_, _) => _settingsDialog = null;
-            window.SelectSection(section, account ?? model.Scope?.Account);
-            ShowWindow(window);
-        }
-        else
-        {
-            if (account is not null || section != "Appearance")
-            {
-                _settingsDialog.SelectSection(section, account);
-            }
-            _settingsDialog.Activate();
-        }
     }
 
     private void ShowProfileFailure()
@@ -1620,6 +1710,10 @@ public sealed partial class MainWindow : Window
 
     private void AccountHeaderPointerPressed(object? sender, PointerPressedEventArgs args)
     {
+        if (args.Source is Visual source && source.FindAncestorOfType<ToggleButton>(includeSelf: true) is not null)
+        {
+            return;
+        }
         if (sender is not Grid { TemplatedParent: TreeViewItem node, DataContext: NavigationItemViewModel { IsAccount: true } } header ||
             !args.GetCurrentPoint(header).Properties.IsLeftButtonPressed)
         {
@@ -1700,40 +1794,49 @@ public sealed partial class MainWindow : Window
         name.SelectAll();
     }
 
-    private void RemoveAccount(IAccountManagement management, AccountId? selected = null)
+    private void RemoveAccount(
+        IAccountManagement management,
+        AccountId? selected = null
+    )
     {
         if (DataContext is not MainWindowViewModel model || model.Accounts.Count == 0)
         {
             return;
         }
         StackPanel panel = new StackPanel
+
         {
             Spacing = 12
         };
         ComboBox accounts = new ComboBox
+
         {
             Name = "RemoveAccountSelection",
             ItemsSource = model.Accounts.ToArray(),
             ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => account is null ? null : new TextBlock
+
             {
-                Text = account.Name + " — " + account.Incoming.Host
+                Text = account.Name + " — " + account.Address
             }),
             SelectedItem = model.Accounts.FirstOrDefault(account => account.Id == (selected ?? model.Scope?.Account))
         };
         Avalonia.Automation.AutomationProperties.SetName(accounts, Strings.RemoveAccount);
         panel.Children.Add(accounts);
         panel.Children.Add(new TextBlock
+
         {
             Text = Strings.Get("RemoveAccountHint"),
             TextWrapping = TextWrapping.Wrap
         });
         TextBlock status = new TextBlock
+
         {
             Name = "RemoveAccountStatus",
             TextWrapping = TextWrapping.Wrap
         };
         Avalonia.Automation.AutomationProperties.SetLiveSetting(status, Avalonia.Automation.AutomationLiveSetting.Polite);
         Window window = new Window
+
         {
             Title = Strings.RemoveAccount,
             Width = 560,

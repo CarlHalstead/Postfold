@@ -314,7 +314,7 @@ public sealed class ClientTests
     {
         // Arrange
         IMailApplication application = Application();
-        application.ReadAsync(Arg.Any<MessageSnapshot>(), false, Arg.Any<CancellationToken>()).Returns(missing ?
+        application.ReadAsync(Arg.Any<MessageSnapshot>(), Arg.Any<bool>(), Arg.Any<CancellationToken>()).Returns(missing ?
             Outcome<MimeSnapshot>.Fail(Failure.NotFound) : Outcome<MimeSnapshot>.Success(
                 new MimeSnapshot(
     "Original",
@@ -767,8 +767,8 @@ public sealed class ClientTests
         MessageSnapshot first = Message(1, "First");
         MessageSnapshot second = Message(2, "Second");
         TaskCompletionSource<Outcome<MimeSnapshot>> late = new TaskCompletionSource<Outcome<MimeSnapshot>>();
-        application.ReadAsync(first, false, Arg.Any<CancellationToken>()).Returns(late.Task);
-        application.ReadAsync(second, false, Arg.Any<CancellationToken>()).Returns(
+        application.ReadAsync(first, Arg.Any<bool>(), Arg.Any<CancellationToken>()).Returns(late.Task);
+        application.ReadAsync(second, Arg.Any<bool>(), Arg.Any<CancellationToken>()).Returns(
             Outcome<MimeSnapshot>.Success(new MimeSnapshot("Second", "", null, "current", null, []))
         );
         MainWindowViewModel model = new MainWindowViewModel(application);
@@ -861,7 +861,7 @@ public sealed class ClientTests
     {
         // Arrange
         IMailApplication application = Application();
-        application.ReadAsync(Arg.Any<MessageSnapshot>(), false, Arg.Any<CancellationToken>()).Returns(
+        application.ReadAsync(Arg.Any<MessageSnapshot>(), Arg.Any<bool>(), Arg.Any<CancellationToken>()).Returns(
             Outcome<MimeSnapshot>.Success(new MimeSnapshot(
                 "Subject",
                 "Sender",
