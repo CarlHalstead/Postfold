@@ -41,7 +41,7 @@ public sealed class UpdateShutdownTests
             Failure ready = await session.PrepareUpdateShutdownAsync(CancellationToken.None);
 
             // Assert
-            Assert.That(ready, Is.EqualTo(Failure.None));
+            Assert.That(ready, Is.EqualTo(Failure.None), ((MainWindowViewModel)session.Window.DataContext!).Status);
             Assert.That(session.Window.IsEnabled, Is.False);
             Assert.That(File.Exists(database), Is.True);
             using FileStream exclusive = new FileStream(database + ".lease", FileMode.Open, FileAccess.ReadWrite, FileShare.None);

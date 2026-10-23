@@ -21,6 +21,28 @@ namespace Postfold.Engine.Tests.Tests.Storage;
 public sealed class StorageTests
 {
     [Test]
+    public async Task HasActiveSubmissionsAsync_WhenConnectionsOpenAndCloseConcurrently_ToleratesWalFileRemoval()
+    {
+        // Arrange
+        await using SqliteProfile profile = await EngineFixture.OpenAsync(EngineFixture.DirectoryPath());
+        using CancellationTokenSource deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+        // Act
+        bool[][] results = await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
+        {
+            bool[] active = new bool[256];
+            for (int index = 0; index < active.Length; index++)
+            {
+                active[index] = await profile.HasActiveSubmissionsAsync(deadline.Token);
+            }
+            return active;
+        }));
+
+        // Assert
+        Assert.That(results.SelectMany(active => active), Is.All.False);
+    }
+
+    [Test]
     public async Task CommitAsync_WhenAccountIdentityAndHeaderOverlap_KeepsIndependentRows()
     {
         // Arrange

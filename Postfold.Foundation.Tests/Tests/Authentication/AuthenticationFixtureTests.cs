@@ -64,14 +64,15 @@ public sealed class AuthenticationFixtureTests
         // Arrange
         using CancellationTokenSource deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         using Socket listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-        Uri redirect = new Uri("http://127.0.0.1:" + ((IPEndPoint)listener.LocalEndPoint!).Port + "/");
+        IPEndPoint endpoint = AvailableEndpoint();
+        Uri redirect = new Uri("http://127.0.0.1:" + endpoint.Port + "/");
         Uri authorization = new Uri("https://fixture.test/?redirect_uri=" + Uri.EscapeDataString(redirect.AbsoluteUri) + "&state=synthetic-state");
         await using AuthenticationFixture fixture = new AuthenticationFixture();
 
         // Act
         Failure opened = await fixture.OpenAsync(authorization, deadline.Token);
         await fixture.CallbackRetrying.Task.WaitAsync(deadline.Token);
+        listener.Bind(endpoint);
         listener.Listen(1);
         using Socket connection = await listener.AcceptAsync(deadline.Token);
         using NetworkStream stream = new NetworkStream(connection);
@@ -95,9 +96,8 @@ public sealed class AuthenticationFixtureTests
         // Arrange
         using CancellationTokenSource deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         using CancellationTokenSource cancellation = new CancellationTokenSource();
-        using Socket listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-        Uri redirect = new Uri("http://127.0.0.1:" + ((IPEndPoint)listener.LocalEndPoint!).Port + "/");
+        IPEndPoint endpoint = AvailableEndpoint();
+        Uri redirect = new Uri("http://127.0.0.1:" + endpoint.Port + "/");
         Uri authorization = new Uri("https://fixture.test/?redirect_uri=" + Uri.EscapeDataString(redirect.AbsoluteUri) + "&state=synthetic-state");
         AuthenticationFixture fixture = new AuthenticationFixture();
         try
@@ -116,5 +116,14 @@ public sealed class AuthenticationFixtureTests
             await cancellation.CancelAsync();
             await Assert.ThatAsync(async () => await fixture.DisposeAsync(), Throws.InstanceOf<OperationCanceledException>());
         }
+    }
+
+    private static IPEndPoint AvailableEndpoint()
+    {
+        // A bound, non-listening socket can leave ConnectAsync pending on macOS.
+        // Release the reservation so the callback reaches a closed port before the listener starts.
+        using Socket reservation = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        reservation.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        return (IPEndPoint)reservation.LocalEndPoint!;
     }
 }

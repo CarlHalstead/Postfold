@@ -166,10 +166,18 @@ public sealed class BlobStore : IBlobStore
         string? current = Path.GetFullPath(path);
         while (current is not null)
         {
-            if ((File.Exists(current) || Directory.Exists(current)) &&
-                (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+            try
             {
-                throw new IOException("Profile paths cannot contain filesystem redirection.");
+                if ((File.Exists(current) || Directory.Exists(current)) &&
+                    (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new IOException("Profile paths cannot contain filesystem redirection.");
+                }
+            }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                // SQLite may remove a WAL or shared-memory file after the existence check.
+                // Missing entries are allowed; every remaining ancestor still needs validation.
             }
 
             current = Path.GetDirectoryName(current);
