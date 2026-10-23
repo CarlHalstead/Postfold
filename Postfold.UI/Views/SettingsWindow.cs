@@ -13,6 +13,7 @@ using Postfold.UI.Controls;
 using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -20,13 +21,11 @@ using System.Threading.Tasks;
 
 namespace Postfold.UI.Views;
 
-/// <summary>One settings surface; account actions always carry the explicitly selected account.</summary>
+/// <summary>One settings surface with account-scoped actions and sender identities.</summary>
 public sealed class SettingsWindow : Window
 {
     private readonly CancellationTokenSource _lifetime = new CancellationTokenSource();
-    private readonly ComboBox _accounts;
     private readonly TabControl _tabs;
-    private bool _refreshingAccounts;
 
     internal SettingsWindow(
         MainWindowViewModel model,
@@ -49,24 +48,6 @@ public sealed class SettingsWindow : Window
         MinWidth = 480;
         MinHeight = 480;
         DockPanel root = new DockPanel();
-        _accounts = new ComboBox
-
-        {
-            Name = "SettingsAccountSelection",
-            ItemsSource = model.Accounts.ToArray(),
-            PlaceholderText = Strings.Get("ChooseAccount"),
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-            Margin = new Thickness(24, 0, 24, 16),
-            ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => new TextBlock
-
-            {
-                Text = account?.Name ?? Strings.Get("ChooseAccount"),
-                TextTrimming = TextTrimming.CharacterEllipsis
-            })
-        };
-        AutomationProperties.SetName(_accounts, Strings.Get("ChooseAccount"));
-        DockPanel.SetDock(_accounts, Dock.Top);
-        root.Children.Add(_accounts);
         _tabs = new TabControl
 
         {
@@ -85,17 +66,9 @@ public sealed class SettingsWindow : Window
             Section("Desktop", Desktop()),
             Section("Updates", Updates())
         };
-        _tabs.SelectionChanged += (_, _) => _accounts.IsVisible = _tabs.SelectedIndex is 1 or 2;
-        _accounts.IsVisible = false;
+
         root.Children.Add(_tabs);
         Content = root;
-        _accounts.SelectionChanged += (_, _) =>
-        {
-            if (!_refreshingAccounts)
-            {
-                AccountSelectionChanged?.Invoke();
-            }
-        };
         void RefreshAccounts(
             object? sender,
             System.ComponentModel.PropertyChangedEventArgs args
@@ -105,18 +78,7 @@ public sealed class SettingsWindow : Window
             {
                 return;
             }
-            AccountId? selected = (_accounts.SelectedItem as AccountConfiguration)?.Id;
-            _refreshingAccounts = true;
-            try
-            {
-                _accounts.ItemsSource = model.Accounts.ToArray();
-                _accounts.SelectedItem = model.Accounts.FirstOrDefault(item => item.Id == selected);
-            }
-            finally
-            {
-                _refreshingAccounts = false;
-            }
-            AccountSelectionChanged?.Invoke();
+            AccountCatalogChanged?.Invoke();
         }
         model.PropertyChanged += RefreshAccounts;
         Closed += (_, _) =>
@@ -187,106 +149,105 @@ public sealed class SettingsWindow : Window
         Control Accounts()
         {
             StackPanel form = Form();
-            TextBlock hint = new TextBlock
+            void Refresh()
             {
-                Text = Strings.Get("ChooseAccount"),
-                TextWrapping = TextWrapping.Wrap
-            };
-            form.Children.Add(hint);
-            TextBlock status = Status();
-            Button restore = FormControls.AddActionButton(form, "Credentials", async () =>
-            {
-                if (_accounts.SelectedItem is AccountConfiguration account)
+                form.Children.Clear();
+                foreach (AccountConfiguration account in model.Accounts)
                 {
-                    await credentials(account.Id);
+                    Grid row = new Grid
+                    {
+                        ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
+                        ColumnSpacing = 8
+                    };
+                    TextBlock address = new TextBlock
+                    {
+                        Text = account.Address,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+                    };
+                    ToolTip.SetTip(address, account.Name + "\n" + account.Address);
+                    row.Children.Add(address);
+                    TextBlock status = Status();
+                    string connection = account.ProviderKind == "Imap" ? "Credentials" : "ProviderConnection";
+                    Button restore = FormControls.AddActionButton(row, connection, () => credentials(account.Id), status);
+                    Button renameButton = FormControls.AddActionButton(row, "RenameAccount", () =>
+                    {
+                        rename(account.Id);
+                        return Task.CompletedTask;
+                    }, status);
+                    Button removeButton = FormControls.AddActionButton(row, "RemoveAccount", () =>
+                    {
+                        remove(account.Id);
+                        return Task.CompletedTask;
+                    }, status);
+                    IconAction(restore, MailIcons.Refresh, connection, account.Address, 1, canRestoreCredentials);
+                    IconAction(renameButton, MailIcons.Rename, "RenameAccount", account.Address, 2, canManage);
+                    IconAction(removeButton, MailIcons.Close, "RemoveAccount", account.Address, 3, canManage);
+                    form.Children.Add(row);
+                    form.Children.Add(status);
                 }
-            }, status);
-            Button renameButton = FormControls.AddActionButton(form, "RenameAccount", () =>
-            {
-                if (_accounts.SelectedItem is AccountConfiguration account)
-                {
-                    rename(account.Id);
-                }
-                return Task.CompletedTask;
-            }, status);
-            Button removeButton = FormControls.AddActionButton(form, "RemoveAccount", () =>
-            {
-                if (_accounts.SelectedItem is AccountConfiguration account)
-                {
-                    remove(account.Id);
-                }
-                return Task.CompletedTask;
-            }, status);
-            void Select()
-            {
-                bool selected = _accounts.SelectedItem is AccountConfiguration;
-                restore.IsEnabled = selected && canRestoreCredentials;
-                restore.Content = new TextBlock
-
-                {
-                    Text = Strings.Get(_accounts.SelectedItem is AccountConfiguration { ProviderKind: not "Imap" } ? "ProviderConnection" : "Credentials"),
-                    TextWrapping = TextWrapping.Wrap
-                };
-                Avalonia.Automation.AutomationProperties.SetName(
-                    restore,
-                    Strings.Get(_accounts.SelectedItem is AccountConfiguration { ProviderKind: not "Imap" } ? "ProviderConnection" : "Credentials")
-                );
-                renameButton.IsEnabled = selected && canManage;
-                removeButton.IsEnabled = selected && canManage;
-                hint.Text = selected ? ((AccountConfiguration)_accounts.SelectedItem!).Name : Strings.Get("ChooseAccount");
             }
-            AccountSelectionChanged += Select;
-            Select();
-            form.Children.Add(status);
+            AccountCatalogChanged += Refresh;
+            Refresh();
             return FormControls.Page("", form);
         }
 
         Control Identity()
         {
             StackPanel form = Form();
-            StackPanel footer = Footer();
-            TextBox sender = FormControls.AddField(form, "Sender");
-            sender.MaxLength = 320;
-            form.Children.Add(new TextBlock
+            Dictionary<AccountId, (StackPanel Form, TextBlock Label)> rows = new Dictionary<AccountId, (StackPanel, TextBlock)>();
+            void Refresh()
             {
-                Text = Strings.Get("IdentityHint"),
-                TextWrapping = TextWrapping.Wrap
-            });
-            TextBlock status = Status();
-            AccountId? editing = null;
-            Button save = FormControls.AddActionButton(footer, "SaveSettings", async () =>
-            {
-                if (identity is null || _accounts.SelectedItem is not AccountConfiguration account)
+                foreach (AccountId removed in rows.Keys.Where(id => model.Accounts.All(account => account.Id != id)).ToArray())
                 {
-                    return;
+                    rows.Remove(removed);
                 }
-                Failure result = await identity.SaveAsync(account.Id, new ComposeIdentity(sender.Text ?? ""), _lifetime.Token);
-                if (result == Failure.None)
+                form.Children.Clear();
+                foreach (AccountConfiguration account in model.Accounts)
                 {
-                    editing = null;
-                    await model.InitialiseAsync();
+                    if (!rows.TryGetValue(account.Id, out (StackPanel Form, TextBlock Label) row))
+                    {
+                        StackPanel fields = new StackPanel { Spacing = 12 };
+                        TextBlock label = new TextBlock
+                        {
+                            TextWrapping = TextWrapping.Wrap,
+                            FontWeight = FontWeight.SemiBold
+                        };
+                        fields.Children.Add(label);
+                        TextBox sender = FormControls.AddField(fields, "Sender", account.Identity?.Sender ?? "");
+                        sender.MaxLength = 320;
+                        AutomationProperties.SetName(sender, Strings.Get("Sender") + ": " + account.Address);
+                        fields.Children.Add(new TextBlock
+                        {
+                            Text = Strings.Get("IdentityHint"),
+                            TextWrapping = TextWrapping.Wrap
+                        });
+                        TextBlock status = Status();
+                        FormControls.AddActionButton(fields, "SaveSettings", async () =>
+                        {
+                            if (identity is null || model.Accounts.All(current => current.Id != account.Id))
+                            {
+                                return;
+                            }
+                            Failure result = await identity.SaveAsync(account.Id, new ComposeIdentity(sender.Text ?? ""), _lifetime.Token);
+                            if (result == Failure.None)
+                            {
+                                await model.InitialiseAsync();
+                            }
+                            status.Text = Strings.Describe(result);
+                        }, status);
+                        fields.Children.Add(status);
+                        fields.IsEnabled = identity is not null;
+                        row = (fields, label);
+                        rows.Add(account.Id, row);
+                    }
+                    row.Label.Text = account.Address;
+                    form.Children.Add(row.Form);
                 }
-                if ((_accounts.SelectedItem as AccountConfiguration)?.Id == account.Id)
-                {
-                    status.Text = Strings.Describe(result);
-                }
-            }, status);
-            void Select()
-            {
-                AccountConfiguration? account = _accounts.SelectedItem as AccountConfiguration;
-                if (editing != account?.Id)
-                {
-                    sender.Text = account?.Identity?.Sender ?? "";
-                    editing = account?.Id;
-                    status.Text = "";
-                }
-                form.IsEnabled = account is not null && identity is not null;
-                save.IsEnabled = form.IsEnabled;
             }
-            AccountSelectionChanged += Select;
-            Select();
-            footer.Children.Add(status);
-            return FormControls.Page("", form, footer);
+            AccountCatalogChanged += Refresh;
+            Refresh();
+            return FormControls.Page("", form);
         }
 
         Control Updates()
@@ -375,11 +336,10 @@ public sealed class SettingsWindow : Window
             }
         }
     }
-    private event Action? AccountSelectionChanged;
+    private event Action? AccountCatalogChanged;
 
     public void SelectSection(string section, AccountId? account = null)
     {
-        _accounts.SelectedItem = _accounts.Items.OfType<AccountConfiguration>().FirstOrDefault(item => item.Id == account);
         _tabs.SelectedIndex = section switch
         {
             "Accounts" => 1,
@@ -388,7 +348,27 @@ public sealed class SettingsWindow : Window
             "Updates" => 4,
             _ => 0
         };
-        _accounts.IsVisible = _tabs.SelectedIndex is 1 or 2;
+    }
+
+    private static void IconAction(
+        Button button,
+        Geometry icon,
+        string key,
+        string address,
+        int column,
+        bool enabled
+    )
+    {
+        button.Content = FormControls.Icon(icon);
+        button.Classes.Add("quiet");
+        button.Margin = default;
+        button.MinWidth = 40;
+        button.MinHeight = 40;
+        button.IsEnabled = enabled;
+        string label = Strings.Get(key) + ": " + address;
+        AutomationProperties.SetName(button, label);
+        ToolTip.SetTip(button, label);
+        Grid.SetColumn(button, column);
     }
 
     private static TabItem Section(string key, Control content)

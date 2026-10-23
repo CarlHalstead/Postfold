@@ -662,13 +662,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         Status = result == Failure.None ? "" : Strings.Describe(result);
     }
 
-    public Task CheckAttachmentsAsync()
-    {
-        Task task = CheckAttachmentsCoreAsync();
-        _reads.RemoveAll(previous => previous.IsCompletedSuccessfully || previous.IsCanceled);
-        _reads.Add(task);
-        return task;
-    }
+
 
     /// <summary>Re-evaluates local date headings after time-zone or midnight changes without fetching mail.</summary>
     public void RegroupMessages()
@@ -905,53 +899,6 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         }
 
         return MutateAsync(MutationKind.Move, destinations[0].RemoteKey);
-    }
-
-    private async Task CheckAttachmentsCoreAsync()
-    {
-        MessageSnapshot? message = Selected;
-        if (_application is null || message is null)
-        {
-            return;
-        }
-
-        try
-        {
-            Outcome<ImmutableArray<AttachmentSnapshot>> result = await _application.ReadAttachmentsAsync(
-                message,
-                true,
-                _reading?.Token ?? _lifetime.Token
-            );
-            if (Selected?.Account != message.Account || Selected.Id != message.Id || Selected.Provider != message.Provider)
-            {
-                return;
-            }
-
-            if (!result.IsSuccess)
-            {
-                Status = Strings.Describe(result.Failure);
-                return;
-            }
-
-            Attachments.Clear();
-            foreach (AttachmentSnapshot attachment in result.Value)
-            {
-                Attachments.Add(attachment);
-            }
-
-            Status = Strings.Get("AttachmentDetails");
-            NotifyReader();
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (System.IO.IOException)
-        {
-            if (Selected?.Account == message.Account && Selected.Id == message.Id && Selected.Provider == message.Provider)
-            {
-                Status = Strings.Describe(Failure.Unavailable);
-            }
-        }
     }
 
     private bool CanMoveRole(

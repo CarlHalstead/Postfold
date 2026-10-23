@@ -333,28 +333,7 @@ public sealed partial class MainWindow : Window
         this.FindControl<Button>("SettingsButton")!.IsEnabled = true;
         Wire("WorkButton", () => { OpenWorkMenu(); return Task.CompletedTask; });
         Wire("DetailsButton", () => { ShowMessageDetails(); return Task.CompletedTask; });
-        Wire("CheckEmptyAttachmentsButton", async () =>
-        {
-            if (DataContext is MainWindowViewModel model)
-            {
-                await model.CheckAttachmentsAsync();
-            }
-        });
-        Wire("CheckAttachmentsButton", async () =>
-        {
-            if (DataContext is MainWindowViewModel model)
-            {
-                await model.CheckAttachmentsAsync();
-            }
-        });
         Wire("MoveButton", () => { Move(); return Task.CompletedTask; });
-        Wire("SaveAttachmentButton", SaveAttachmentAsync);
-        this.FindControl<Button>("SaveAttachmentButton")!.IsEnabled = false;
-        this.FindControl<ListBox>("AttachmentList")!.SelectionChanged += (_, _) =>
-        {
-            this.FindControl<Button>("SaveAttachmentButton")!.IsEnabled =
-                this.FindControl<ListBox>("AttachmentList")!.SelectedItem is AttachmentSnapshot;
-        };
         this.FindControl<ListBox>("AttachmentList")!.DoubleTapped += (_, _) => Track(SaveAttachmentAsync);
         this.FindControl<ListBox>("AttachmentList")!.KeyDown += (_, args) =>
         {
@@ -1505,6 +1484,15 @@ Content = FormControls.Page("", panel, footer)
         });
     }
 
+    private void SaveAttachmentClicked(object? sender, RoutedEventArgs args)
+    {
+        if (sender is MenuItem { DataContext: AttachmentSnapshot attachment })
+        {
+            this.FindControl<ListBox>("AttachmentList")!.SelectedItem = attachment;
+            Track(SaveAttachmentAsync);
+        }
+    }
+
     private void OpenMenuClicked(object? sender, RoutedEventArgs args)
     {
         if (sender is Button button)
@@ -1526,16 +1514,6 @@ Content = FormControls.Page("", panel, footer)
         {
             OpenSettings("Accounts", item.Scope.Account);
         }
-    }
-
-    private void AllFilterClicked(object? sender, RoutedEventArgs args)
-    {
-        Track(() => SelectFilterAsync(false));
-    }
-
-    private void UnreadFilterClicked(object? sender, RoutedEventArgs args)
-    {
-        Track(() => SelectFilterAsync(!(DataContext as MainWindowViewModel)?.UnreadOnly ?? true));
     }
 
     private Task SelectFilterAsync(bool unread)
@@ -1739,7 +1717,11 @@ Content = FormControls.Page("", panel, footer)
     private void AdjustPaneToolbars()
     {
         DockPanel pane = this.FindControl<DockPanel>("MessagePane")!;
-        this.FindControl<StackPanel>("ListFilters")!.IsVisible = pane.Bounds.Width >= 420 * FontSize / 16;
+        StackPanel filters = this.FindControl<StackPanel>("ListFilters")!;
+        bool stacked = pane.Bounds.Width < 420 * FontSize / 16;
+        Grid.SetRow(filters, stacked ? 1 : 0);
+        Grid.SetColumn(filters, stacked ? 0 : 1);
+        Grid.SetColumnSpan(filters, stacked ? 3 : 1);
     }
 
     private void AccountHeaderPointerPressed(object? sender, PointerPressedEventArgs args)

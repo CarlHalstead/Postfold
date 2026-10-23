@@ -1,6 +1,9 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
+using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Avalonia.VisualTree;
 using NSubstitute;
 using NUnit.Framework;
 using Postfold.Core.Enums;
@@ -147,6 +150,48 @@ public sealed class AttachmentSaveWindowTests
 
             // Assert
             await file.DidNotReceive().OpenWriteAsync();
+            await application.DidNotReceiveWithAnyArgs().SaveAttachmentAsync(default!, default!, default!, default);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task AttachmentMenu_WhenSavingAnotherCard_UsesThatCardAndKeepsHighlightInsideItsBounds()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        model.Selected = Message(1);
+        AttachmentSnapshot second = new AttachmentSnapshot("2", "second.txt", "text/plain", 2);
+        application.ReadAsync(Arg.Any<MessageSnapshot>(), false, Arg.Any<CancellationToken>()).Returns(
+            Outcome<MimeSnapshot>.Success(new MimeSnapshot("Synthetic", "sender", null, "Body", null,
+                [new AttachmentSnapshot("1", "first.txt", "text/plain", 1), second])));
+        await model.ReadSelectedAsync(false);
+        MainWindow window = new MainWindow { DataContext = model };
+        window.Show();
+        window.UpdateLayout();
+        ListBox list = window.FindControl<ListBox>("AttachmentList")!;
+        list.SelectedIndex = 0;
+        try
+        {
+            // Act
+            ListBoxItem item = (ListBoxItem)list.ContainerFromIndex(1)!;
+            item.ContextMenu!.Open(item);
+            MenuItem save = item.ContextMenu.Items.OfType<MenuItem>().Single();
+            save.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            item.ContextMenu.Close();
+            await window.WaitForActionsAsync();
+
+            // Assert
+            Assert.That(list.SelectedItem, Is.SameAs(second));
+            Border card = item.GetVisualDescendants().OfType<Border>().Single(border => border.Classes.Contains("card"));
+            Assert.That(item.Bounds.Size, Is.EqualTo(card.Bounds.Size));
+            Assert.That(item.Margin, Is.EqualTo(new Thickness(0, 0, 12, 12)));
+            Assert.That(card.Margin, Is.EqualTo(default(Thickness)));
+            Assert.That(window.FindControl<Button>("SaveAttachmentButton"), Is.Null);
             await application.DidNotReceiveWithAnyArgs().SaveAttachmentAsync(default!, default!, default!, default);
         }
         finally

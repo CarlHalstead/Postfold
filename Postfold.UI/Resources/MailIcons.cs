@@ -8,6 +8,8 @@ public static class MailIcons
 {
     public static readonly Geometry Back = Geometry.Parse("M 7,2 L 1,8 L 7,14 M 1,8 L 15,8");
     public static readonly Geometry Add = Geometry.Parse("M 8,1 L 8,15 M 1,8 L 15,8");
+    public static readonly Geometry Refresh = Geometry.Parse("M 14,6 A 6,6 0 1 0 14,10 M 14,1 L 14,6 L 9,6");
+    public static readonly Geometry Rename = Geometry.Parse("M 2,10 L 11,1 L 15,5 L 6,14 L 1,15 Z M 9,3 L 13,7");
     public static readonly Geometry Close = Geometry.Parse("M 3,3 L 13,13 M 13,3 L 3,13");
     public static readonly Geometry Account = Geometry.Parse("M 8,1 A 7,7 0 1 1 7.99,1 M 5,6 A 3,3 0 1 0 11,6 M 3,13 Q 8,8 13,13");
     public static readonly Geometry Folder = Geometry.Parse("M 1,4 L 6,4 L 8,6 L 15,6 L 15,14 L 1,14 Z");

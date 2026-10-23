@@ -208,8 +208,6 @@
   <data name="LoadImages" xml:space="preserve"><value>Load images for this message</value></data>
   <data name="ImageConsent" xml:space="preserve"><value>Images are blocked until you allow them. Remote images contact their servers, which can learn your IP address and that this message was opened. This choice applies to this message only.</value></data>
   <data name="ConfirmImages" xml:space="preserve"><value>Allow images for this message</value></data>
-  <data name="CheckAttachments" xml:space="preserve"><value>Check attachments online</value></data>
-  <data name="AttachmentDetails" xml:space="preserve"><value>Attachment details refreshed; listed sizes are declared or decoded bytes, and saving asks for your destination</value></data>
   <data name="EditCancelled" xml:space="preserve"><value>Edit a replacement for cancelled mail</value></data>
   <data name="IdentitySettings" xml:space="preserve"><value>Sender identity</value></data>
   <data name="IdentityHint" xml:space="preserve"><value>The sender address is saved for this account and used for new messages, replies and forwards.</value></data>

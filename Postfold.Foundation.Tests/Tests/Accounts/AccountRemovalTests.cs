@@ -55,7 +55,9 @@ public sealed class AccountRemovalTests
             // Act
             main.OpenSettings("Accounts", EngineFixture.Account);
             SettingsWindow settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
-            settings.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "RemoveAccount")
+            string address = model.Accounts.Single(account => account.Id == EngineFixture.Account).Address;
+            settings.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "RemoveAccount" &&
+                Avalonia.Automation.AutomationProperties.GetName(button) == Postfold.UI.Resources.Strings.RemoveAccount + ": " + address)
                 .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await main.WaitForActionsAsync();
             Window dialog = main.OwnedWindows.Single(window => window is not SettingsWindow);

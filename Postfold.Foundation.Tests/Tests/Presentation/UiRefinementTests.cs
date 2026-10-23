@@ -103,7 +103,7 @@ public sealed class UiRefinementTests
     }
 
     [AvaloniaTest]
-    public async Task OpenSettings_WhenContextIsUnified_RequiresExplicitAccountAndReusesTheWindow()
+    public async Task OpenSettings_WhenContextIsUnified_ShowsAccountRowsAndReusesTheWindow()
     {
         // Arrange
         IMailApplication application = Application();
@@ -118,17 +118,17 @@ public sealed class UiRefinementTests
             // Act
             main.OpenSettings("Accounts");
             SettingsWindow settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
-            ComboBox accounts = settings.GetVisualDescendants().OfType<ComboBox>()
-                .Single(control => control.Name == "SettingsAccountSelection");
-            AccountConfiguration? initial = accounts.SelectedItem as AccountConfiguration;
             main.OpenSettings("Accounts", new AccountId(1));
 
             // Assert
-            Assert.That(initial, Is.Null);
+            Assert.That(settings.GetVisualDescendants().OfType<ComboBox>()
+                .Any(control => control.Name == "SettingsAccountSelection"), Is.False);
             Assert.That(main.OwnedWindows.OfType<SettingsWindow>().Single(), Is.SameAs(settings));
-            Assert.That(((AccountConfiguration)accounts.SelectedItem!).Id, Is.EqualTo(new AccountId(1)));
+            Assert.That(settings.GetVisualDescendants().OfType<TextBlock>()
+                .Any(control => control.Text == "sender@synthetic.invalid"), Is.True);
             await model.InitialiseAsync();
-            Assert.That(((AccountConfiguration)accounts.SelectedItem!).Id, Is.EqualTo(new AccountId(1)));
+            Assert.That(settings.GetVisualDescendants().OfType<Button>()
+                .Count(control => control.Name == "RemoveAccount"), Is.EqualTo(1));
             settings.Close();
         }
         finally
@@ -293,6 +293,141 @@ public sealed class UiRefinementTests
             main.MouseDown(click, MouseButton.Left);
             main.MouseUp(click, MouseButton.Left);
             Assert.That(account.IsExpanded, Is.True);
+        }
+        finally
+        {
+            main.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task Accounts_WhenActingOnASecondRow_RoutesEachActionToThatAccount()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        AccountConfiguration first = (await application.Catalog.AccountsAsync(CancellationToken.None)).Single();
+        AccountId second = new AccountId(2);
+        application.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray.Create(first, first with
+        {
+            Id = second,
+            Incoming = first.Incoming! with { Username = "second@synthetic.invalid" }
+        }));
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        AccountId? restored = null;
+        AccountId? renamed = null;
+        AccountId? removed = null;
+        SettingsWindow settings = new SettingsWindow(
+            model,
+            AppearanceSettings.Default,
+            null,
+            null,
+            null,
+            _ => { },
+            id =>
+            {
+                restored = id;
+                return Task.CompletedTask;
+            },
+            id => renamed = id,
+            id => removed = id,
+            true,
+            true
+        );
+        settings.SelectSection("Accounts");
+        settings.Show();
+        try
+        {
+            // Act
+            Button[] actions = settings.GetVisualDescendants().OfType<Button>()
+                .Where(button => Avalonia.Automation.AutomationProperties.GetName(button)?.EndsWith("second@synthetic.invalid", StringComparison.Ordinal) == true)
+                .ToArray();
+            foreach (Button action in actions)
+            {
+                action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+
+            // Assert
+            Assert.That(actions, Has.Length.EqualTo(3));
+            Assert.That(restored, Is.EqualTo(second));
+            Assert.That(renamed, Is.EqualTo(second));
+            Assert.That(removed, Is.EqualTo(second));
+            Assert.That(settings.GetVisualDescendants().OfType<ComboBox>(), Is.Empty);
+        }
+        finally
+        {
+            settings.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task SenderIdentity_WhenSavingSecondAccount_PreservesOtherEditsAndUsesItsAccountId()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        AccountConfiguration first = (await application.Catalog.AccountsAsync(CancellationToken.None)).Single();
+        AccountId second = new AccountId(2);
+        application.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray.Create(first, first with
+        {
+            Id = second,
+            Incoming = first.Incoming! with { Username = "second@synthetic.invalid" }
+        }));
+        IClientIdentity identity = Substitute.For<IClientIdentity>();
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        MainWindow main = new MainWindow { DataContext = model };
+        main.Configure(application, null);
+        main.ConfigureIdentity(identity);
+        main.Show();
+        try
+        {
+            main.OpenSettings("SenderIdentity");
+            SettingsWindow settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
+            TextBox[] senders = settings.GetVisualDescendants().OfType<TextBox>().Where(field => field.Name == "Sender").ToArray();
+            senders[0].Text = "unsaved@synthetic.invalid";
+            senders[1].Text = "second-edited@synthetic.invalid";
+
+            // Act
+            await model.InitialiseAsync();
+            StackPanel fields = (StackPanel)senders[1].Parent!.Parent!;
+            fields.Children.OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await main.WaitForActionsAsync();
+
+            // Assert
+            Assert.That(senders, Has.Length.EqualTo(2));
+            Assert.That(senders[0].Text, Is.EqualTo("unsaved@synthetic.invalid"));
+            await identity.Received(1).SaveAsync(second, new ComposeIdentity("second-edited@synthetic.invalid"), Arg.Any<CancellationToken>());
+            await identity.DidNotReceive().SaveAsync(first.Id, Arg.Any<ComposeIdentity>(), Arg.Any<CancellationToken>());
+            Assert.That(settings.GetVisualDescendants().OfType<ComboBox>(), Is.Empty);
+            settings.Close();
+        }
+        finally
+        {
+            main.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    [TestCase(300, 1)]
+    [TestCase(600, 0)]
+    public async Task ListFilters_WhenPaneWidthChanges_StayReachableWithoutDuplicateMenuItems(double width, int row)
+    {
+        // Arrange
+        await using MainWindowViewModel model = new MainWindowViewModel();
+        MainWindow main = new MainWindow { DataContext = model };
+        main.Show();
+        try
+        {
+            // Act
+            main.FindControl<Grid>("Panes")!.ColumnDefinitions[2].Width = new GridLength(width);
+            main.UpdateLayout();
+
+            // Assert
+            StackPanel filters = main.FindControl<StackPanel>("ListFilters")!;
+            Assert.That(filters.IsEffectivelyVisible, Is.True);
+            Assert.That(Grid.GetRow(filters), Is.EqualTo(row));
+            ContextMenu menu = main.FindControl<Button>("ListMoreButton")!.ContextMenu!;
+            Assert.That(menu.Items.OfType<MenuItem>().Any(item => Equals(item.Header, Strings.AllMail) || Equals(item.Header, Strings.Unread)), Is.False);
         }
         finally
         {

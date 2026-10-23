@@ -72,7 +72,7 @@
                                     <StackPanel>
                                         <Border Height="1" Background="{DynamicResource MailLineBrush}" IsVisible="{Binding IsAccount}" Margin="8,12,8,8" />
                                         <Border Name="PART_LayoutRoot" CornerRadius="8" Background="{TemplateBinding Background}" Focusable="True" TemplatedControl.IsTemplateFocusTarget="True">
-                                            <Grid Name="PART_Header" ColumnDefinitions="*,Auto" Background="Transparent" PointerPressed="AccountHeaderPointerPressed" DragDrop.AllowDrop="True" DragDrop.DragOver="FolderDragOver" DragDrop.Drop="FolderDrop">
+                                            <Grid Name="PART_Header" ColumnDefinitions="*,Auto" Margin="0,0,12,0" Background="Transparent" PointerPressed="AccountHeaderPointerPressed" DragDrop.AllowDrop="True" DragDrop.DragOver="FolderDragOver" DragDrop.Drop="FolderDrop">
                                                 <ContentPresenter Name="PART_HeaderPresenter" Content="{TemplateBinding Header}" ContentTemplate="{TemplateBinding HeaderTemplate}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" />
                                                 <ToggleButton Name="PART_ExpandCollapseChevron" Grid.Column="1" Theme="{StaticResource FluentTreeViewExpandCollapseChevron}" VerticalAlignment="Center" Focusable="False" AutomationProperties.AccessibilityView="Raw" IsChecked="{TemplateBinding IsExpanded, Mode=TwoWay}" />
                                             </Grid>
@@ -113,7 +113,7 @@
             <GridSplitter Name="NavigationSplitter" Grid.Column="1" ResizeDirection="Columns" AutomationProperties.Name="{x:Static ui:Strings.NavigationResize}" />
             <DockPanel Grid.Column="2" Name="MessagePane">
                 <StackPanel DockPanel.Dock="Top">
-                    <Grid Name="ListToolbar" ColumnDefinitions="*,Auto,Auto" MinHeight="64" Margin="16,0">
+                    <Grid Name="ListToolbar" ColumnDefinitions="*,Auto,Auto" RowDefinitions="Auto,Auto" MinHeight="64" Margin="16,0">
                         <Border Background="{DynamicResource MailNavigationBrush}" CornerRadius="8" VerticalAlignment="Center" Margin="0,0,8,0">
                             <Grid ColumnDefinitions="Auto,*">
                                 <Button Name="SearchButton" Classes="quiet" Command="{Binding RefreshCommand}" AutomationProperties.Name="{x:Static ui:Strings.Search}" Padding="10">
@@ -130,9 +130,6 @@
                             <Path Data="{StaticResource MoreIcon}" Fill="{DynamicResource MailTextBrush}" StrokeThickness="0" Width="20" Height="5" />
                             <Button.ContextMenu>
                                 <ContextMenu>
-                                    <MenuItem Name="AllFilterMenu" Header="{x:Static ui:Strings.AllMail}" Click="AllFilterClicked" />
-                                    <MenuItem Name="UnreadFilterMenu" Header="{x:Static ui:Strings.Unread}" ToggleType="CheckBox" IsChecked="{Binding UnreadOnly, Mode=OneWay}" Click="UnreadFilterClicked" />
-                                    <Separator />
                                     <MenuItem Header="{x:Static ui:Strings.Synchronise}" Command="{Binding SynchroniseCommand}" />
                                     <MenuItem Header="{x:Static ui:Strings.More}" Command="{Binding MoreCommand}" IsVisible="{Binding HasMore}" />
                                     <MenuItem Header="{x:Static ui:Strings.SearchScopeHint}" Click="SearchHelpClicked" />
@@ -224,7 +221,6 @@
                                     <MenuItem Header="{x:Static ui:Strings.Retrieve}" Command="{Binding RetrieveCommand}" />
                                     <MenuItem Header="{x:Static ui:Strings.Archive}" Command="{Binding ArchiveCommand}" />
                                     <MenuItem Name="MoveButton" Header="{x:Static ui:Strings.Move}" IsEnabled="{Binding CanMove}" ToolTip.Tip="{Binding MoveSupport}" />
-                                    <MenuItem Name="CheckEmptyAttachmentsButton" Header="{x:Static ui:Strings.CheckAttachments}" />
                                     <MenuItem Name="ImagesButton" Header="{x:Static ui:Strings.LoadImages}" IsEnabled="False" />
                                 </ContextMenu>
                             </Button.ContextMenu>
@@ -262,6 +258,13 @@
                                 <ListBox Name="AttachmentList" Classes="mail" ItemsSource="{Binding Attachments}" AutomationProperties.Name="{x:Static ui:Strings.Attach}">
                                     <ListBox.Styles>
                                         <Style Selector="ListBoxItem" x:DataType="core:AttachmentSnapshot">
+                                            <Setter Property="Margin" Value="0,0,12,12" />
+                                            <Setter Property="Padding" Value="0" />
+                                            <Setter Property="ContextMenu">
+                                                <ContextMenu>
+                                                    <MenuItem Header="{x:Static ui:Strings.Destination}" Click="SaveAttachmentClicked" />
+                                                </ContextMenu>
+                                            </Setter>
                                             <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
                                             <Setter Property="AutomationProperties.HelpText" Value="{Binding MediaType}" />
                                         </Style>
@@ -273,7 +276,7 @@
                                     </ListBox.ItemsPanel>
                                     <ListBox.ItemTemplate>
                                         <DataTemplate x:DataType="core:AttachmentSnapshot">
-                                            <Border Classes="card" Margin="0,0,12,12" Width="248" MinHeight="72" ToolTip.Tip="{Binding MediaType}">
+                                            <Border Classes="card" Width="248" MinHeight="72" ToolTip.Tip="{Binding MediaType}">
                                                 <Grid ColumnDefinitions="36,*">
                                                     <Path Data="{x:Static ui:MailIcons.Draft}" Width="24" Height="24" VerticalAlignment="Center" />
                                                     <StackPanel Grid.Column="1" Spacing="4">
@@ -289,10 +292,6 @@
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
-                                <WrapPanel>
-                                    <Button Name="SaveAttachmentButton" Content="{x:Static ui:Strings.Destination}" />
-                                    <Button Name="CheckAttachmentsButton" Classes="quiet" Content="{x:Static ui:Strings.CheckAttachments}" />
-                                </WrapPanel>
                             </StackPanel>
                         </StackPanel>
                     </ScrollViewer>

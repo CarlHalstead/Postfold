@@ -48,7 +48,6 @@ public static class Strings
     public static string DesktopSettings => Get("DesktopSettings");
     public static string HtmlRead => Get("HtmlRead");
     public static string LoadImages => Get("LoadImages");
-    public static string CheckAttachments => Get("CheckAttachments");
     public static string IdentitySettings => Get("IdentitySettings");
     public static string RenameAccount => Get("RenameAccount");
     public static string RemoveAccount => Get("RemoveAccount");
