@@ -8,7 +8,6 @@ using Postfold.Foundation.Tests.Fixtures.Authentication;
 using Postfold.Foundation.Tests.Fixtures.Updates;
 using System;
 using System.Linq;
-using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -196,7 +195,7 @@ public sealed class MicrosoftAuthenticationTests
         await Assert.ThatAsync(async () => await pending, Throws.InstanceOf<OperationCanceledException>());
         using TcpClient probe = new TcpClient();
         Uri redirect = new Uri(AuthenticationFixture.Query(authorization)["redirect_uri"]);
-        await Assert.ThrowsAsync<SocketException>(async () => await probe.ConnectAsync(IPAddress.Loopback, redirect.Port));
+        await Assert.ThrowsAsync<SocketException>(async () => await probe.ConnectAsync(redirect.DnsSafeHost, redirect.Port));
         Assert.That(fixture.Exchanges, Is.Zero);
         Assert.That(fixture.Shared.Stored, Is.Empty);
     }

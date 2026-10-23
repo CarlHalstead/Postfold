@@ -175,7 +175,7 @@ internal sealed class AuthenticationFixture : HttpMessageHandler, IProtectedToke
     private async Task<string> CallbackAsync(Uri redirect, string query, bool formPost, CancellationToken cancellationToken)
     {
         using TcpClient client = new TcpClient();
-        await client.ConnectAsync(IPAddress.Loopback, redirect.Port, cancellationToken);
+        await client.ConnectAsync(redirect.DnsSafeHost, redirect.Port, cancellationToken);
         using NetworkStream stream = client.GetStream();
         string headers = " HTTP/1.1\r\nHost: " + (CallbackHost ?? redirect.Authority) + "\r\n";
         byte[] request = Encoding.ASCII.GetBytes(formPost ? "POST " + CallbackPath + headers +
