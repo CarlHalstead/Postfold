@@ -667,7 +667,11 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
         {
             return;
         }
-        MailSynchronisationLoop synchronisation = new MailSynchronisationLoop(application, TimeProvider.System);
+        MailSynchronisationLoop synchronisation = new MailSynchronisationLoop(
+            application,
+            TimeProvider.System,
+            () => _integration?.MailPollIntervalSeconds ?? 30
+        );
         await synchronisation.RunAsync(async (_, result, cancellationToken) =>
         {
             await Dispatcher.UIThread.InvokeAsync(async () =>

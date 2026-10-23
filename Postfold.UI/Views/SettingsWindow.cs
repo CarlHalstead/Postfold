@@ -3,6 +3,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
@@ -183,7 +184,13 @@ public sealed class SettingsWindow : Window
                     IconAction(restore, MailIcons.Refresh, connection, account.Address, 1, canRestoreCredentials);
                     IconAction(renameButton, MailIcons.Rename, "RenameAccount", account.Address, 2, canManage);
                     IconAction(removeButton, MailIcons.Close, "RemoveAccount", account.Address, 3, canManage);
-                    form.Children.Add(row);
+                    Border surface = new Border
+                    {
+                        Child = row
+                    };
+                    surface.Classes.Add("card");
+                    surface.Bind(Border.BackgroundProperty, new DynamicResourceExtension("MailNavigationBrush"));
+                    form.Children.Add(surface);
                     form.Children.Add(status);
                 }
             }
@@ -279,6 +286,27 @@ public sealed class SettingsWindow : Window
             form.Children.Add(notifications);
             form.Children.Add(new TextBlock
             {
+                Text = Strings.Get("MailPollInterval"),
+                TextWrapping = TextWrapping.Wrap
+            });
+            NumericUpDown pollInterval = new NumericUpDown
+            {
+                Name = "MailPollInterval",
+                Minimum = 3,
+                Maximum = 60,
+                Increment = 1,
+                FormatString = "0",
+                Value = 30
+            };
+            AutomationProperties.SetName(pollInterval, Strings.Get("MailPollInterval"));
+            form.Children.Add(pollInterval);
+            form.Children.Add(new TextBlock
+            {
+                Text = Strings.Get("MailPollIntervalHint"),
+                TextWrapping = TextWrapping.Wrap
+            });
+            form.Children.Add(new TextBlock
+            {
                 Text = Strings.Get("DesktopIntegrationHint"),
                 TextWrapping = TextWrapping.Wrap
             });
@@ -287,10 +315,18 @@ public sealed class SettingsWindow : Window
             {
                 if (desktop is not null)
                 {
+                    if (pollInterval.Value is not decimal seconds || seconds != decimal.Truncate(seconds))
+                    {
+                        status.Text = Strings.Describe(Failure.Validation);
+                        return;
+                    }
                     status.Text = Strings.Describe(await desktop.ConfigureAsync(new DesktopPreferences(
                         tray.IsChecked == true,
                         notifications.IsChecked == true
-                    ), _lifetime.Token));
+                    )
+                    {
+                        MailPollIntervalSeconds = (int)seconds
+                    }, _lifetime.Token));
                 }
             }, status);
             FormControls.AddActionButton(form, "TestGenericNotification", () =>
@@ -323,6 +359,7 @@ public sealed class SettingsWindow : Window
                     _lifetime.Token.ThrowIfCancellationRequested();
                     tray.IsChecked = current.TrayEnabled;
                     notifications.IsChecked = current.NotificationsEnabled;
+                    pollInterval.Value = current.MailPollIntervalSeconds;
                     form.IsEnabled = true;
                     footer.IsEnabled = true;
                 }

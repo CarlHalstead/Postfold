@@ -302,6 +302,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 DesktopPreferences preferences = JsonSerializer.Deserialize<DesktopPreferences>(json) ?? DesktopPreferences.Default;
                 return preferences with
                 {
+                    MailPollIntervalSeconds = preferences.MailPollIntervalSeconds is >= 3 and <= 60 ? preferences.MailPollIntervalSeconds : 30,
                     Updates = preferences.Updates ?? UpdatePreferences.Default
                 };
             }

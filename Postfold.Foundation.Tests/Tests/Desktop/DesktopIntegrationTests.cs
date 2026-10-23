@@ -18,6 +18,53 @@ namespace Postfold.Foundation.Tests.Tests.Desktop;
 public sealed class DesktopIntegrationTests
 {
     [AvaloniaTest]
+    [TestCase(3)]
+    [TestCase(60)]
+    public async Task ConfigureAsync_WhenPollingIntervalIsValid_PreservesItAcrossUpdateChangesAndProfileReopen(int seconds)
+    {
+        // Arrange
+        string directory = EngineFixture.DirectoryPath();
+        await using SqliteProfile profile = await EngineFixture.OpenAsync(directory);
+        using DesktopIntegration integration = new DesktopIntegration(new Window(), profile, Substitute.For<INewMailNotification>());
+
+        // Act
+        Failure configured = await integration.ConfigureAsync(DesktopPreferences.Default with
+        {
+            MailPollIntervalSeconds = seconds
+        }, CancellationToken.None);
+        await integration.ConfigureUpdatesAsync(UpdatePreferences.Default, CancellationToken.None);
+        await profile.DisposeAsync();
+        await using SqliteProfile reopened = (await SqliteProfile.OpenAsync(
+            System.IO.Path.Combine(directory, "profile.db"), TimeProvider.System, CancellationToken.None)).Value!;
+
+        // Assert
+        Assert.That(configured, Is.EqualTo(Failure.None));
+        Assert.That(integration.MailPollIntervalSeconds, Is.EqualTo(seconds));
+        Assert.That((await reopened.ReadDesktopPreferencesAsync(CancellationToken.None)).MailPollIntervalSeconds, Is.EqualTo(seconds));
+    }
+
+    [AvaloniaTest]
+    [TestCase(2)]
+    [TestCase(61)]
+    public async Task ConfigureAsync_WhenPollingIntervalIsInvalid_RejectsBeforeReadingOrWriting(int seconds)
+    {
+        // Arrange
+        IDesktopPreferenceStore store = Substitute.For<IDesktopPreferenceStore>();
+        using DesktopIntegration integration = new DesktopIntegration(new Window(), store, Substitute.For<INewMailNotification>());
+
+        // Act
+        Failure result = await integration.ConfigureAsync(DesktopPreferences.Default with
+        {
+            MailPollIntervalSeconds = seconds
+        }, CancellationToken.None);
+
+        // Assert
+        Assert.That(result, Is.EqualTo(Failure.Validation));
+        await store.DidNotReceiveWithAnyArgs().ReadDesktopPreferencesAsync(default);
+        await store.DidNotReceiveWithAnyArgs().SaveDesktopPreferencesAsync(default!, default);
+    }
+
+    [AvaloniaTest]
     public async Task RestorePreferences_WhenLoadingSavedChoices_AppliesThemWithoutReadingOrSavingAgain()
     {
         // Arrange
@@ -83,6 +130,7 @@ public sealed class DesktopIntegrationTests
         Assert.That(current.NotificationsEnabled, Is.False);
         Assert.That(current.Updates.UnmeteredOnly, Is.True);
         Assert.That(current.Updates.CheckIntervalHours, Is.EqualTo(24));
+        Assert.That(current.MailPollIntervalSeconds, Is.EqualTo(30));
     }
 
     [AvaloniaTest]

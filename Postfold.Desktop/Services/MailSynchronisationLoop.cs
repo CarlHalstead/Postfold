@@ -9,13 +9,14 @@ using System.Threading.Tasks;
 namespace Postfold.Desktop.Services;
 
 /// <summary>
-/// Polls retained accounts at startup and thirty seconds after each completed pass. Passes never
+/// Polls retained accounts at startup and at the configured interval after each completed pass (thirty seconds by default). Passes never
 /// overlap. The desktop session owns the returned task and cancels/drains it before profile shutdown;
 /// this loop acquires credentials silently and never processes the outbox or requeues held sends.
 /// </summary>
 internal sealed class MailSynchronisationLoop(
     IMailApplication application,
-    TimeProvider time
+    TimeProvider time,
+    Func<int>? intervalSeconds = null
 )
 {
     internal async Task RunAsync(
@@ -48,7 +49,8 @@ internal sealed class MailSynchronisationLoop(
                 {
                     // A temporarily unavailable local catalog must not terminate future refreshes.
                 }
-                await Task.Delay(TimeSpan.FromSeconds(30), time, cancellationToken).ConfigureAwait(false);
+                int seconds = Math.Clamp(intervalSeconds?.Invoke() ?? 30, 3, 60);
+                await Task.Delay(TimeSpan.FromSeconds(seconds), time, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

@@ -435,6 +435,44 @@ public sealed class UiRefinementTests
         }
     }
 
+    [AvaloniaTest]
+    [TestCase(3)]
+    [TestCase(60)]
+    public async Task DesktopSettings_WhenSavingPollingInterval_PassesTheChosenValueToTheDesktopPort(int seconds)
+    {
+        // Arrange
+        IMailApplication application = Application();
+        IDesktopIntegration desktop = Substitute.For<IDesktopIntegration>();
+        desktop.ReadPreferencesAsync(Arg.Any<CancellationToken>()).Returns(DesktopPreferences.Default);
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        MainWindow main = new MainWindow { DataContext = model };
+        main.Configure(application, null, desktop);
+        main.Show();
+        try
+        {
+            main.OpenSettings("Desktop");
+            await main.WaitForActionsAsync();
+            SettingsWindow settings = main.OwnedWindows.OfType<SettingsWindow>().Single();
+            NumericUpDown interval = settings.GetVisualDescendants().OfType<NumericUpDown>().Single(field => field.Name == "MailPollInterval");
+
+            // Act
+            interval.Value = seconds;
+            settings.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "SaveSettings")
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await main.WaitForActionsAsync();
+
+            // Assert
+            await desktop.Received(1).ConfigureAsync(Arg.Is<DesktopPreferences>(preferences =>
+                preferences.MailPollIntervalSeconds == seconds && preferences.NotificationsEnabled), Arg.Any<CancellationToken>());
+            settings.Close();
+        }
+        finally
+        {
+            main.Close();
+        }
+    }
+
     private static IMailApplication Application()
     {
         IMailApplication application = Substitute.For<IMailApplication>();

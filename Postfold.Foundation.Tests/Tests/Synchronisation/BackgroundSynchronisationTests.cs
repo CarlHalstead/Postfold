@@ -16,6 +16,46 @@ namespace Postfold.Foundation.Tests.Tests.Synchronisation;
 public sealed class BackgroundSynchronisationTests
 {
     [Test]
+    [TestCase(3)]
+    [TestCase(60)]
+    public async Task RunAsync_WhenTheIntervalIsConfigured_UsesThatDelayBetweenCompletedPasses(int seconds)
+    {
+        // Arrange
+        IMailApplication application = Substitute.For<IMailApplication>();
+        application.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray.Create(
+            new AccountConfiguration(new AccountId(1), "Synthetic", null, null)));
+        UpdatePolicyClock clock = new UpdatePolicyClock();
+        using CancellationTokenSource lifetime = new CancellationTokenSource();
+        int passes = 0;
+        TaskCompletionSource<bool> second = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        MailSynchronisationLoop loop = new MailSynchronisationLoop(application, clock, () => seconds);
+        Task running = loop.RunAsync((id, failure, token) =>
+        {
+            if (Interlocked.Increment(ref passes) == 2)
+            {
+                second.SetResult(true);
+            }
+            return Task.CompletedTask;
+        }, lifetime.Token);
+        try
+        {
+            // Act
+            clock.Advance(TimeSpan.FromSeconds(seconds - 1));
+            Assert.That(passes, Is.EqualTo(1));
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await second.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            // Assert
+            Assert.That(passes, Is.EqualTo(2));
+        }
+        finally
+        {
+            await lifetime.CancelAsync();
+            await running.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
     public async Task RunAsync_WhenAPassIsPending_DoesNotOverlapAndCancelsTheActiveSyncOnShutdown()
     {
         // Arrange

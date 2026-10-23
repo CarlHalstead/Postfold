@@ -33,6 +33,8 @@ public sealed class DesktopIntegration : IDesktopIntegration, IDisposable
 
     public bool TrayEnabled => !_disposed && _tray is not null && _preferences.TrayEnabled;
 
+    internal int MailPollIntervalSeconds => _preferences.MailPollIntervalSeconds;
+
     public event EventHandler? ExitRequested;
 
     public Task<DesktopPreferences> ReadPreferencesAsync(CancellationToken cancellationToken)
@@ -42,6 +44,10 @@ public sealed class DesktopIntegration : IDesktopIntegration, IDisposable
 
     public async Task<Failure> ConfigureAsync(DesktopPreferences preferences, CancellationToken cancellationToken)
     {
+        if (preferences.MailPollIntervalSeconds is < 3 or > 60)
+        {
+            return Failure.Validation;
+        }
         await _changes.WaitAsync(cancellationToken);
         try
         {
