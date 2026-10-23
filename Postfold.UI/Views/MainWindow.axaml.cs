@@ -18,8 +18,6 @@ using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Mailboxes;
 using Postfold.Core.Models.Messages;
 using Postfold.Core.Models.Mime;
-using Postfold.Core.Models.Operations;
-using Postfold.Core.Models.Outbox;
 using Postfold.UI.Controls;
 using Postfold.UI.Models;
 using Postfold.UI.Resources;
@@ -792,127 +790,17 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        ListBox list = new ListBox
-
-        {
-            ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token),
-            Name = "PendingCommands",
-            MaxHeight = 280,
-            ItemTemplate = new FuncDataTemplate<CommandSnapshot>((command, _) => command is null ? null : new TextBlock
-
-            {
-                Text = command.Subject + "\n" + Strings.Describe(command.Entry.Intent.Kind) + " — " +
-                                                        Strings.Describe(command.Entry.State) + "\n" + Strings.Describe(command.Entry.Evidence),
-                TextWrapping = TextWrapping.Wrap
-            })
-        };
-        Avalonia.Automation.AutomationProperties.SetName(list, Strings.Commands);
-        StackPanel panel = new StackPanel
-
-        {
-            Margin = new Thickness(12),
-            Spacing = 8
-        };
-        panel.Children.Add(new TextBlock
-
-        {
-            Text = Strings.Get("CommandReviewHint"),
-            TextWrapping = TextWrapping.Wrap
-        });
-        panel.Children.Add(list);
-        CheckBox consent = new CheckBox
-
-        {
-            Content = Strings.Get("CommandRetryConsent"),
-            IsChecked = false
-        };
-        list.SelectionChanged += (_, _) => consent.IsChecked = false;
-        panel.Children.Add(consent);
-        StackPanel footer = new StackPanel
-        {
-            Spacing = 8
-        };
-        WrapPanel actions = new WrapPanel();
-        footer.Children.Add(actions);
-        TextBlock status = new TextBlock
-
-        {
-            TextWrapping = TextWrapping.Wrap
-        };
-        FormControls.AddActionButton(actions, "RetryCommand", async () =>
-        {
-            if (list.SelectedItem is CommandSnapshot command && consent.IsChecked == true)
-            {
-                status.Text = Strings.Describe(await _application.ResolveCommandAsync(command.Entry, true, _lifetime.Token));
-                consent.IsChecked = false;
-                list.ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token);
-            }
-            else
-            {
-                status.Text = Strings.Get("CommandDecisionRequired");
-            }
-        }, status);
-        FormControls.AddActionButton(actions, "DismissCommand", async () =>
-        {
-            if (list.SelectedItem is CommandSnapshot command)
-            {
-                status.Text = Strings.Describe(await _application.ResolveCommandAsync(command.Entry, false, _lifetime.Token));
-                list.ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token);
-            }
-        }, status);
-        FormControls.AddActionButton(actions, "Refresh", async () =>
-        {
-            list.ItemsSource = await _application.Catalog.CommandsAsync(account, _lifetime.Token);
-        }, status);
-        footer.Children.Add(status);
-        Control sends = await SendIssuesAsync(account);
-        ListBox sendList = ((StackPanel)sends).Children.OfType<ListBox>().Single();
-        TabControl tabs = new TabControl
-
-        {
-            Margin = new Thickness(24, 0, 24, 16),
-            ItemsPanel = new FuncTemplate<Panel?>(() => new WrapPanel()),
-            ItemsSource = new[]
-            {
-                new TabItem
-
-{
-Header = Strings.Get("MailNeedingAttention"),
-Content = FormControls.Page("", sends)
-},
-                new TabItem
-
-{
-Header = Strings.Get("FolderChanges"),
-Content = FormControls.Page("", panel, footer)
-}
-            },
-            SelectedIndex = sendList.ItemCount > 0 ? 0 : 1
-        };
-        DockPanel page = new DockPanel();
-        TextBlock heading = new TextBlock
-
-        {
-            Text = Strings.Commands,
-            FontWeight = FontWeight.SemiBold,
-            Margin = new Thickness(24, 24, 24, 16)
-        };
-        heading.Bind(TextBlock.FontSizeProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("SubjectFontSize"));
-        DockPanel.SetDock(heading, Dock.Top);
-        page.Children.Add(heading);
-        page.Children.Add(tabs);
-        ShowWindow(new Window
-
-        {
-            Title = Strings.Commands,
-            Width = 760,
-            Height = 520,
-            MinWidth = 480,
-            MinHeight = 480,
-            FontFamily = FontFamily,
-            FontSize = FontSize,
-            Content = page
-        });
+        PendingWorkWindow window = await PendingWorkWindow.CreateAsync(
+            _application,
+            account,
+            (content, predecessor, targetAccount) => OpenCompose(
+                activation: content,
+                predecessor: predecessor,
+                targetAccount: targetAccount
+            ),
+            _lifetime.Token
+        );
+        ShowWindow(window);
     }
 
     public async Task DraftsAsync(
@@ -926,11 +814,9 @@ Content = FormControls.Page("", panel, footer)
 
         ImmutableArray<DraftSnapshot> drafts = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
         ListBox list = new ListBox
-
         {
             ItemsSource = drafts,
             ItemTemplate = new FuncDataTemplate<DraftSnapshot>((draft, _) => draft is null ? null : new TextBlock
-
             {
                 Text = Strings.Get("DraftRevision") + " " + draft.Revision + " — " +
                                                         Strings.Get(draft.Conflict ? "Conflict" : draft.Held ? "DraftHeld" : "Saved"),
@@ -938,7 +824,6 @@ Content = FormControls.Page("", panel, footer)
             })
         };
         StackPanel panel = new StackPanel
-
         {
             Margin = new Thickness(12),
             Spacing = 8
@@ -960,7 +845,6 @@ Content = FormControls.Page("", panel, footer)
         WrapPanel actions = new WrapPanel();
         footer.Children.Add(actions);
         TextBlock status = new TextBlock
-
         {
             TextWrapping = TextWrapping.Wrap
         };
@@ -1009,7 +893,6 @@ Content = FormControls.Page("", panel, footer)
         }, status);
         footer.Children.Add(status);
         Window window = new Window
-
         {
             Title = Strings.Drafts,
             Width = 760,
@@ -1204,160 +1087,6 @@ Content = FormControls.Page("", panel, footer)
         return destination is not null && model.CanDropMessage(message, destination) ? destination : null;
     }
 
-    private async Task<Control> SendIssuesAsync(
-        AccountId account
-    )
-    {
-        IMailApplication application = _application!;
-        StackPanel panel = new StackPanel
-
-        {
-            Spacing = 12
-        };
-        ListBox list = new ListBox
-
-        {
-            Name = "SendIssues",
-            MaxHeight = 240,
-            ItemTemplate = new FuncDataTemplate<OutboxEntry>((entry, _) => entry is null ? null : new TextBlock
-
-            {
-                Text = (string.IsNullOrWhiteSpace(entry.Submission.Subject) ? Strings.Get("NoSubject") : entry.Submission.Subject) +
-                                "\n" + string.Join("; ", entry.Submission.Recipients) + "\n" + Strings.Get("SendStatus." + entry.State) +
-                                (entry.Evidence is { Failure: not (Failure.None or Failure.NeedsReview) } evidence
-                                    ? "\n" + Strings.Describe(evidence.Failure) : ""),
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(8)
-            })
-        };
-        Avalonia.Automation.AutomationProperties.SetName(list, Strings.Get("MailNeedingAttention"));
-        list.Classes.Add("mail");
-        TextBlock status = new TextBlock
-
-        {
-            TextWrapping = TextWrapping.Wrap
-        };
-        StackPanel details = new StackPanel
-
-        {
-            Spacing = 8
-        };
-        TextBlock empty = new TextBlock
-
-        {
-            Text = Strings.Get("NoSendIssues"),
-            TextWrapping = TextWrapping.Wrap
-        };
-        async Task RefreshAsync()
-        {
-            ImmutableArray<OutboxEntry> entries = await application.Catalog.OutboxAsync(account, _lifetime.Token);
-            list.ItemsSource = entries.IsDefault ? ImmutableArray<OutboxEntry>.Empty
-                : entries.Where(entry => entry.State != SubmissionState.Completed).ToImmutableArray();
-            empty.IsVisible = list.ItemCount == 0;
-            details.Children.Clear();
-        }
-        list.SelectionChanged += (_, _) =>
-        {
-            details.Children.Clear();
-            if (list.SelectedItem is not OutboxEntry entry)
-            {
-                return;
-            }
-
-            WrapPanel actions = new WrapPanel();
-            details.Children.Add(actions);
-            if (entry.State == SubmissionState.Queued)
-            {
-                FormControls.AddActionButton(actions, "Send", async () =>
-                {
-                    status.Text = Strings.Get("Sending");
-                    status.Text = Strings.Describe(await application.SubmitAsync(account, entry.Submission.Id, _lifetime.Token));
-                    await RefreshAsync();
-                }, status);
-                FormControls.AddActionButton(actions, "CancelSend", async () =>
-                {
-                    status.Text = Strings.Describe(await application.CancelQueuedAsync(entry, _lifetime.Token));
-                    await RefreshAsync();
-                }, status);
-            }
-            else if (entry.State is SubmissionState.Accepted or SubmissionState.SentCopyPending)
-            {
-                CheckBox consent = new CheckBox
-
-                {
-                    Content = Strings.Get("SentCopyConsent")
-                };
-                consent.IsVisible = entry.State == SubmissionState.SentCopyPending;
-                details.Children.Add(consent);
-                FormControls.AddActionButton(actions, "SaveSentCopy", async () =>
-                {
-                    if (entry.State == SubmissionState.SentCopyPending && consent.IsChecked != true)
-                    {
-                        status.Text = Strings.Describe(Failure.NeedsReview);
-                        return;
-                    }
-
-                    status.Text = Strings.Describe(entry.State == SubmissionState.Accepted
-                        ? await application.StoreSentCopyAsync(entry, _lifetime.Token)
-                        : await application.RetrySentCopyAsync(entry, _lifetime.Token));
-                    await RefreshAsync();
-                }, status);
-            }
-            else if (entry.State is SubmissionState.Uncertain or SubmissionState.PartiallyAccepted or
-                SubmissionState.Rejected or SubmissionState.Cancelled)
-            {
-                bool uncertain = entry.State is SubmissionState.Uncertain or SubmissionState.PartiallyAccepted;
-                if (entry.Evidence is not null)
-                {
-                    details.Children.Add(new TextBlock
-
-                    {
-                        Text = string.Join("\n", entry.Evidence.Recipients.Select(recipient =>
-                                                    recipient.Address + " — " + Strings.Describe(recipient.State))),
-                        TextWrapping = TextWrapping.Wrap
-                    });
-                }
-                CheckBox consent = new CheckBox
-
-                {
-                    Content = Strings.Get("ResendConsent"),
-                    IsVisible = uncertain
-                };
-                details.Children.Add(consent);
-                FormControls.AddActionButton(actions, "ReviewMessage", async () =>
-                {
-                    if (uncertain && consent.IsChecked != true)
-                    {
-                        status.Text = Strings.Describe(Failure.NeedsReview);
-                        return;
-                    }
-
-                    Outcome<ComposeContent> content = await application.PrepareResendAsync(entry, _lifetime.Token);
-                    if (content.IsSuccess)
-                    {
-                        OpenCompose(
-                            activation: content.Value,
-                            predecessor: entry.Submission.Id,
-                            targetAccount: account
-                        );
-                        consent.IsChecked = false;
-                    }
-                    else
-                    {
-                        status.Text = Strings.Describe(content.Failure);
-                    }
-                }, status);
-            }
-        };
-        panel.Children.Add(list);
-        panel.Children.Add(empty);
-        panel.Children.Add(details);
-        FormControls.AddActionButton(panel, "RefreshSends", RefreshAsync, status);
-        panel.Children.Add(status);
-        await RefreshAsync();
-        return panel;
-    }
-
     private async Task CredentialsAsync(
         IAccountSetup setup,
         AccountId selectedAccount
@@ -1390,13 +1119,11 @@ Content = FormControls.Page("", panel, footer)
         CancellationTokenSource credentialsLifetime = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         CancellationToken credentialsToken = credentialsLifetime.Token;
         StackPanel form = new StackPanel
-
         {
             Margin = new Thickness(24),
             Spacing = 12
         };
         Window window = new Window
-
         {
             Title = Strings.Credentials,
             Width = 520,
@@ -1404,25 +1131,21 @@ Content = FormControls.Page("", panel, footer)
             FontFamily = FontFamily,
             FontSize = FontSize,
             Content = new ScrollViewer
-
             {
                 Content = form
             }
         };
         ComboBox account = new ComboBox
-
         {
             ItemsSource = accounts,
             SelectedItem = accounts.FirstOrDefault(item => item.Id == selectedAccount),
             ItemTemplate = new FuncDataTemplate<AccountConfiguration>((item, _) => item is null ? null : new TextBlock
-
             {
                 Text = item.Name
             })
         };
         Avalonia.Automation.AutomationProperties.SetName(account, Strings.Get("Account"));
         form.Children.Add(new TextBlock
-
         {
             Text = Strings.Get("CredentialsHint"),
             TextWrapping = TextWrapping.Wrap
@@ -1440,7 +1163,6 @@ Content = FormControls.Page("", panel, footer)
         account.SelectionChanged += (_, _) => SelectAccount();
         SelectAccount();
         TextBlock status = new TextBlock
-
         {
             TextWrapping = TextWrapping.Wrap
         };
@@ -1916,17 +1638,14 @@ Content = FormControls.Page("", panel, footer)
             return;
         }
         StackPanel panel = new StackPanel
-
         {
             Spacing = 12
         };
         ComboBox accounts = new ComboBox
-
         {
             Name = "RemoveAccountSelection",
             ItemsSource = model.Accounts.ToArray(),
             ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => account is null ? null : new TextBlock
-
             {
                 Text = account.Name + " — " + account.Address
             }),
@@ -1935,20 +1654,17 @@ Content = FormControls.Page("", panel, footer)
         Avalonia.Automation.AutomationProperties.SetName(accounts, Strings.RemoveAccount);
         panel.Children.Add(accounts);
         panel.Children.Add(new TextBlock
-
         {
             Text = Strings.Get("RemoveAccountHint"),
             TextWrapping = TextWrapping.Wrap
         });
         TextBlock status = new TextBlock
-
         {
             Name = "RemoveAccountStatus",
             TextWrapping = TextWrapping.Wrap
         };
         Avalonia.Automation.AutomationProperties.SetLiveSetting(status, Avalonia.Automation.AutomationLiveSetting.Polite);
         Window window = new Window
-
         {
             Title = Strings.RemoveAccount,
             Width = 560,

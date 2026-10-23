@@ -14,6 +14,7 @@ using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.Core.Models.Updates;
 using Postfold.Storage.Models;
+using Postfold.Storage.Serialization;
 using Postfold.Storage.Services;
 using System;
 using System.Collections.Generic;
@@ -62,6 +63,64 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
 
     /// <summary>Final shipped migration validated by profile admission.</summary>
     public string AdmittedMigration => ProfileMigrationManifest.Versions[^1].Id;
+
+    public static async Task<Outcome<SqliteProfile>> OpenAsync(
+        string path,
+        TimeProvider time,
+        CancellationToken cancellationToken
+    )
+    {
+        FileStream? lease = null;
+        try
+        {
+            lease = await ProfileMigration.AdmitAsync(path, cancellationToken).ConfigureAwait(false);
+            SqliteProfile profile = new SqliteProfile(path, time, lease);
+            lease = null;
+            return Outcome<SqliteProfile>.Success(profile);
+        }
+        catch (ProfileAdmissionException exception)
+        {
+            if (exception.Failure == Failure.Corrupt)
+            {
+                PreserveCorruption(path);
+            }
+
+            return Outcome<SqliteProfile>.Fail(exception.Failure);
+        }
+        catch (SqliteException exception) when (exception.SqliteErrorCode is 11 or 26)
+        {
+            PreserveCorruption(path);
+            return Outcome<SqliteProfile>.Fail(Failure.Corrupt);
+        }
+        catch (SqliteException)
+        {
+            return Outcome<SqliteProfile>.Fail(Failure.Unavailable);
+        }
+        catch (InvalidDataException)
+        {
+            return Outcome<SqliteProfile>.Fail(Failure.NeedsReview);
+        }
+        catch (JsonException)
+        {
+            return Outcome<SqliteProfile>.Fail(Failure.NeedsReview);
+        }
+        catch (FormatException)
+        {
+            return Outcome<SqliteProfile>.Fail(Failure.NeedsReview);
+        }
+        catch (IOException)
+        {
+            return Outcome<SqliteProfile>.Fail(Failure.Unavailable);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Outcome<SqliteProfile>.Fail(Failure.Unavailable);
+        }
+        finally
+        {
+            lease?.Dispose();
+        }
+    }
 
     public Task<AccountId> NextAccountIdAsync(
         CancellationToken cancellationToken
@@ -364,11 +423,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                         reader.GetString(1),
                         google ? null : endpoints[0],
                         google ? null : endpoints[1],
-                        ReadCapabilities(reader.GetString(3)),
-                        reader.IsDBNull(4) ? null : ReadIdentity(reader.GetString(4)),
+                        ProfileRecordReader.ReadCapabilities(reader.GetString(3)),
+                        reader.IsDBNull(4) ? null : ProfileRecordReader.ReadIdentity(reader.GetString(4)),
                         reader.GetString(5),
-                        reader.IsDBNull(6) ? null : ReadMicrosoftBinding(reader.GetString(6)),
-                        reader.IsDBNull(7) ? null : ReadGoogleBinding(reader.GetString(7))
+                        reader.IsDBNull(6) ? null : ProfileRecordReader.ReadMicrosoftBinding(reader.GetString(6)),
+                        reader.IsDBNull(7) ? null : ProfileRecordReader.ReadGoogleBinding(reader.GetString(7))
                     ));
                 }
             }
@@ -654,7 +713,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             ImmutableArray<OutboxEntry>.Builder entries = ImmutableArray.CreateBuilder<OutboxEntry>();
             while (reader.Read())
             {
-                entries.Add(ReadOutbox(reader));
+                entries.Add(ProfileRecordReader.ReadOutbox(reader));
             }
 
             return entries.ToImmutable();
@@ -672,64 +731,6 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             "SELECT EXISTS(SELECT 1 FROM OutboxSubmissions WHERE State=$submitting);",
             ("$submitting", (int)SubmissionState.Submitting)
         ), CultureInfo.InvariantCulture) != 0, cancellationToken);
-    }
-
-    public static async Task<Outcome<SqliteProfile>> OpenAsync(
-        string path,
-        TimeProvider time,
-        CancellationToken cancellationToken
-    )
-    {
-        FileStream? lease = null;
-        try
-        {
-            lease = await ProfileMigration.AdmitAsync(path, cancellationToken).ConfigureAwait(false);
-            SqliteProfile profile = new SqliteProfile(path, time, lease);
-            lease = null;
-            return Outcome<SqliteProfile>.Success(profile);
-        }
-        catch (ProfileAdmissionException exception)
-        {
-            if (exception.Failure == Failure.Corrupt)
-            {
-                PreserveCorruption(path);
-            }
-
-            return Outcome<SqliteProfile>.Fail(exception.Failure);
-        }
-        catch (SqliteException exception) when (exception.SqliteErrorCode is 11 or 26)
-        {
-            PreserveCorruption(path);
-            return Outcome<SqliteProfile>.Fail(Failure.Corrupt);
-        }
-        catch (SqliteException)
-        {
-            return Outcome<SqliteProfile>.Fail(Failure.Unavailable);
-        }
-        catch (InvalidDataException)
-        {
-            return Outcome<SqliteProfile>.Fail(Failure.NeedsReview);
-        }
-        catch (JsonException)
-        {
-            return Outcome<SqliteProfile>.Fail(Failure.NeedsReview);
-        }
-        catch (FormatException)
-        {
-            return Outcome<SqliteProfile>.Fail(Failure.NeedsReview);
-        }
-        catch (IOException)
-        {
-            return Outcome<SqliteProfile>.Fail(Failure.Unavailable);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return Outcome<SqliteProfile>.Fail(Failure.Unavailable);
-        }
-        finally
-        {
-            lease?.Dispose();
-        }
     }
 
     public Task AddAccountAsync(
@@ -1465,7 +1466,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             ImmutableArray<MessageSnapshot>.Builder messages = ImmutableArray.CreateBuilder<MessageSnapshot>();
             while (reader.Read())
             {
-                messages.Add(ReadMessage(reader));
+                messages.Add(ProfileRecordReader.ReadMessage(reader));
             }
 
             string? continuation = null;
@@ -1479,6 +1480,51 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             }
 
             return Outcome<SearchPage>.Success(new SearchPage(messages.ToImmutable(), continuation));
+        }, cancellationToken);
+    }
+
+    public Task<string> ExplainSearchAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(
+                connection,
+                null,
+                "EXPLAIN QUERY PLAN SELECT MessageId FROM Messages WHERE AccountId=1 " +
+                "AND Date<100000 ORDER BY Date DESC,MessageId DESC LIMIT 50;"
+            );
+            using SqliteDataReader reader = command.ExecuteReader();
+            List<string> plans = new List<string>();
+            while (reader.Read())
+            {
+                plans.Add(reader.GetString(3));
+            }
+
+            reader.Close();
+            using SqliteCommand full = Command(
+                connection,
+                null,
+                """
+                EXPLAIN QUERY PLAN SELECT m.*,c.RemoteKey,i.UidValidity,i.Uid FROM Messages m
+                LEFT JOIN ImapInstances i ON i.AccountId=m.AccountId AND i.MessageId=m.MessageId
+                LEFT JOIN Collections c ON c.AccountId=i.AccountId AND c.FolderId=i.FolderId
+                WHERE m.AccountId=1 AND (i.UidValidity IS NULL OR i.UidValidity=c.UidValidity)
+                AND EXISTS(SELECT 1 FROM Memberships x WHERE x.AccountId=m.AccountId AND x.MessageId=m.MessageId)
+                AND (m.Date<100000 OR (m.Date=100000 AND m.MessageId<100000))
+                AND m.MessageId IN(SELECT rowid FROM SearchText WHERE SearchText MATCH '"résumé"')
+                ORDER BY m.Date DESC,m.MessageId DESC LIMIT 50;
+                """
+            );
+            using SqliteDataReader fullReader = full.ExecuteReader();
+            plans.Add("Full FTS/join/keyset query:");
+            while (fullReader.Read())
+            {
+                plans.Add(fullReader.GetString(3));
+            }
+
+            return string.Join("\n", plans);
         }, cancellationToken);
     }
 
@@ -1537,8 +1583,8 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             {
                 while (reader.Read())
                 {
-                    string address = !reader.IsDBNull(3) ? ReadGoogleBinding(reader.GetString(3))?.Address ?? "" :
-                        !reader.IsDBNull(2) ? ReadIdentity(reader.GetString(2))?.Sender ?? "" : "";
+                    string address = !reader.IsDBNull(3) ? ProfileRecordReader.ReadGoogleBinding(reader.GetString(3))?.Address ?? "" :
+                        !reader.IsDBNull(2) ? ProfileRecordReader.ReadIdentity(reader.GetString(2))?.Sender ?? "" : "";
                     if ((reader.GetString(4) == "Microsoft" || string.IsNullOrEmpty(address)) && reader.GetString(1).StartsWith("[", StringComparison.Ordinal))
                     {
                         address = JsonSerializer.Deserialize<MailEndpoint[]>(reader.GetString(1))?.FirstOrDefault()?.Username ?? "";
@@ -1630,7 +1676,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 ("$s", scope)
             );
             if (kind != "Imap" && kind != "Microsoft" ||
-                retained is string json && ReadMicrosoftBinding(json) != binding || kind == "Microsoft" && retained is not string)
+                retained is string json && ProfileRecordReader.ReadMicrosoftBinding(json) != binding || kind == "Microsoft" && retained is not string)
             {
                 return Failure.NeedsReview;
             }
@@ -1670,7 +1716,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 return Failure.NotFound;
             }
             object? retained = Scalar(connection, transaction, "SELECT Value FROM Preferences WHERE Scope=$s AND Key='google-binding';", ("$s", scope));
-            if (kind != "Imap" && kind != "Google" || retained is string json && ReadGoogleBinding(json) != binding ||
+            if (kind != "Imap" && kind != "Google" || retained is string json && ProfileRecordReader.ReadGoogleBinding(json) != binding ||
                 kind == "Google" && retained is not string ||
                 kind == "Imap" && Convert.ToInt64(Scalar(
                     connection,
@@ -1768,7 +1814,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 ("$review", (int)PendingState.NeedsReview)
             );
             using SqliteDataReader reader = command.ExecuteReader();
-            return reader.Read() ? ReadOperation(reader) : null;
+            return reader.Read() ? ProfileRecordReader.ReadOperation(reader) : null;
         }, cancellationToken);
     }
 
@@ -1796,7 +1842,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             ))
             using (SqliteDataReader reader = command.ExecuteReader())
             {
-                operation = reader.Read() ? ReadOperation(reader) : null;
+                operation = reader.Read() ? ProfileRecordReader.ReadOperation(reader) : null;
             }
 
             if (operation is null || operation.State is not (PendingState.Queued or PendingState.RetryScheduled) ||
@@ -1922,6 +1968,53 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
 
             transaction.Commit();
             return changed == 1;
+        }, cancellationToken);
+    }
+
+    public Task<bool> ResolveAsync(
+        OperationId id,
+        AccountId account,
+        bool retry,
+        CancellationToken cancellationToken
+    )
+    {
+        return ResolveOperationAsync(id, account, null, retry, cancellationToken);
+    }
+
+    public Task<bool> ResolveAsync(
+        OperationId id,
+        AccountId account,
+        long revision,
+        bool retry,
+        CancellationToken cancellationToken
+    )
+    {
+        return ResolveOperationAsync(id, account, revision, retry, cancellationToken);
+    }
+
+    public Task<ImmutableArray<CommandSnapshot>> CommandsAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        return ReadAsync(connection =>
+        {
+            using SqliteCommand command = Command(
+                connection,
+                null,
+                "SELECT o.Payload,o.State,o.Revision,o.Attempts,o.Due,o.Evidence,o.OperationId,o.AccountId,o.MessageId," +
+                "o.PayloadVersion,m.Subject FROM PendingOperations o LEFT JOIN Messages m ON m.AccountId=o.AccountId " +
+                "AND m.MessageId=o.MessageId WHERE o.AccountId=$a ORDER BY o.rowid DESC LIMIT 200;",
+                ("$a", account.Value)
+            );
+            using SqliteDataReader reader = command.ExecuteReader();
+            ImmutableArray<CommandSnapshot>.Builder entries = ImmutableArray.CreateBuilder<CommandSnapshot>();
+            while (reader.Read())
+            {
+                entries.Add(new CommandSnapshot(ProfileRecordReader.ReadOperation(reader), reader.IsDBNull(10) ? "" : reader.GetString(10)));
+            }
+
+            return entries.ToImmutable();
         }, cancellationToken);
     }
 
@@ -2249,7 +2342,28 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 ("$a", account.Value)
             );
             using SqliteDataReader reader = command.ExecuteReader();
-            return reader.Read() ? ReadOutbox(reader) : null;
+            return reader.Read() ? ProfileRecordReader.ReadOutbox(reader) : null;
+        }, cancellationToken);
+    }
+
+    Task<OutboxEntry?> IOutboxStore.ReadAsync(
+        Guid id,
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        return ReadAsync<OutboxEntry?>(connection =>
+        {
+            using SqliteCommand command = Command(
+                connection,
+                null,
+                "SELECT Frozen,State,Revision,Evidence,SubmissionId,AccountId,BlobId FROM OutboxSubmissions " +
+                "WHERE SubmissionId=$i AND AccountId=$a;",
+                ("$i", id.ToString("N")),
+                ("$a", account.Value)
+            );
+            using SqliteDataReader reader = command.ExecuteReader();
+            return reader.Read() ? ProfileRecordReader.ReadOutbox(reader) : null;
         }, cancellationToken);
     }
 
@@ -2324,98 +2438,6 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         // Connection lifetimes belong to individual operations; pooling is disabled.
     }
 
-    public Task<bool> ResolveAsync(
-        OperationId id,
-        AccountId account,
-        bool retry,
-        CancellationToken cancellationToken
-    )
-    {
-        return ResolveOperationAsync(id, account, null, retry, cancellationToken);
-    }
-
-    public Task<bool> ResolveAsync(
-        OperationId id,
-        AccountId account,
-        long revision,
-        bool retry,
-        CancellationToken cancellationToken
-    )
-    {
-        return ResolveOperationAsync(id, account, revision, retry, cancellationToken);
-    }
-
-    public Task<ImmutableArray<CommandSnapshot>> CommandsAsync(
-        AccountId account,
-        CancellationToken cancellationToken
-    )
-    {
-        return ReadAsync(connection =>
-        {
-            using SqliteCommand command = Command(
-                connection,
-                null,
-                "SELECT o.Payload,o.State,o.Revision,o.Attempts,o.Due,o.Evidence,o.OperationId,o.AccountId,o.MessageId," +
-                "o.PayloadVersion,m.Subject FROM PendingOperations o LEFT JOIN Messages m ON m.AccountId=o.AccountId " +
-                "AND m.MessageId=o.MessageId WHERE o.AccountId=$a ORDER BY o.rowid DESC LIMIT 200;",
-                ("$a", account.Value)
-            );
-            using SqliteDataReader reader = command.ExecuteReader();
-            ImmutableArray<CommandSnapshot>.Builder entries = ImmutableArray.CreateBuilder<CommandSnapshot>();
-            while (reader.Read())
-            {
-                entries.Add(new CommandSnapshot(ReadOperation(reader), reader.IsDBNull(10) ? "" : reader.GetString(10)));
-            }
-
-            return entries.ToImmutable();
-        }, cancellationToken);
-    }
-
-    public Task<string> ExplainSearchAsync(
-        CancellationToken cancellationToken
-    )
-    {
-        return ReadAsync(connection =>
-        {
-            using SqliteCommand command = Command(
-                connection,
-                null,
-                "EXPLAIN QUERY PLAN SELECT MessageId FROM Messages WHERE AccountId=1 " +
-                "AND Date<100000 ORDER BY Date DESC,MessageId DESC LIMIT 50;"
-            );
-            using SqliteDataReader reader = command.ExecuteReader();
-            List<string> plans = new List<string>();
-            while (reader.Read())
-            {
-                plans.Add(reader.GetString(3));
-            }
-
-            reader.Close();
-            using SqliteCommand full = Command(
-                connection,
-                null,
-                """
-                EXPLAIN QUERY PLAN SELECT m.*,c.RemoteKey,i.UidValidity,i.Uid FROM Messages m
-                LEFT JOIN ImapInstances i ON i.AccountId=m.AccountId AND i.MessageId=m.MessageId
-                LEFT JOIN Collections c ON c.AccountId=i.AccountId AND c.FolderId=i.FolderId
-                WHERE m.AccountId=1 AND (i.UidValidity IS NULL OR i.UidValidity=c.UidValidity)
-                AND EXISTS(SELECT 1 FROM Memberships x WHERE x.AccountId=m.AccountId AND x.MessageId=m.MessageId)
-                AND (m.Date<100000 OR (m.Date=100000 AND m.MessageId<100000))
-                AND m.MessageId IN(SELECT rowid FROM SearchText WHERE SearchText MATCH '"résumé"')
-                ORDER BY m.Date DESC,m.MessageId DESC LIMIT 50;
-                """
-            );
-            using SqliteDataReader fullReader = full.ExecuteReader();
-            plans.Add("Full FTS/join/keyset query:");
-            while (fullReader.Read())
-            {
-                plans.Add(fullReader.GetString(3));
-            }
-
-            return string.Join("\n", plans);
-        }, cancellationToken);
-    }
-
     private Task<OutboxEntry?> ClaimSubmissionAsync(
         Guid? id,
         AccountId account,
@@ -2438,7 +2460,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             ))
             using (SqliteDataReader reader = command.ExecuteReader())
             {
-                entry = reader.Read() ? ReadOutbox(reader) : null;
+                entry = reader.Read() ? ProfileRecordReader.ReadOutbox(reader) : null;
             }
 
             if (entry is null)
@@ -2459,61 +2481,6 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 State = SubmissionState.Submitting,
                 Revision = entry.Revision + 1
             };
-        }, cancellationToken);
-    }
-
-    private static ComposeIdentity? ReadIdentity(
-        string json
-    )
-    {
-        try
-        {
-            ComposeIdentity? identity = JsonSerializer.Deserialize<ComposeIdentity>(json);
-            return identity is not null && identity.IsValid ? identity : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static Capabilities? ReadCapabilities(
-        string json
-    )
-    {
-        if (json == "{}")
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<Capabilities>(json);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    Task<OutboxEntry?> IOutboxStore.ReadAsync(
-        Guid id,
-        AccountId account,
-        CancellationToken cancellationToken
-    )
-    {
-        return ReadAsync<OutboxEntry?>(connection =>
-        {
-            using SqliteCommand command = Command(
-                connection,
-                null,
-                "SELECT Frozen,State,Revision,Evidence,SubmissionId,AccountId,BlobId FROM OutboxSubmissions " +
-                "WHERE SubmissionId=$i AND AccountId=$a;",
-                ("$i", id.ToString("N")),
-                ("$a", account.Value)
-            );
-            using SqliteDataReader reader = command.ExecuteReader();
-            return reader.Read() ? ReadOutbox(reader) : null;
         }, cancellationToken);
     }
 
@@ -2539,7 +2506,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             ))
             using (SqliteDataReader reader = command.ExecuteReader())
             {
-                entry = reader.Read() ? ReadOperation(reader) : null;
+                entry = reader.Read() ? ProfileRecordReader.ReadOperation(reader) : null;
             }
 
             if (entry is null || (revision.HasValue && entry.Revision != revision.Value) ||
@@ -2628,7 +2595,6 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             BlobStore.VerifyPath(_path + suffix);
         }
         SqliteConnection connection = new SqliteConnection(new SqliteConnectionStringBuilder
-
         {
             DataSource = _path,
             ForeignKeys = true,
@@ -2727,36 +2693,6 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         return TargetMatches(connection, transaction, intent.Account, intent.Target, intent.Provider);
     }
 
-    private static GoogleAccountBinding? ReadGoogleBinding(
-        string json
-    )
-    {
-        try
-        {
-            GoogleAccountBinding? binding = JsonSerializer.Deserialize<GoogleAccountBinding>(json);
-            return binding is { IsValid: true } ? binding : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static MicrosoftAccountBinding? ReadMicrosoftBinding(
-        string json
-    )
-    {
-        try
-        {
-            MicrosoftAccountBinding? binding = JsonSerializer.Deserialize<MicrosoftAccountBinding>(json);
-            return binding is not null && binding.IsValid ? binding : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
     private static bool TargetMatches(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -2799,84 +2735,6 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             ("$v", imap.UidValidity),
             ("$u", imap.Uid)
         ), CultureInfo.InvariantCulture) == 1;
-    }
-
-    private static MessageSnapshot ReadMessage(
-        SqliteDataReader reader
-    )
-    {
-        AccountId account = new AccountId(reader.GetInt64(1));
-        ImapIdentity? imap = reader.IsDBNull(13) ? null :
-            new ImapIdentity(
-                account,
-                reader.GetString(13),
-                checked((uint)reader.GetInt64(14)),
-                checked((uint)reader.GetInt64(15))
-            );
-        return new MessageSnapshot(
-            account,
-            new MessageId(reader.GetInt64(0)),
-            new ProviderIdentity(account, reader.GetString(2), imap),
-            reader.GetString(4),
-            reader.GetString(5),
-            reader.IsDBNull(3) ? null : reader.GetString(3),
-            DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(6)),
-            reader.GetInt64(7),
-            reader.GetBoolean(8),
-            reader.GetBoolean(9),
-            (ContentAvailability)reader.GetInt32(10),
-            (PendingState)reader.GetInt32(11),
-            reader.IsDBNull(12) ? null : reader.GetString(12),
-            reader.IsDBNull(16) ? null : reader.GetString(16).Replace('\r', ' ').Replace('\n', ' '),
-            reader.GetBoolean(17)
-        );
-    }
-
-    private static OperationEntry ReadOperation(
-        SqliteDataReader reader
-    )
-    {
-        MutationIntent intent = JsonSerializer.Deserialize<MutationIntent>(reader.GetString(0)) ??
-            throw new InvalidDataException("Missing operation payload.");
-        if (intent.Id.Value.ToString("N") != reader.GetString(6) || intent.Account.Value != reader.GetInt64(7) ||
-            intent.Target.Value != reader.GetInt64(8) || intent.PayloadVersion != reader.GetInt32(9) ||
-            intent.Provider.Account != intent.Account || intent.Provider.Imap is not null &&
-                intent.Provider.Imap.Account != intent.Account || !Enum.IsDefined(intent.Kind))
-        {
-            throw new InvalidDataException("Operation payload does not match its durable identity.");
-        }
-
-        return new OperationEntry(
-            intent,
-            (PendingState)reader.GetInt32(1),
-            reader.GetInt64(2),
-            reader.GetInt32(3),
-            DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(4)),
-            (Failure)reader.GetInt32(5)
-        );
-    }
-
-    private static OutboxEntry ReadOutbox(
-        SqliteDataReader reader
-    )
-    {
-        FrozenSubmission submission = JsonSerializer.Deserialize<FrozenSubmission>(reader.GetString(0)) ??
-            throw new InvalidDataException("Missing frozen submission.");
-        if (submission.Id.ToString("N") != reader.GetString(4) ||
-            submission.Account.Value != reader.GetInt64(5) || submission.Mime.Account != submission.Account ||
-            submission.Mime.Id.ToString("N") != reader.GetString(6) || !submission.Mime.Protected ||
-            submission.Recipients.IsDefaultOrEmpty ||
-            submission.Recipients.Distinct(StringComparer.OrdinalIgnoreCase).Count() != submission.Recipients.Length)
-        {
-            throw new InvalidDataException("Frozen submission does not match its durable identity.");
-        }
-
-        return new OutboxEntry(
-            submission,
-            (SubmissionState)reader.GetInt32(1),
-            reader.GetInt64(2),
-            reader.IsDBNull(3) ? null : JsonSerializer.Deserialize<SubmissionOutcome>(reader.GetString(3))
-        );
     }
 
     private static DraftSnapshot? ReadDraft(

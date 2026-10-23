@@ -145,7 +145,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
 
     public string Title
     {
-        get => _title; set => SetProperty(ref _title, value);
+        get => _title;
+        set => SetProperty(ref _title, value);
     }
 
     public string Terms
@@ -198,8 +199,17 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    public string ReaderSubject => Selected is null ? Strings.Get("SelectMessage") :
-        string.IsNullOrWhiteSpace(Selected.Subject) ? Strings.Get("NoSubject") : Selected.Subject;
+    public string ReaderSubject
+    {
+        get
+        {
+            if (Selected is null)
+            {
+                return Strings.Get("SelectMessage");
+            }
+            return string.IsNullOrWhiteSpace(Selected.Subject) ? Strings.Get("NoSubject") : Selected.Subject;
+        }
+    }
     public string ReaderSender => SenderPresentation.Create(Selected?.Participants ?? "").Name;
     public string ReaderAddress => SenderPresentation.Create(Selected?.Participants ?? "").Address;
     public string ReaderTime => Selected?.Date.ToLocalTime().ToString("t", CultureInfo.CurrentCulture) ?? "";
@@ -236,7 +246,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
 
     public string Body
     {
-        get => _body; private set => SetProperty(ref _body, value);
+        get => _body;
+        private set => SetProperty(ref _body, value);
     }
 
     public MimeSnapshot? Content => _content;
@@ -296,10 +307,25 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
 
     public bool CanMove => CanMutate() && Accounts.FirstOrDefault(item => item.Id == Selected!.Account)?.Capabilities is
         Capabilities capabilities && (capabilities.NativeMove || capabilities.SelectiveExpunge);
-    public string MoveSupport => Selected is null ? "" :
-        Accounts.FirstOrDefault(item => item.Id == Selected.Account)?.Capabilities is not Capabilities capabilities ?
-        Strings.Get("MoveCapabilityUnknown") : !capabilities.NativeMove && !capabilities.SelectiveExpunge ?
-        Strings.Get("MoveCapabilityUnsupported") : "";
+    public string MoveSupport
+    {
+        get
+        {
+            if (Selected is null)
+            {
+                return "";
+            }
+            if (Accounts.FirstOrDefault(item => item.Id == Selected.Account)?.Capabilities is not Capabilities capabilities)
+            {
+                return Strings.Get("MoveCapabilityUnknown");
+            }
+            if (!capabilities.NativeMove && !capabilities.SelectiveExpunge)
+            {
+                return Strings.Get("MoveCapabilityUnsupported");
+            }
+            return "";
+        }
+    }
 
     public async Task InitialiseAsync(bool preserveLoadedRows = false)
     {

@@ -30,31 +30,26 @@ public sealed class ProviderAccountWindow : Window
         MinWidth = 360;
         MinHeight = 360;
         StackPanel form = new StackPanel
-
         {
             Margin = new Thickness(24),
             Spacing = 12
         };
         form.Children.Add(new TextBlock
-
         {
             Text = account.Address,
             TextWrapping = TextWrapping.Wrap
         });
         form.Children.Add(new TextBlock
-
         {
             Text = Strings.Get("ProviderConnectionHint"),
             TextWrapping = TextWrapping.Wrap
         });
         form.Children.Add(new TextBlock
-
         {
             Text = Strings.Get(account.ProviderKind == "Google" ? "GoogleRevokeHint" : "MicrosoftRevokeHint"),
             TextWrapping = TextWrapping.Wrap
         });
         TextBlock status = new TextBlock
-
         {
             Name = "ProviderAccountStatus",
             Text = Strings.Get("ProviderNotChecked"),
@@ -62,7 +57,6 @@ public sealed class ProviderAccountWindow : Window
         };
         AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
         StackPanel actions = new StackPanel
-
         {
             Spacing = 8
         };

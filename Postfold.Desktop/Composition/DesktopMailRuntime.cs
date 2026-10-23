@@ -597,28 +597,15 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             await _profile.SaveMailboxesAsync(account, discovered.Value, null, linked.Token).ConfigureAwait(false);
             await _profile.SaveCapabilitiesAsync(account, adapter.Capabilities, linked.Token).ConfigureAwait(false);
             ISentCopyStore? sent = discovered.Value.Count(item => item.Role == MailboxRole.Sent && item.Selectable && item.Writable) == 1 ? adapter : null;
-            MailAccountEngine engine = new MailAccountEngine(
-                adapter,
-                adapter,
-                adapter,
-                drafts,
-                sent,
-                smtp,
-                _profile,
-                _profile,
-                _profile,
-                _profile,
-                _profile,
-                _profile.Blobs,
-                _mime,
-                _scheduler,
-                _policy,
-                _retry,
-                _time,
-                _limits,
-                _profile,
-                discovered.Value,
-                adapter.CreateIdleSignal()
+            MailAccountEngine engine = CreateEngine(
+                reader: adapter,
+                content: adapter,
+                mutator: adapter,
+                drafts: drafts,
+                sent: sent,
+                submitter: smtp,
+                mailboxes: discovered.Value,
+                signal: adapter.CreateIdleSignal()
             );
             _accounts.Add(account, (adapter, engine));
             _credentials.Add(account, new PasswordTransportCredentials(credentials));
@@ -674,28 +661,15 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
                 _credentials[account],
                 _limits.MaximumMimeBytes
             );
-            MailAccountEngine engine = new MailAccountEngine(
-                imap,
-                imap,
-                imap,
-                drafts is null ? null : new ComposeRemoteDraftStore(drafts, _mime),
-                roles.Sent is null ? null : imap,
-                smtp,
-                _profile,
-                _profile,
-                _profile,
-                _profile,
-                _profile,
-                _profile.Blobs,
-                _mime,
-                _scheduler,
-                _policy,
-                _retry,
-                _time,
-                _limits,
-                _profile,
-                mailboxes,
-                imap.CreateIdleSignal()
+            MailAccountEngine engine = CreateEngine(
+                reader: imap,
+                content: imap,
+                mutator: imap,
+                drafts: drafts is null ? null : new ComposeRemoteDraftStore(drafts, _mime),
+                sent: roles.Sent is null ? null : imap,
+                submitter: smtp,
+                mailboxes: mailboxes,
+                signal: imap.CreateIdleSignal()
             );
             await entry.Engine.DisposeAsync().ConfigureAwait(false);
             imap.SetRoles(roles);
@@ -1055,6 +1029,42 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
                 endpoint.Host.Equals("smtp-mail.outlook.com", StringComparison.OrdinalIgnoreCase));
     }
 
+    private MailAccountEngine CreateEngine(
+        IMailboxReader reader,
+        IMessageContentReader content,
+        IMailboxMutator mutator,
+        IRemoteDraftStore? drafts,
+        ISentCopyStore? sent,
+        IMessageSubmitter submitter,
+        ImmutableArray<MailboxSnapshot> mailboxes,
+        IMailboxSignal? signal
+    )
+    {
+        return new MailAccountEngine(
+            reader,
+            content,
+            mutator,
+            drafts,
+            sent,
+            submitter,
+            _profile,
+            _profile,
+            _profile,
+            _profile,
+            _profile,
+            _profile.Blobs,
+            _mime,
+            _scheduler,
+            _policy,
+            _retry,
+            _time,
+            _limits,
+            _profile,
+            mailboxes,
+            signal
+        );
+    }
+
     private (IMailboxReader Adapter, MailAccountEngine Engine) CreateRestoredAccount(
         AccountConfiguration account,
         ImmutableArray<MailboxSnapshot> mailboxes,
@@ -1079,27 +1089,15 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             adapter : null;
         SmtpSubmitter smtp = new SmtpSubmitter(account.Id, account.Outgoing!, credentials, _limits.MaximumMimeBytes);
         ConfigureFixtureTransports?.Invoke(adapter, smtp);
-        MailAccountEngine engine = new MailAccountEngine(
-            adapter,
-            adapter,
-            adapter,
-            drafts is null ? null : new ComposeRemoteDraftStore(drafts, _mime),
-            sent,
-            smtp,
-            _profile,
-            _profile,
-            _profile,
-            _profile,
-            _profile,
-            _profile.Blobs,
-            _mime,
-            _scheduler,
-            _policy,
-            _retry,
-            _time,
-            _limits,
-            _profile,
-            mailboxes
+        MailAccountEngine engine = CreateEngine(
+            reader: adapter,
+            content: adapter,
+            mutator: adapter,
+            drafts: drafts is null ? null : new ComposeRemoteDraftStore(drafts, _mime),
+            sent: sent,
+            submitter: smtp,
+            mailboxes: mailboxes,
+            signal: null
         );
         return (adapter, engine);
     }
@@ -1145,27 +1143,15 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
             GoogleHttp(account.Id),
             false
         );
-        MailAccountEngine engine = new MailAccountEngine(
-            adapter,
-            adapter,
-            adapter,
-            new ComposeRemoteDraftStore(adapter, _mime),
-            adapter,
-            adapter,
-            _profile,
-            _profile,
-            _profile,
-            _profile,
-            _profile,
-            _profile.Blobs,
-            _mime,
-            _scheduler,
-            _policy,
-            _retry,
-            _time,
-            _limits,
-            _profile,
-            mailboxes
+        MailAccountEngine engine = CreateEngine(
+            reader: adapter,
+            content: adapter,
+            mutator: adapter,
+            drafts: new ComposeRemoteDraftStore(adapter, _mime),
+            sent: adapter,
+            submitter: adapter,
+            mailboxes: mailboxes,
+            signal: null
         );
         return (adapter, engine);
     }

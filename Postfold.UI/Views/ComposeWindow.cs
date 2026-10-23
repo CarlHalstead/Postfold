@@ -88,14 +88,12 @@ public sealed class ComposeWindow : Window
         MinWidth = 480;
         MinHeight = 480;
         StackPanel form = new StackPanel
-
         {
             Margin = new Thickness(24),
             Spacing = 12
         };
         _sender = content.Sender;
         _recipients = new AutoCompleteBox
-
         {
             Name = "Recipients",
             Text = string.Join(";", content.Recipients),
@@ -133,13 +131,11 @@ public sealed class ComposeWindow : Window
         WrapPanel actions = new WrapPanel();
         _actionButtons = actions;
         StackPanel attachmentHeading = new StackPanel
-
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             Spacing = 8
         };
         attachmentHeading.Children.Add(new TextBlock
-
         {
             Text = Strings.Get("ComposeAttachments"),
             FontWeight = FontWeight.SemiBold,
@@ -154,19 +150,16 @@ public sealed class ComposeWindow : Window
         if (original is not null && !originalAttachments.IsDefaultOrEmpty)
         {
             ListBox originals = new ListBox
-
             {
                 ItemsSource = originalAttachments,
                 MaxHeight = 120
             };
             Avalonia.Automation.AutomationProperties.SetName(originals, Strings.Get("OriginalAttachments"));
             originals.ItemTemplate = new FuncDataTemplate<AttachmentSnapshot>((attachment, _) => attachment is null ? null : new TextBlock
-
             {
                 Text = attachment.Name
             });
             form.Children.Add(new TextBlock
-
             {
                 Text = Strings.Get("OriginalAttachments")
             });
@@ -187,12 +180,10 @@ public sealed class ComposeWindow : Window
                 return null;
             }
             Grid row = new Grid
-
             {
                 ColumnDefinitions = new ColumnDefinitions("*,Auto")
             };
             TextBlock name = new TextBlock
-
             {
                 Text = attachment.Name + " (" + attachment.Content.Length.ToString(
                     System.Globalization.CultureInfo.CurrentCulture
@@ -221,7 +212,6 @@ public sealed class ComposeWindow : Window
             ToolTip.SetTip(remove, Strings.Get("RemoveAttachment"));
             Grid.SetColumn(remove, 1);
             Border card = new Border
-
             {
                 Child = row,
                 BorderThickness = new Thickness(1),
@@ -235,7 +225,6 @@ public sealed class ComposeWindow : Window
         _attachmentList.ItemsSource = _attachments.ToArray();
         _attachmentList.IsVisible = _attachments.Count > 0;
         _attachmentControls.Children.Add(new ScrollViewer
-
         {
             Content = _attachmentList,
             MaxHeight = 160,
@@ -250,7 +239,6 @@ public sealed class ComposeWindow : Window
         };
         footer.Children.Add(actions);
         TextBlock autosaveHint = new TextBlock
-
         {
             Text = Strings.Get("DraftAutosaveHint"),
             TextWrapping = TextWrapping.Wrap

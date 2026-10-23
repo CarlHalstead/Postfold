@@ -50,11 +50,9 @@ public sealed class SettingsWindow : Window
         MinHeight = 480;
         DockPanel root = new DockPanel();
         _tabs = new TabControl
-
         {
             Name = "SettingsSections",
             ItemsPanel = new FuncTemplate<Panel?>(() => new WrapPanel
-
             {
                 [KeyboardNavigation.TabNavigationProperty] = KeyboardNavigationMode.Continue
             })
@@ -105,7 +103,6 @@ public sealed class SettingsWindow : Window
             };
             form.Children.Add(sizeLabel);
             Slider size = new Slider
-
             {
                 Name = "TextSize",
                 Minimum = 12,

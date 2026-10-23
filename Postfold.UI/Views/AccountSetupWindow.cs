@@ -32,7 +32,6 @@ public sealed class AccountSetupWindow : Window
         MinWidth = 360;
         MinHeight = 360;
         StackPanel form = new StackPanel
-
         {
             Margin = new Thickness(24),
             Spacing = 12
@@ -50,7 +49,6 @@ public sealed class AccountSetupWindow : Window
         };
         form.Children.Add(providerActions);
         StackPanel login = new StackPanel
-
         {
             Name = "LoginStep",
             Spacing = 12
@@ -61,14 +59,12 @@ public sealed class AccountSetupWindow : Window
         TextBox password = FormControls.AddField(login, "AccountPassword", password: true);
         password.Name = "IncomingPassword";
         TextBlock loginHint = new TextBlock
-
         {
             Text = Strings.LoginHint,
             TextWrapping = TextWrapping.Wrap
         };
         login.Children.Add(loginHint);
         StackPanel servers = new StackPanel
-
         {
             Name = "ServerStep",
             Spacing = 12,
@@ -81,7 +77,6 @@ public sealed class AccountSetupWindow : Window
             FontWeight = FontWeight.SemiBold
         });
         servers.Children.Add(new TextBlock
-
         {
             Text = Strings.ServerHint,
             TextWrapping = TextWrapping.Wrap
@@ -123,7 +118,6 @@ public sealed class AccountSetupWindow : Window
         servers.Children.Add(HostAndPort(outgoingHostGroup, outgoingPortGroup));
         servers.Children.Add(outgoingTlsGroup);
         TextBlock status = new TextBlock
-
         {
             Name = "SetupStatus",
             TextWrapping = TextWrapping.Wrap
@@ -141,7 +135,6 @@ public sealed class AccountSetupWindow : Window
         footer.Children.Add(loginActions);
         footer.Children.Add(serverActions);
         Button back = new Button
-
         {
             Name = "BackLogin",
             Content = FormControls.Icon(MailIcons.Back),
@@ -381,7 +374,6 @@ public sealed class AccountSetupWindow : Window
         )
         {
             Grid row = new Grid
-
             {
                 ColumnDefinitions = new ColumnDefinitions("9*,12,1*")
             };
@@ -400,7 +392,6 @@ public sealed class AccountSetupWindow : Window
         )
         {
             TextBlock label = new TextBlock
-
             {
                 Text = Strings.Get(key),
                 TextWrapping = TextWrapping.Wrap
@@ -408,14 +399,12 @@ public sealed class AccountSetupWindow : Window
             label.Classes.Add("caption");
             target.Children.Add(label);
             ComboBox choice = new ComboBox
-
             {
                 Name = key,
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
                 ItemsSource = Enum.GetValues<TlsMode>(),
                 SelectedIndex = 0,
                 ItemTemplate = new FuncDataTemplate<TlsMode>((value, _) => new TextBlock
-
                 {
                     Text = Strings.Describe(value)
                 })
