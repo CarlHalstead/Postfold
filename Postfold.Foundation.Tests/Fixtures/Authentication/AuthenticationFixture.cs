@@ -44,6 +44,7 @@ internal sealed class AuthenticationFixture : HttpMessageHandler, IProtectedToke
     internal bool SendCallback { get; set; } = true;
     internal bool CallbackFailureExpected { get; set; }
     internal TaskCompletionSource<Uri> Opened { get; } = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal TaskCompletionSource CallbackRetrying { get; } = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     internal Task<string>? Callback { get; private set; }
     internal Uri? Authorization { get; private set; }
 
@@ -101,13 +102,18 @@ internal sealed class AuthenticationFixture : HttpMessageHandler, IProtectedToke
 
     public async ValueTask DisposeAsync()
     {
-        if (Callback is not null)
+        try
         {
-            await Callback.WaitAsync(TimeSpan.FromSeconds(5));
+            if (Callback is not null)
+            {
+                await Callback;
+            }
         }
-
-        Http.Dispose();
-        Dispose();
+        finally
+        {
+            Http.Dispose();
+            Dispose();
+        }
     }
 
     internal static Dictionary<string, string> Query(Uri uri)
@@ -174,8 +180,10 @@ internal sealed class AuthenticationFixture : HttpMessageHandler, IProtectedToke
 
     private async Task<string> CallbackAsync(Uri redirect, string query, bool formPost, CancellationToken cancellationToken)
     {
-        using TcpClient client = new TcpClient();
-        await client.ConnectAsync(redirect.DnsSafeHost, redirect.Port, cancellationToken);
+        using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(5));
+        cancellationToken = deadline.Token;
+        using TcpClient client = await ConnectCallbackAsync(redirect, cancellationToken);
         using NetworkStream stream = client.GetStream();
         string headers = " HTTP/1.1\r\nHost: " + (CallbackHost ?? redirect.Authority) + "\r\n";
         byte[] request = Encoding.ASCII.GetBytes(formPost ? "POST " + CallbackPath + headers +
@@ -191,6 +199,32 @@ internal sealed class AuthenticationFixture : HttpMessageHandler, IProtectedToke
         catch (System.IO.IOException) when (CallbackFailureExpected)
         {
             return "[rejected callback connection]";
+        }
+    }
+
+    private async Task<TcpClient> ConnectCallbackAsync(Uri redirect, CancellationToken cancellationToken)
+    {
+        // MSAL opens the browser before starting its listener. Retry only connection establishment,
+        // within the callback deadline; never replay an HTTP request after it has connected.
+        while (true)
+        {
+            TcpClient client = new TcpClient();
+            try
+            {
+                await client.ConnectAsync(redirect.DnsSafeHost, redirect.Port, cancellationToken);
+                return client;
+            }
+            catch (SocketException exception) when (exception.SocketErrorCode == SocketError.ConnectionRefused)
+            {
+                client.Dispose();
+                CallbackRetrying.TrySetResult();
+                await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken);
+            }
+            catch
+            {
+                client.Dispose();
+                throw;
+            }
         }
     }
 }
