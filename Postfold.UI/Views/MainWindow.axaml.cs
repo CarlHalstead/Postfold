@@ -137,12 +137,33 @@ public sealed partial class MainWindow : Window
         ListBox messageList = this.FindControl<ListBox>("MessageList")!;
         messageList.AddHandler(PointerPressedEvent, MessagePointerPressed, RoutingStrategies.Tunnel);
         messageList.PointerMoved += MessagePointerMoved;
+        messageList.AddHandler(KeyDownEvent, (_, args) =>
+        {
+            if (args.Key == Key.A && args.KeyModifiers == KeyModifiers.Control && DataContext is MainWindowViewModel model)
+            {
+                model.SelectAllMessages();
+                args.Handled = true;
+            }
+            else if (DataContext is MainWindowViewModel { AllMessagesSelected: true } selection &&
+                args.Key is Key.Escape or Key.Up or Key.Down or Key.Home or Key.End or Key.PageUp or Key.PageDown)
+            {
+                selection.ClearMessageSelection();
+            }
+        }, RoutingStrategies.Tunnel);
         messageList.Tapped += (_, args) =>
         {
             if (args.Source is Visual source && source.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext is MessageSummary row &&
-                DataContext is MainWindowViewModel model)
+                DataContext is MainWindowViewModel model && !model.AllMessagesSelected && model.SelectedRows.Count == 1 &&
+                model.SelectedRows[0].Message == row.Message)
             {
                 Track(() => model.OpenMessageAsync(row.Message));
+            }
+        };
+        messageList.KeyUp += (_, _) =>
+        {
+            if (DataContext is MainWindowViewModel { AllMessagesSelected: false, SelectedRows.Count: 1 } model)
+            {
+                Track(() => model.OpenMessageAsync(model.SelectedRows[0].Message));
             }
         };
         messageList.PointerReleased += (_, _) => { _dragPress = null; _dragMessage = null; };
@@ -354,6 +375,13 @@ public sealed partial class MainWindow : Window
             else if (args.KeyModifiers == KeyModifiers.Control && args.Key == Key.F)
             {
                 this.FindControl<TextBox>("SearchBox")!.Focus();
+                args.Handled = true;
+            }
+            else if (args.KeyModifiers == KeyModifiers.Control && args.Key == Key.A &&
+                this.FindControl<TreeView>("ScopeList")!.IsKeyboardFocusWithin && DataContext is MainWindowViewModel model)
+            {
+                model.SelectAllMessages();
+                this.FindControl<ListBox>("MessageList")!.Focus();
                 args.Handled = true;
             }
             else if (args.Key == Key.F6 && args.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift)
@@ -1028,10 +1056,78 @@ Content = FormControls.Page("", panel, footer)
         }
     }
 
+    private void MessageMenuOpening(object? sender, System.ComponentModel.CancelEventArgs args)
+    {
+        if (DataContext is not MainWindowViewModel model || !model.AllMessagesSelected && model.SelectedRows.Count == 0)
+        {
+            args.Cancel = true;
+            return;
+        }
+        bool single = !model.AllMessagesSelected && model.SelectedRows.Count == 1;
+        this.FindControl<MenuItem>("MessageReplyMenu")!.IsVisible = single;
+        this.FindControl<MenuItem>("MessageForwardMenu")!.IsVisible = single;
+        this.FindControl<MenuItem>("MessageTrashMenu")!.IsEnabled = model.CanApplySelection(true);
+        MenuItem read = this.FindControl<MenuItem>("MessageReadMenu")!;
+        read.Header = single ? model.ReadAction : Strings.Get("MarkRead");
+        read.IsEnabled = model.CanApplySelection(false);
+    }
+
+    private void MessageReplyClicked(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is MainWindowViewModel { AllMessagesSelected: false, SelectedRows.Count: 1 })
+        {
+            OpenCompose("Reply");
+        }
+    }
+
+    private void MessageForwardClicked(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is MainWindowViewModel { AllMessagesSelected: false, SelectedRows.Count: 1 })
+        {
+            OpenCompose("Forward");
+        }
+    }
+
+    private void MessageTrashClicked(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is MainWindowViewModel model)
+        {
+            Track(() => model.ApplySelectionAsync(true, _lifetime.Token));
+        }
+    }
+
+    private void MessageReadClicked(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is MainWindowViewModel model)
+        {
+            Track(() => model.ApplySelectionAsync(false, _lifetime.Token));
+        }
+    }
+
     private void MessagePointerPressed(object? sender, PointerPressedEventArgs args)
     {
         _dragPress = null;
         _dragMessage = null;
+        if (DataContext is MainWindowViewModel selection && sender is ListBox list && args.Source is Visual target &&
+            target.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext is MessageSummary clicked)
+        {
+            bool right = args.GetCurrentPoint(this).Properties.IsRightButtonPressed;
+            bool selected = selection.SelectedRows.Contains(clicked);
+            if (right && !selected || !right && (args.KeyModifiers & KeyModifiers.Control) == 0 && selection.AllMessagesSelected)
+            {
+                object? anchor = list.SelectedItem;
+                selection.ClearMessageSelection();
+                list.SelectedItem = (args.KeyModifiers & KeyModifiers.Shift) != 0 ? anchor : clicked;
+            }
+            else if (right && selected)
+            {
+                args.Handled = true;
+            }
+            if (right && !selection.AllMessagesSelected && selection.SelectedRows.Count == 1)
+            {
+                Track(() => selection.OpenMessageAsync(clicked.Message));
+            }
+        }
         if (args.GetCurrentPoint(this).Properties.IsLeftButtonPressed && args.Source is Visual source &&
             source.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext is MessageSummary row)
         {
@@ -1061,7 +1157,7 @@ Content = FormControls.Page("", panel, footer)
         _dragPress = null;
         _dragMessage = null;
         if (DataContext is MainWindowViewModel model && model.Selected?.Account == message.Account &&
-            model.Selected.Id == message.Id && model.CanMove)
+            model.Selected.Id == message.Id && model.SelectedRows.Count == 1 && !model.AllMessagesSelected && model.CanMove)
         {
             Track(async () =>
             {

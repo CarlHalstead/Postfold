@@ -212,6 +212,11 @@
   <data name="IdentitySettings" xml:space="preserve"><value>Sender identity</value></data>
   <data name="MailPollInterval" xml:space="preserve"><value>Check for mail every (seconds)</value></data>
   <data name="MailPollIntervalHint" xml:space="preserve"><value>3–60 seconds after each completed sync. Changes apply after the current wait. Provider limits and retry delays may make checks less frequent.</value></data>
+  <data name="SelectionScope" xml:space="preserve"><value>All messages in this folder/search selected, including unloaded pages ({0} excluded).</value></data>
+  <data name="SelectionCount" xml:space="preserve"><value>{0} messages selected</value></data>
+  <data name="SelectionAll" xml:space="preserve"><value>All messages in this folder or search are selected, including messages not loaded yet.</value></data>
+  <data name="BatchActionRunning" xml:space="preserve"><value>Queuing selected message actions…</value></data>
+  <data name="BatchActionResult" xml:space="preserve"><value>{0} messages queued; errors: {1}. {2}</value></data>
   <data name="IdentityHint" xml:space="preserve"><value>The sender address is saved for this account and used for new messages, replies and forwards.</value></data>
   <data name="IdentityAccount" xml:space="preserve"><value>Account for this identity</value></data>
   <data name="ReviewedSentCopy" xml:space="preserve"><value>Retry reviewed sent-copy storage only</value></data>

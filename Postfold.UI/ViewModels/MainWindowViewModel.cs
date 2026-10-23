@@ -46,6 +46,10 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     private readonly TimeProvider _clock;
     private bool _unreadOnly;
     private bool _updatingRows;
+    private bool _changingSelection;
+    private SearchRequest? _allSelectionScope;
+    private readonly HashSet<(AccountId Account, MessageId Message, ProviderIdentity Provider)> _selectionExceptions = [];
+    private CancellationTokenSource? _batchCancellation;
 
     public MainWindowViewModel() : this(null)
     {
@@ -55,6 +59,40 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     {
         _application = application;
         _clock = clock ?? TimeProvider.System;
+        SelectedRows.CollectionChanged += (_, args) =>
+        {
+            if (_changingSelection || _updatingRows)
+            {
+                return;
+            }
+            if (_allSelectionScope is not null)
+            {
+                if (args.OldItems is not null)
+                {
+                    foreach (MessageSummary row in args.OldItems)
+                    {
+                        _selectionExceptions.Add((row.Message.Account, row.Message.Id, row.Message.Provider));
+                    }
+                }
+                if (args.NewItems is not null)
+                {
+                    foreach (MessageSummary row in args.NewItems)
+                    {
+                        _selectionExceptions.Remove((row.Message.Account, row.Message.Id, row.Message.Provider));
+                    }
+                }
+            }
+            _changingSelection = true;
+            try
+            {
+                Selected = _allSelectionScope is null && SelectedRows.Count == 1 ? SelectedRows[0].Message : null;
+            }
+            finally
+            {
+                _changingSelection = false;
+            }
+            NotifySelection();
+        };
         RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(false));
         MoreCommand = new AsyncRelayCommand(() => RefreshAsync(true), () => _continuation is not null);
         RetrieveCommand = new AsyncRelayCommand(() => ReadSelectedAsync(true), () => Selected is not null);
@@ -87,6 +125,12 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     }
     public ObservableCollection<MessageSnapshot> Messages { get; } = [];
     public ObservableCollection<MessageSummary> Rows { get; } = [];
+    public ObservableCollection<MessageSummary> SelectedRows { get; } = [];
+    public bool AllMessagesSelected => _allSelectionScope is not null;
+    public bool HasMessageSelection => AllMessagesSelected || SelectedRows.Count > 1;
+    public string SelectionDescription => AllMessagesSelected ?
+        string.Format(CultureInfo.CurrentCulture, Strings.Get("SelectionScope"), _selectionExceptions.Count) :
+        string.Format(CultureInfo.CurrentCulture, Strings.Get("SelectionCount"), SelectedRows.Count);
     public ObservableCollection<AttachmentSnapshot> Attachments { get; } = [];
     public ObservableCollection<AccountConfiguration> Accounts { get; } = [];
     public ObservableCollection<MailboxSnapshot> Mailboxes { get; } = [];
@@ -222,11 +266,26 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
                 _selected.Provider != value.Provider);
             if (SetProperty(ref _selected, value))
             {
-                if (opened || value is null || _content is null && _load.IsCompleted)
+                // Native multi-selection changes its collection before the pointer/key gesture completes.
+                // Defer opening until that gesture ends, so read-state row replacements cannot re-enter selection.
+                if (_changingSelection)
+                {
+                    _reading?.Cancel();
+                    _content = null;
+                    Attachments.Clear();
+                    Body = "";
+                    _load = Task.CompletedTask;
+                    OnPropertyChanged(nameof(Content));
+                }
+                else if (opened || value is null || _content is null && _load.IsCompleted)
                 {
                     _load = OpenSelectedAsync(opened);
                     _reads.RemoveAll(item => item.IsCompletedSuccessfully || item.IsCanceled);
                     _reads.Add(_load);
+                }
+                if (!_changingSelection && !_updatingRows && _allSelectionScope is null)
+                {
+                    RestoreSelectedRows(value is null ? [] : new[] { value });
                 }
                 NotifyCommands();
                 OnPropertyChanged(nameof(SelectedRow));
@@ -633,6 +692,158 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         return MoveAsync(destination);
     }
 
+    /// <summary>Selects the entire current folder/search without loading its remaining pages into the UI.</summary>
+    public void SelectAllMessages()
+    {
+        if (_pageScope is null)
+        {
+            return;
+        }
+        _allSelectionScope = _pageScope with { Continuation = null };
+        _selectionExceptions.Clear();
+        _changingSelection = true;
+        try
+        {
+            Selected = null;
+        }
+        finally
+        {
+            _changingSelection = false;
+        }
+        RestoreSelectedRows([]);
+        Status = Strings.Get("SelectionAll");
+    }
+
+    /// <summary>Returns to explicit row selection, including before an ordinary click after selecting the entire scope.</summary>
+    public void ClearMessageSelection()
+    {
+        _allSelectionScope = null;
+        _selectionExceptions.Clear();
+        if (Status == Strings.Get("SelectionAll"))
+        {
+            Status = "";
+        }
+        RestoreSelectedRows([]);
+        Selected = null;
+    }
+
+    /// <summary>Checks currently known source/destination capabilities; each unloaded message is checked before queuing.</summary>
+    public bool CanApplySelection(bool trash)
+    {
+        return _application is not null && _batchCancellation is null && _pageScope is not null &&
+            (AllMessagesSelected || SelectedRows.Count > 0) &&
+            SelectedRows.All(row => CanApplyMessage(row.Message, trash));
+    }
+
+    /// <summary>Queues explicit messages or streams all selected search pages. Failures are counted; successful intents are never rolled back.</summary>
+    public async Task ApplySelectionAsync(bool trash, CancellationToken cancellationToken)
+    {
+        if (!CanApplySelection(trash) || _application is null)
+        {
+            return;
+        }
+        SearchRequest? scope = _allSelectionScope;
+        HashSet<(AccountId Account, MessageId Message, ProviderIdentity Provider)> exceptions = new HashSet<(AccountId, MessageId, ProviderIdentity)>(_selectionExceptions);
+        MessageSnapshot[] explicitMessages = SelectedRows.Select(row => row.Message).ToArray();
+        using CancellationTokenSource batch = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, cancellationToken);
+        _batchCancellation = batch;
+        Status = Strings.Get("BatchActionRunning");
+        int succeeded = 0;
+        int failed = 0;
+        Failure lastFailure = Failure.None;
+        try
+        {
+            string? continuation = null;
+            do
+            {
+                ImmutableArray<MessageSnapshot> messages;
+                if (scope is not null)
+                {
+                    Outcome<SearchPage> page = await _application.SearchAsync(scope with { Continuation = continuation }, batch.Token);
+                    if (!page.IsSuccess)
+                    {
+                        failed++;
+                        lastFailure = page.Failure;
+                        break;
+                    }
+                    messages = page.Value!.Messages;
+                    continuation = page.Value.Continuation;
+                }
+                else
+                {
+                    messages = explicitMessages.ToImmutableArray();
+                }
+                foreach (MessageSnapshot message in messages)
+                {
+                    batch.Token.ThrowIfCancellationRequested();
+                    if (exceptions.Contains((message.Account, message.Id, message.Provider)))
+                    {
+                        continue;
+                    }
+                    Failure result;
+                    if (!CanApplyMessage(message, trash))
+                    {
+                        result = Failure.Unsupported;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            string? destination = trash ? Mailboxes.Single(folder => folder.Account == message.Account &&
+                                folder.Role == MailboxRole.Trash && folder.Selectable && folder.Writable).RemoteKey : null;
+                            bool read = scope is not null || explicitMessages.Length != 1 || !message.Read;
+                            result = await _application.MutateAsync(
+                                message,
+                                trash ? MutationKind.Move : MutationKind.SetRead,
+                                !trash && read,
+                                destination,
+                                batch.Token
+                            );
+                        }
+                        catch (System.IO.IOException)
+                        {
+                            result = Failure.Unavailable;
+                        }
+                    }
+                    if (result == Failure.None)
+                    {
+                        succeeded++;
+                    }
+                    else
+                    {
+                        failed++;
+                        lastFailure = result;
+                    }
+                }
+            } while (scope is not null && continuation is not null);
+        }
+        catch (OperationCanceledException) when (batch.IsCancellationRequested)
+        {
+            lastFailure = Failure.NeedsReview;
+        }
+        catch (System.IO.IOException)
+        {
+            failed++;
+            lastFailure = Failure.Unavailable;
+        }
+        finally
+        {
+            _batchCancellation = null;
+        }
+        ClearMessageSelection();
+        if (!_lifetime.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            await RefreshAsync(false, preserveLoadedRows: true);
+            Status = string.Format(
+                CultureInfo.CurrentCulture,
+                Strings.Get("BatchActionResult"),
+                succeeded,
+                failed,
+                lastFailure == Failure.None ? "" : Strings.Describe(lastFailure)
+            );
+        }
+    }
+
     public bool CanMutate()
     {
         if (Selected is MessageSnapshot message && message.Provider.Imap is null)
@@ -671,6 +882,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         int weekOffset = ((int)today.DayOfWeek - (int)CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek + 7) % 7;
         DateOnly startOfWeek = today.AddDays(-weekOffset);
         string? previous = null;
+        MessageSnapshot[] selected = SelectedRows.Select(row => row.Message).ToArray();
         _updatingRows = true;
         try
         {
@@ -707,7 +919,57 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         {
             _updatingRows = false;
         }
+        RestoreSelectedRows(selected);
         OnPropertyChanged(nameof(SelectedRow));
+    }
+
+    private void RestoreSelectedRows(IEnumerable<MessageSnapshot> messages)
+    {
+        HashSet<(AccountId Account, MessageId Message, ProviderIdentity Provider)> keys = messages
+            .Select(message => (message.Account, message.Id, message.Provider)).ToHashSet();
+        _changingSelection = true;
+        try
+        {
+            SelectedRows.Clear();
+            foreach (MessageSummary row in Rows)
+            {
+                (AccountId, MessageId, ProviderIdentity) key = (row.Message.Account, row.Message.Id, row.Message.Provider);
+                if (AllMessagesSelected ? !_selectionExceptions.Contains(key) : keys.Contains(key))
+                {
+                    SelectedRows.Add(row);
+                }
+            }
+        }
+        finally
+        {
+            _changingSelection = false;
+        }
+        NotifySelection();
+    }
+
+    private void NotifySelection()
+    {
+        OnPropertyChanged(nameof(AllMessagesSelected));
+        OnPropertyChanged(nameof(HasMessageSelection));
+        OnPropertyChanged(nameof(SelectionDescription));
+    }
+
+    private bool CanApplyMessage(MessageSnapshot message, bool trash)
+    {
+        if (message.Provider.Account != message.Account)
+        {
+            return false;
+        }
+        AccountConfiguration? account = Accounts.FirstOrDefault(item => item.Id == message.Account);
+        bool mutable = message.Provider.Imap is ImapIdentity imap ?
+            imap.Account == message.Account && Mailboxes.Any(folder => folder.Account == message.Account &&
+                folder.RemoteKey == imap.Mailbox && folder.UidValidity == imap.UidValidity && folder.Selectable && folder.Writable) :
+            account is { ProviderKind: "Google", GoogleBinding.IsValid: true, Capabilities.NativeMove: true } &&
+                !string.IsNullOrEmpty(message.Provider.Key);
+        return mutable && (!trash || account?.Capabilities is { } capabilities &&
+            (capabilities.NativeMove || capabilities.SelectiveExpunge) &&
+            Mailboxes.Count(folder => folder.Account == message.Account && folder.Role == MailboxRole.Trash &&
+                folder.Selectable && folder.Writable) == 1);
     }
 
     private static string MailboxName(AccountConfiguration account, MailboxSnapshot mailbox)
@@ -927,6 +1189,11 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
 
     private void InvalidatePage()
     {
+        _batchCancellation?.Cancel();
+        if (AllMessagesSelected || SelectedRows.Count > 1)
+        {
+            ClearMessageSelection();
+        }
         _continuation = null;
         _pageScope = null;
         _searchGeneration++;

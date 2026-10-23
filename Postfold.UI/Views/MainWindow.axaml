@@ -138,11 +138,20 @@
                         </Button>
                     </Grid>
                     <TextBlock Text="{Binding SearchScope}" Classes="caption" Margin="16,0,16,8" TextTrimming="CharacterEllipsis" ToolTip.Tip="{x:Static ui:Strings.SearchHint}" />
+                    <TextBlock Text="{Binding SelectionDescription}" IsVisible="{Binding HasMessageSelection}" Margin="16,0,16,8" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
                 </StackPanel>
                 <Button Name="LoadMoreButton" DockPanel.Dock="Bottom" Content="{x:Static ui:Strings.More}" Command="{Binding MoreCommand}" IsVisible="False" Margin="16,8" HorizontalAlignment="Stretch" />
                 <Grid>
                     <TextBlock Text="{x:Static ui:Strings.NoMessages}" IsVisible="{Binding IsEmpty}" Margin="24" TextWrapping="Wrap" />
-                    <ListBox Name="MessageList" Focusable="True" Classes="mail summaries" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}" AutomationProperties.Name="{x:Static ui:Strings.Messages}" Margin="12,0">
+                    <ListBox Name="MessageList" Focusable="True" Classes="mail summaries" ItemsSource="{Binding Rows}" SelectionMode="Multiple" SelectedItems="{Binding SelectedRows, Mode=OneWay}" AutomationProperties.Name="{x:Static ui:Strings.Messages}" Margin="12,0">
+                        <ListBox.ContextMenu>
+                            <ContextMenu Opening="MessageMenuOpening">
+                                <MenuItem Name="MessageReplyMenu" Header="{x:Static ui:Strings.Reply}" Click="MessageReplyClicked" IsEnabled="{Binding CanComposeFromMessage}" />
+                                <MenuItem Name="MessageForwardMenu" Header="{x:Static ui:Strings.Forward}" Click="MessageForwardClicked" IsEnabled="{Binding CanComposeFromMessage}" />
+                                <MenuItem Name="MessageTrashMenu" Header="{x:Static ui:Strings.Trash}" Click="MessageTrashClicked" />
+                                <MenuItem Name="MessageReadMenu" Click="MessageReadClicked" />
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
                         <ListBox.Styles>
                             <Style Selector="ListBoxItem" x:DataType="models:MessageSummary">
                                 <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />

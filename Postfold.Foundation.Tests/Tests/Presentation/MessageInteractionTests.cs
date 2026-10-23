@@ -1,4 +1,6 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
 using Avalonia.VisualTree;
@@ -13,6 +15,10 @@ using Postfold.Core.Models.Messages;
 using Postfold.Core.Models.Mime;
 using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
+using Postfold.Desktop.Composition;
+using Postfold.Engine.Tests.Fakes;
+using Postfold.Engine.Tests.Fixtures;
+using Postfold.Foundation.Tests.Fixtures.Desktop;
 using Postfold.UI.ViewModels;
 using Postfold.UI.Views;
 using System.Collections.Immutable;
@@ -284,6 +290,227 @@ public sealed class MessageInteractionTests
             Arg.Any<string>(),
             Arg.Any<CancellationToken>()
         );
+    }
+
+    [AvaloniaTest]
+    [TestCase(true)]
+    [TestCase(false)]
+    public async Task MessageSelection_WhenUsingModifiersAndSelectAll_PreservesRangesAndHidesSingleMessageActions(bool read)
+    {
+        // Arrange
+        IMailApplication application = Application();
+        ImmutableArray<MessageSnapshot> messages = Enumerable.Range(1, 5).Select(id => Message() with
+        {
+            Id = new MessageId(id),
+            Read = read
+        }).ToImmutableArray();
+        application.ReadAsync(Arg.Any<MessageSnapshot>(), true, Arg.Any<CancellationToken>()).Returns(
+            Outcome<MimeSnapshot>.Success(new MimeSnapshot("Synthetic", "sender", null, "Body", null,
+                [new AttachmentSnapshot("1", "selected.txt", "text/plain", 1)])));
+        application.SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Outcome<SearchPage>.Success(new SearchPage(messages, "more")));
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        MainWindow window = new MainWindow { DataContext = model };
+        window.Configure(application, null);
+        window.Show();
+        ListBox list = window.FindControl<ListBox>("MessageList")!;
+        try
+        {
+            // Act
+            Click(0, RawInputModifiers.None);
+            Click(2, RawInputModifiers.Shift);
+            Assert.That(model.SelectedRows.Select(row => row.Message.Id.Value), Is.EquivalentTo(new long[] { 1, 2, 3 }));
+            Click(4, RawInputModifiers.Control);
+            Assert.That(model.SelectedRows, Has.Count.EqualTo(4));
+            Assert.That(model.Attachments, Is.Empty);
+            ListBoxItem target = (ListBoxItem)list.ContainerFromIndex(2)!;
+            Point contextPoint = target.TranslatePoint(new Point(80, target.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(contextPoint, MouseButton.Right);
+            window.MouseUp(contextPoint, MouseButton.Right);
+            window.UpdateLayout();
+            Assert.That(model.SelectedRows, Has.Count.EqualTo(4));
+            Assert.That(list.ContextMenu!.IsOpen, Is.True);
+            Assert.That(window.FindControl<MenuItem>("MessageReplyMenu")!.IsVisible, Is.False);
+            Assert.That(window.FindControl<MenuItem>("MessageReadMenu")!.IsEnabled, Is.True);
+            list.ContextMenu.Close();
+            list.Focus();
+            window.KeyPressQwerty(PhysicalKey.A, RawInputModifiers.Control);
+            window.KeyReleaseQwerty(PhysicalKey.A, RawInputModifiers.Control);
+
+            // Assert
+            Assert.That(model.AllMessagesSelected, Is.True);
+            Assert.That(model.SelectedRows, Has.Count.EqualTo(5));
+            Assert.That(model.Status, Does.Contain("not loaded yet"));
+            Click(1, RawInputModifiers.Control);
+            Assert.That(model.SelectedRows, Has.Count.EqualTo(4));
+            model.RegroupMessages();
+            Assert.That(model.SelectedRows.Any(row => row.Message.Id.Value == 2), Is.False);
+            Click(3, RawInputModifiers.None);
+            Assert.That(model.AllMessagesSelected, Is.False);
+            Assert.That(model.SelectedRows.Single().Message.Id.Value, Is.EqualTo(4));
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        void Click(int index, RawInputModifiers modifiers)
+        {
+            window.UpdateLayout();
+            ListBoxItem item = (ListBoxItem)list.ContainerFromIndex(index)!;
+            Point point = item.TranslatePoint(new Point(80, item.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(point, MouseButton.Left, modifiers);
+            window.MouseUp(point, MouseButton.Left, modifiers);
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task ApplySelectionAsync_WhenAllPagesAreSelected_StreamsUnloadedMessagesPreservesExclusionsAndReportsPartialFailure()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        MessageSnapshot[] messages = Enumerable.Range(1, 102).Select(id => Message() with { Id = new MessageId(id) }).ToArray();
+        application.SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>()).Returns(call =>
+            Outcome<SearchPage>.Success(call.Arg<SearchRequest>().Continuation is null ?
+                new SearchPage(messages.Take(100).ToImmutableArray(), "second") :
+                new SearchPage(messages.Skip(100).ToImmutableArray(), null)));
+        application.MutateAsync(Arg.Is<MessageSnapshot>(message => message.Id.Value == 102), MutationKind.SetRead, true, null,
+            Arg.Any<CancellationToken>()).Returns(Failure.Transient);
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        model.SelectAllMessages();
+        model.SelectedRows.RemoveAt(1);
+
+        // Act
+        await model.ApplySelectionAsync(false, CancellationToken.None);
+
+        // Assert
+        Assert.That(model.Messages, Has.Count.EqualTo(100));
+        await application.Received(101).MutateAsync(Arg.Any<MessageSnapshot>(), MutationKind.SetRead, true, null, Arg.Any<CancellationToken>());
+        await application.DidNotReceive().MutateAsync(messages[1], Arg.Any<MutationKind>(), Arg.Any<bool>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        Assert.That(model.Status, Does.Contain("100 messages queued; errors: 1"));
+        Assert.That(model.AllMessagesSelected, Is.False);
+    }
+
+    [AvaloniaTest]
+    public async Task ApplySelectionAsync_WhenNavigatingDuringABatch_CancelsBeforeQueuingAnotherMessage()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        ImmutableArray<MessageSnapshot> messages = Enumerable.Range(1, 3).Select(id => Message() with { Id = new MessageId(id) }).ToImmutableArray();
+        application.SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Outcome<SearchPage>.Success(new SearchPage(messages, null)));
+        TaskCompletionSource<Failure> pending = new TaskCompletionSource<Failure>(TaskCreationOptions.RunContinuationsAsynchronously);
+        application.MutateAsync(Arg.Any<MessageSnapshot>(), MutationKind.SetRead, true, null, Arg.Any<CancellationToken>())
+            .Returns(call => pending.Task.WaitAsync(call.Arg<CancellationToken>()));
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        model.SelectAllMessages();
+
+        // Act
+        Task batch = model.ApplySelectionAsync(false, CancellationToken.None);
+        model.Terms = "different";
+        await batch;
+
+        // Assert
+        await application.Received(1).MutateAsync(Arg.Any<MessageSnapshot>(), MutationKind.SetRead, true, null, Arg.Any<CancellationToken>());
+        Assert.That(model.AllMessagesSelected, Is.False);
+    }
+
+    [AvaloniaTest]
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task ApplySelectionAsync_WhenUsingRealPagedStorage_QueuesEveryMatchingMessageWithoutSkippingChangedRows(bool trash)
+    {
+        // Arrange
+        await using DesktopMailRuntime runtime = (await DesktopMailRuntime.OpenAsync(
+            EngineFixture.DirectoryPath(),
+            new EnginePolicy(false, false, false),
+            System.TimeProvider.System,
+            new EngineLimits(2, 8, 1, 100, 1048576, 100, 0, 0, 10485760),
+            CancellationToken.None
+        )).Value!;
+        await runtime.SeedSyntheticAsync(660, CancellationToken.None);
+        await runtime.RestoreAccountsAsync(new InMemoryCredentialStore(), CancellationToken.None);
+        await using MainWindowViewModel model = new MainWindowViewModel(runtime.Application);
+        await model.InitialiseAsync();
+        if (!trash)
+        {
+            model.UnreadOnly = true;
+            await model.RefreshAsync(false);
+        }
+        int expected = trash ? 220 : 146;
+        model.SelectAllMessages();
+
+        // Act
+        await model.ApplySelectionAsync(trash, CancellationToken.None);
+
+        // Assert
+        Assert.That(model.Status, Does.StartWith(expected + " messages queued; errors: 0"));
+        Outcome<SearchPage> remaining = await runtime.Application.SearchAsync(new SearchRequest(
+            model.Scope!.Account, false, "", model.Scope.Folder, !trash, 100), CancellationToken.None);
+        if (trash)
+        {
+            // IMAP source memberships remain until the queued move is acknowledged by the server.
+            int queued = 0;
+            do
+            {
+                Assert.That(remaining.Value!.Messages.All(message => message.Pending == PendingState.Queued), Is.True);
+                queued += remaining.Value.Messages.Length;
+                string? continuation = remaining.Value.Continuation;
+                if (continuation is null)
+                {
+                    break;
+                }
+                remaining = await runtime.Application.SearchAsync(new SearchRequest(
+                    model.Scope.Account, false, "", model.Scope.Folder, false, 100, continuation), CancellationToken.None);
+            } while (true);
+            Assert.That(queued, Is.EqualTo(expected));
+        }
+        else
+        {
+            Assert.That(remaining.Value!.Messages, Is.Empty);
+        }
+        Assert.That(model.Messages.Count, Is.LessThanOrEqualTo(100));
+    }
+
+    [AvaloniaTest]
+    public async Task ApplySelectionAsync_WhenExplicitMessagesSpanAccounts_UsesEachAccountsOwnTrashFolder()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        AccountId secondAccount = new AccountId(2);
+        MessageSnapshot first = Message() with { Read = true };
+        MessageSnapshot second = first with
+        {
+            Account = secondAccount,
+            Id = new MessageId(2),
+            Provider = new ProviderIdentity(secondAccount, "second", new ImapIdentity(secondAccount, "INBOX", 7, 2))
+        };
+        MailboxSnapshot secondSource = Source() with { Account = secondAccount, Id = new FolderId(2) };
+        application.Catalog.MailboxesAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray.Create(
+            Source(),
+            secondSource,
+            Source() with { Id = new FolderId(3), Role = MailboxRole.Trash, RemoteKey = "Trash-one" },
+            secondSource with { Id = new FolderId(4), Role = MailboxRole.Trash, RemoteKey = "Trash-two" }
+        ));
+        application.SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Outcome<SearchPage>.Success(new SearchPage([first, second], null)));
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        foreach (Postfold.UI.Models.MessageSummary row in model.Rows)
+        {
+            model.SelectedRows.Add(row);
+        }
+
+        // Act
+        await model.ApplySelectionAsync(true, CancellationToken.None);
+
+        // Assert
+        await application.Received(1).MutateAsync(first, MutationKind.Move, false, "Trash-one", Arg.Any<CancellationToken>());
+        await application.Received(1).MutateAsync(second, MutationKind.Move, false, "Trash-two", Arg.Any<CancellationToken>());
+        Assert.That(model.Status, Does.StartWith("2 messages queued; errors: 0"));
     }
 
     private static IMailApplication Application()
