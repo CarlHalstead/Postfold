@@ -8,12 +8,15 @@ using Postfold.Core.Interfaces;
 using Postfold.Core.Models;
 using Postfold.Core.Models.Accounts;
 using Postfold.Core.Models.Drafts;
+using Postfold.Core.Models.Mailboxes;
+using Postfold.Core.Models.Search;
 using Postfold.Desktop.Composition;
 using Postfold.Engine.Tests.Fixtures;
 using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
 using Postfold.UI.Views;
 using System;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -69,6 +72,10 @@ public sealed class UpdateShutdownTests
         MailEndpoint endpoint = new MailEndpoint("synthetic.invalid", 993, TlsMode.Implicit, "synthetic@example.invalid", "synthetic");
         MainWindowViewModel model = new MainWindowViewModel(application);
         model.Accounts.Add(new AccountConfiguration(new AccountId(1), "Synthetic", endpoint, endpoint));
+        application.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(model.Accounts.ToImmutableArray());
+        application.Catalog.MailboxesAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray<MailboxSnapshot>.Empty);
+        application.Catalog.MailboxUnreadCountsAsync(Arg.Any<AccountId>(), Arg.Any<CancellationToken>()).Returns(ImmutableArray<MailboxUnreadCount>.Empty);
+        application.SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>()).Returns(Outcome<SearchPage>.Success(new SearchPage([], null)));
         session.Window.DataContext = model;
         session.Window.Configure(application, null);
         session.Window.OpenCompose(activation: new ComposeContent(

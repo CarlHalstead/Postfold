@@ -96,7 +96,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(false));
         MoreCommand = new AsyncRelayCommand(() => RefreshAsync(true), () => _continuation is not null);
         RetrieveCommand = new AsyncRelayCommand(() => ReadSelectedAsync(true), () => Selected is not null);
-        ReadCommand = new AsyncRelayCommand(() => MutateAsync(MutationKind.SetRead, null), CanMutate);
+        ReadCommand = new AsyncRelayCommand(() => MutateAsync(MutationKind.SetRead, null), () => !IsDraftContext && CanMutate());
         FlagCommand = new AsyncRelayCommand(() => MutateAsync(MutationKind.SetFlagged, null), CanMutate);
         ArchiveCommand = new AsyncRelayCommand(
             () => MoveRoleAsync(MailboxRole.Archive),
@@ -226,7 +226,10 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             (content.CcRecipients.IsDefaultOrEmpty ? "" : "\nCc: " + string.Join("; ", content.CcRecipients)) +
             (content.RecipientHeadersComplete ? "" : "\n" + Strings.Get("RecipientsLimited")) : "";
     public string ReadAction => Strings.Get(Selected?.Read == true ? "MarkUnread" : "MarkRead");
-    public bool CanComposeFromMessage => Selected is not null && Content is not null;
+    public bool IsDraftContext => Scope?.Folder is FolderId folder && Mailboxes.Any(item =>
+        item.Account == Scope.Account && item.Id == folder && item.Role == MailboxRole.Drafts);
+    public string TrashAction => Strings.Get(IsDraftContext ? "DeleteDraft" : "Trash");
+    public bool CanComposeFromMessage => !IsDraftContext && Selected is not null && Content is not null;
     public bool CanReplyAll => CanComposeFromMessage && Content!.RecipientHeadersComplete;
     public bool HasAttachments => Attachments.Count > 0;
 
@@ -263,6 +266,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
                 InvalidatePage();
                 OnPropertyChanged(nameof(NavigationSelection));
                 OnPropertyChanged(nameof(SearchScope));
+                NotifyReader();
+                NotifyCommands();
                 RegroupMessages();
             }
         }
@@ -756,7 +761,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Checks currently known source/destination capabilities; each unloaded message is checked before queuing.</summary>
     public bool CanApplySelection(bool trash)
     {
-        return _application is not null && _batchCancellation is null && _pageScope is not null &&
+        return (trash || !IsDraftContext) && _application is not null && _batchCancellation is null && _pageScope is not null &&
             (AllMessagesSelected || SelectedRows.Count > 0) &&
             SelectedRows.All(row => CanApplyMessage(row.Message, trash));
     }
@@ -1030,7 +1035,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         // Reading owns selection cancellation; an already requested read-state change owns the application lifetime.
         Task reading = ReadSelectedAsync(true);
         MessageSnapshot? message = Selected;
-        if (opened && message is not null && !message.Read && CanMutate() && _application is not null &&
+        if (opened && !IsDraftContext && message is not null && !message.Read && CanMutate() && _application is not null &&
             _markingRead.Add((message.Account, message.Id, message.Provider)))
         {
             try
@@ -1085,6 +1090,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
 
     private void NotifyReader()
     {
+        OnPropertyChanged(nameof(IsDraftContext));
+        OnPropertyChanged(nameof(TrashAction));
         OnPropertyChanged(nameof(ReaderSubject));
         OnPropertyChanged(nameof(ReaderSender));
         OnPropertyChanged(nameof(ReaderAddress));

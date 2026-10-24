@@ -99,6 +99,11 @@ internal sealed class QualificationMailApplication(IMailApplication application)
         return application.ReadDraftAsync(draft, cancellationToken);
     }
 
+    public Task<Outcome<DraftSnapshot>> FindDraftAsync(ProviderIdentity message, CancellationToken cancellationToken)
+    {
+        return application.FindDraftAsync(message, cancellationToken);
+    }
+
     public Task<Failure> PushDraftAsync(AccountId account, Guid draft, CancellationToken cancellationToken)
     {
         return application.PushDraftAsync(account, draft, cancellationToken);

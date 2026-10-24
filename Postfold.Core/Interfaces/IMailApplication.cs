@@ -56,6 +56,9 @@ public interface IMailApplication
 
     Task<Outcome<ComposeContent>> ReadDraftAsync(DraftSnapshot draft, CancellationToken cancellationToken);
 
+    /// <summary>Resolves a folder message to its existing account-scoped editable draft, without creating a copy.</summary>
+    Task<Outcome<DraftSnapshot>> FindDraftAsync(ProviderIdentity message, CancellationToken cancellationToken);
+
     /// <summary>Autosaves an existing editor against its last observed local revision, preserving concurrent changes as conflicts.</summary>
     Task<Outcome<DraftSnapshot>> SaveDraftRevisionAsync(DraftSnapshot expected, ComposeContent content, CancellationToken cancellationToken);
 

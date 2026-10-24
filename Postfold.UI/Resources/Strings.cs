@@ -54,6 +54,7 @@ public static class Strings
     public static string NoMessages => Get("NoMessages");
     public static string Cancel => Get("Cancel");
     public static string Compose => Get("Compose");
+    public static string EditDraft => Get("EditDraft");
     public static string Search => Get("Search");
     public static string Refresh => Get("Refresh");
     public static string Setup => Get("Setup");

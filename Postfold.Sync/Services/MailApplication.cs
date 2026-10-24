@@ -326,6 +326,27 @@ public sealed class MailApplication : IMailApplication
         }
     }
 
+    public async Task<Outcome<DraftSnapshot>> FindDraftAsync(
+        ProviderIdentity message,
+        CancellationToken cancellationToken
+    )
+    {
+        AccountConfiguration? account = (await Catalog.AccountsAsync(cancellationToken).ConfigureAwait(false))
+            .SingleOrDefault(item => item.Id == message.Account);
+        if (account is null)
+        {
+            return Outcome<DraftSnapshot>.Fail(Failure.NotFound);
+        }
+        ImmutableArray<DraftSnapshot> drafts = await Catalog.DraftsAsync(message.Account, cancellationToken).ConfigureAwait(false);
+        // Gmail's acknowledged v1 version binds the stable draft ID to its current message ID.
+        // IMAP draft and folder identities already share the mailbox generation and UID.
+        DraftSnapshot[] matches = drafts.Where(item => !item.DeletePending && item.Remote?.Account == message.Account &&
+            (message.Imap is not null ? item.Remote.Imap == message.Imap : account.ProviderKind == "Google" &&
+                item.RemoteVersion?.StartsWith("v1:" + message.Key + ":", StringComparison.Ordinal) == true)).ToArray();
+        return matches.Length == 1 ? Outcome<DraftSnapshot>.Success(matches[0]) :
+            Outcome<DraftSnapshot>.Fail(matches.Length == 0 ? Failure.NotFound : Failure.NeedsReview);
+    }
+
     public Task<Failure> DeleteDraftAsync(
         DraftSnapshot draft,
         CancellationToken cancellationToken

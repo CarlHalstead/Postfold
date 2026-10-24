@@ -124,6 +124,7 @@
   <data name="SaveAppearance" xml:space="preserve"><value>Apply and save appearance</value></data>
   <data name="DraftRevision" xml:space="preserve"><value>Draft revision</value></data>
   <data name="OpenDraft" xml:space="preserve"><value>Open selected draft</value></data>
+  <data name="EditDraft" xml:space="preserve"><value>Edit draft</value></data>
   <data name="PushDraft" xml:space="preserve"><value>Save selected draft to server</value></data>
   <data name="ReviewVersions" xml:space="preserve"><value>Review preserved draft versions</value></data>
   <data name="VersionReviewHint" xml:space="preserve"><value>Compare the preserved versions. Choosing one creates a new local draft; every original version remains preserved.</value></data>

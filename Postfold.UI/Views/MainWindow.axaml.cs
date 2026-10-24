@@ -164,6 +164,15 @@ public sealed partial class MainWindow : Window
                 Track(() => model.OpenMessageAsync(model.SelectedRows[0].Message));
             }
         };
+        messageList.DoubleTapped += (_, _) => Track(EditSelectedDraftAsync);
+        messageList.KeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Enter && DataContext is MainWindowViewModel { IsDraftContext: true })
+            {
+                Track(EditSelectedDraftAsync);
+                args.Handled = true;
+            }
+        };
         messageList.PointerReleased += (_, _) => { _dragPress = null; _dragMessage = null; };
         this.FindControl<DockPanel>("NavigationPane")!.SizeChanged += (_, _) => AdjustPaneToolbars();
         this.FindControl<DockPanel>("MessagePane")!.SizeChanged += (_, _) => AdjustPaneToolbars();
@@ -317,6 +326,8 @@ public sealed partial class MainWindow : Window
         _desktop = desktop;
         _updates = updates;
         Wire("ComposeButton", () => { OpenCompose(); return Task.CompletedTask; });
+        Wire("EditDraftButton", EditSelectedDraftAsync);
+        Wire("MessageEditDraftMenu", EditSelectedDraftAsync);
         foreach ((string name, string kind) in new[]
         {
             ("ReplyButton", "Reply"), ("ReplyAllButton", "ReplyAll"), ("ForwardButton", "Forward"),
@@ -551,7 +562,7 @@ public sealed partial class MainWindow : Window
     )
     {
         MainWindowViewModel? model = DataContext as MainWindowViewModel;
-        if (kind is not null && (model?.Selected is null || model.Content is null))
+        if (kind is not null && (model?.CanComposeFromMessage != true))
         {
             model?.ReportReadingResult(Failure.NotFound);
             return;
@@ -640,10 +651,49 @@ public sealed partial class MainWindow : Window
             Track(async () =>
             {
                 await _application.WaitForDraftSyncAsync(account.Id, window.DraftId, _lifetime.Token);
+                if (!_stopping && model is not null)
+                {
+                    await model.SynchroniseAccountAsync(account.Id);
+                }
                 await RefreshDraftListAsync(account.Id);
             });
         };
         ShowWindow(window);
+    }
+
+    /// <summary>Continues the selected folder draft using its existing durable identity and revision.</summary>
+    public async Task EditSelectedDraftAsync()
+    {
+        if (_application is null || DataContext is not MainWindowViewModel { IsDraftContext: true, Selected: MessageSnapshot message } model ||
+            model.AllMessagesSelected || model.SelectedRows.Count != 1)
+        {
+            return;
+        }
+        Outcome<DraftSnapshot> result = await _application.FindDraftAsync(message.Provider, _lifetime.Token);
+        if (model.Selected?.Provider != message.Provider || !model.IsDraftContext)
+        {
+            return;
+        }
+        if (!result.IsSuccess)
+        {
+            model.ReportReadingResult(result.Failure);
+            return;
+        }
+        DraftSnapshot draft = result.Value!;
+        if (draft.Held || draft.Conflict)
+        {
+            await ReviewVersionsAsync(draft);
+            return;
+        }
+        Outcome<ComposeContent> content = await _application.ReadDraftAsync(draft, _lifetime.Token);
+        if (content.IsSuccess && model.Selected?.Provider == message.Provider && model.IsDraftContext)
+        {
+            OpenCompose(activation: content.Value, id: draft.Id, targetAccount: draft.Account, draft: draft);
+        }
+        else if (!content.IsSuccess)
+        {
+            model.ReportReadingResult(content.Failure);
+        }
     }
 
     public async Task<bool> FlushComposeAsync()
@@ -1008,10 +1058,13 @@ public sealed partial class MainWindow : Window
             return;
         }
         bool single = !model.AllMessagesSelected && model.SelectedRows.Count == 1;
-        this.FindControl<MenuItem>("MessageReplyMenu")!.IsVisible = single;
-        this.FindControl<MenuItem>("MessageForwardMenu")!.IsVisible = single;
+        this.FindControl<MenuItem>("MessageEditDraftMenu")!.IsVisible = single && model.IsDraftContext;
+        this.FindControl<MenuItem>("MessageReplyMenu")!.IsVisible = single && !model.IsDraftContext;
+        this.FindControl<MenuItem>("MessageForwardMenu")!.IsVisible = single && !model.IsDraftContext;
+        this.FindControl<MenuItem>("MessageTrashMenu")!.Header = model.TrashAction;
         this.FindControl<MenuItem>("MessageTrashMenu")!.IsEnabled = model.CanApplySelection(true);
         MenuItem read = this.FindControl<MenuItem>("MessageReadMenu")!;
+        read.IsVisible = !model.IsDraftContext;
         read.Header = single ? model.ReadAction : Strings.Get("MarkRead");
         read.IsEnabled = model.CanApplySelection(false);
     }
@@ -1496,22 +1549,31 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        bool draft = DataContext is MainWindowViewModel { IsDraftContext: true };
+        this.FindControl<Button>("EditDraftButton")!.IsVisible = draft;
         string[] names = ["ReplyButton", "ReplyAllButton", "ForwardButton", "ReadButton", "TrashButton"];
         Button[] commands = names.Select(name => this.FindControl<Button>(name)!).ToArray();
         foreach (Button command in commands)
         {
-            command.IsVisible = true;
+            command.IsVisible = !draft || command.Name == "TrashButton";
             command.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         }
         Button more = this.FindControl<Button>("ReaderMoreButton")!;
         more.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         double available = Math.Max(0, pane.Bounds.Width - 32 - more.DesiredSize.Width);
-        double required = commands.Sum(command => command.DesiredSize.Width) + 17;
+        Button edit = this.FindControl<Button>("EditDraftButton")!;
+        edit.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double required = commands.Where(command => command.IsVisible).Sum(command => command.DesiredSize.Width) +
+            (draft ? edit.DesiredSize.Width : 17);
         foreach (int index in new[] { 4, 3, 2, 1 })
         {
             if (required <= available)
             {
                 break;
+            }
+            if (!commands[index].IsVisible)
+            {
+                continue;
             }
             required -= commands[index].DesiredSize.Width;
             if (commands[index].IsKeyboardFocusWithin)
@@ -1520,7 +1582,7 @@ public sealed partial class MainWindow : Window
             }
             commands[index].IsVisible = false;
         }
-        this.FindControl<Border>("ReaderActionDivider")!.IsVisible = commands[3].IsVisible || commands[4].IsVisible;
+        this.FindControl<Border>("ReaderActionDivider")!.IsVisible = !draft && (commands[3].IsVisible || commands[4].IsVisible);
 
         foreach ((int index, string menu) in new[]
         {
@@ -1528,7 +1590,7 @@ public sealed partial class MainWindow : Window
             (3, "OverflowReadButton"), (4, "OverflowTrashButton")
         })
         {
-            this.FindControl<MenuItem>(menu)!.IsVisible = !commands[index].IsVisible;
+            this.FindControl<MenuItem>(menu)!.IsVisible = (!draft || index == 4) && !commands[index].IsVisible;
         }
         this.FindControl<ScrollViewer>("HtmlHeaderScroll")!.MaxHeight = Math.Max(64, Math.Min(240, pane.Bounds.Height * 0.3));
         this.FindControl<ScrollViewer>("HtmlAttachmentScroll")!.MaxHeight = Math.Max(48, Math.Min(180, pane.Bounds.Height * 0.24));
@@ -1536,6 +1598,10 @@ public sealed partial class MainWindow : Window
 
     private void PagingStateChanged(object? sender, PropertyChangedEventArgs args)
     {
+        if (args.PropertyName is nameof(MainWindowViewModel.IsDraftContext) or nameof(MainWindowViewModel.TrashAction))
+        {
+            AdjustReaderViewport();
+        }
         if (args.PropertyName == nameof(MainWindowViewModel.HasMore))
         {
             UpdatePagination();
