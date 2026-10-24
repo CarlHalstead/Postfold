@@ -13,4 +13,5 @@ internal sealed class DraftsRow
     public string? RemoteVersion { get; set; }
     public long Conflict { get; set; }
     public long Held { get; set; }
+    public long DeletePending { get; set; }
 }

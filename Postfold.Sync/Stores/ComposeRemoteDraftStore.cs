@@ -2,6 +2,7 @@ using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
 using Postfold.Core.Models;
 using Postfold.Core.Models.Drafts;
+using Postfold.Core.Models.Messages;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
@@ -9,7 +10,7 @@ using System.Threading.Tasks;
 
 namespace Postfold.Sync.Stores;
 
-public sealed class ComposeRemoteDraftStore : IRemoteDraftStore
+public sealed class ComposeRemoteDraftStore : IRemoteDraftStore, IRemoteDraftSource, IRemoteDraftDeleter
 {
     private readonly IRemoteDraftStore _remote;
     private readonly IMimeDraftWriter _mime;
@@ -53,5 +54,23 @@ public sealed class ComposeRemoteDraftStore : IRemoteDraftStore
 
         mime.Position = 0;
         return await _remote.SaveAsync(draft, mime, cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<Failure> DeleteDraftAsync(
+        ProviderIdentity identity,
+        CancellationToken cancellationToken
+    )
+    {
+        return _remote is IRemoteDraftDeleter deleter ? deleter.DeleteDraftAsync(identity, cancellationToken) : Task.FromResult(Failure.Unsupported);
+    }
+
+    public Task<Outcome<RemoteDraftPage>> ReadDraftPageAsync(
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken
+    )
+    {
+        return _remote is IRemoteDraftSource source ? source.ReadDraftPageAsync(cursor, limit, cancellationToken) :
+            Task.FromResult(Outcome<RemoteDraftPage>.Fail(Failure.Unsupported));
     }
 }

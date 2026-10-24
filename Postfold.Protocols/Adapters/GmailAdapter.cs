@@ -27,7 +27,7 @@ namespace Postfold.Protocols.Adapters;
 
 /// <summary>Account-wide Gmail labels/history mapped to the shared engine. All background authentication is silent.</summary>
 public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, IConcurrentMessageContentReader,
-    IMailboxMutator, IRemoteDraftStore, IMessageSubmitter, ISentCopyStore
+    IMailboxMutator, IRemoteDraftStore, IRemoteDraftInspector, IRemoteDraftSource, IRemoteDraftDeleter, IMessageSubmitter, ISentCopyStore
 {
     private const int MetadataBytes = 4194304;
     private readonly GoogleAccountBinding _binding;
@@ -392,6 +392,8 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
             }
             if (draft.Remote is not null)
             {
+                // Ordinary Gmail replacement is owner-approved after this preflight. The API has no
+                // atomic compare-and-replace, so another client's edit in the check/write gap can still lose.
                 Validate(draft.Remote);
                 using JsonDocument remote = await GetAsync("drafts/" + Uri.EscapeDataString(draft.Remote.Key) + "?format=raw", RawJsonLimit(), token).ConfigureAwait(false);
                 if (Text(remote.RootElement, "id") != draft.Remote.Key)
@@ -401,29 +403,45 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
                 JsonElement message = remote.RootElement.GetProperty("message");
                 byte[] bytes = Decode(message);
                 string version = DraftVersion(message, bytes);
-                if (draft.RemoteVersion == version)
+                if (draft.RemoteVersion != version)
                 {
-                    return new RemoteDraftResult(draft.Remote, version, null, true, Failure.NeedsReview);
+                    using MemoryStream retained = new MemoryStream(bytes, false);
+                    BlobReference conflict = await _blobs.WriteAsync(Account, retained, _maximumBytes, true, token).ConfigureAwait(false);
+                    return new RemoteDraftResult(draft.Remote, version, conflict, false, Failure.NeedsReview);
                 }
-                using MemoryStream retained = new MemoryStream(bytes, false);
-                BlobReference conflict = await _blobs.WriteAsync(Account, retained, _maximumBytes, true, token).ConfigureAwait(false);
-                // Gmail has no conditional draft replacement. Even a matching preflight version cannot
-                // prevent a concurrent edit being overwritten. Preserve both versions and require review.
-                return new RemoteDraftResult(draft.Remote, version, conflict, false, Failure.NeedsReview);
             }
             byte[] frozen = await ReadBytesAsync(content, token).ConfigureAwait(false);
             try
             {
                 using JsonDocument reply = await _api.RequestAsync(
-                    HttpMethod.Post,
-                    "drafts",
+                    draft.Remote is null ? HttpMethod.Post : HttpMethod.Put,
+                    draft.Remote is null ? "drafts" : "drafts/" + Uri.EscapeDataString(draft.Remote.Key),
                     new { message = new { raw = Encode(frozen) } },
                     MetadataBytes,
                     token
                 ).ConfigureAwait(false);
                 string id = Text(reply.RootElement, "id");
+                if (draft.Remote is not null && id != draft.Remote.Key)
+                {
+                    return new RemoteDraftResult(null, null, null, true, Failure.NeedsReview);
+                }
                 JsonElement message = reply.RootElement.GetProperty("message");
-                return new RemoteDraftResult(new ProviderIdentity(Account, id, null), DraftVersion(message, frozen), null, false, Failure.None);
+                ProviderIdentity identity = new ProviderIdentity(Account, id, null);
+                try
+                {
+                    // Gmail may normalize MIME. Bind the acknowledged revision to the server's actual bytes,
+                    // rather than turning harmless normalization into a conflict on the next close.
+                    RemoteDraftResult observed = await ReadRemoteDraftAsync(identity, token).ConfigureAwait(false);
+                    if (!observed.Version!.StartsWith("v1:" + Text(message, "id") + ":", StringComparison.Ordinal))
+                    {
+                        return observed with { Failure = Failure.NeedsReview };
+                    }
+                    return new RemoteDraftResult(identity, observed.Version, null, false, Failure.None);
+                }
+                catch (GmailApiClient.RequestFailure)
+                {
+                    return new RemoteDraftResult(identity, DraftVersion(message, frozen), null, true, Failure.NeedsReview);
+                }
             }
             catch (GmailApiClient.RequestFailure failure)
             {
@@ -433,6 +451,75 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
             {
                 return new RemoteDraftResult(null, null, null, true, Failure.NeedsReview);
             }
+        }, cancellationToken).ConfigureAwait(false);
+        Failure failure = result.Failure == Failure.NotFound && draft.Remote is not null ? Failure.NeedsReview : result.Failure;
+        return result.IsSuccess ? result.Value! : new RemoteDraftResult(null, null, null, false, failure);
+    }
+
+    public async Task<Failure> DeleteDraftAsync(
+        ProviderIdentity identity,
+        CancellationToken cancellationToken
+    )
+    {
+        Outcome<bool> result = await RunAsync(async token =>
+        {
+            Validate(identity);
+            try
+            {
+                using JsonDocument reply = await _api.RequestAsync(HttpMethod.Delete, "drafts/" + Uri.EscapeDataString(identity.Key), null, MetadataBytes, token).ConfigureAwait(false);
+            }
+            catch (GmailApiClient.RequestFailure failure) when (failure.Uncertain)
+            {
+                // Retrying deletion of this same stable identity cannot create another draft or resend mail.
+                throw new GmailApiClient.RequestFailure(Failure.Transient, false);
+            }
+            return true;
+        }, cancellationToken).ConfigureAwait(false);
+        return result.Failure == Failure.NotFound ? Failure.None : result.Failure;
+    }
+
+    public Task<Outcome<RemoteDraftPage>> ReadDraftPageAsync(
+        string? cursor,
+        int limit,
+        CancellationToken cancellationToken
+    )
+    {
+        return RunAsync(async token =>
+        {
+            string query = "drafts?maxResults=" + Math.Clamp(limit, 1, 100).ToString(CultureInfo.InvariantCulture) +
+                (cursor is null ? "" : "&pageToken=" + Uri.EscapeDataString(cursor));
+            using JsonDocument page = await GetAsync(query, MetadataBytes, token).ConfigureAwait(false);
+            ImmutableArray<RemoteDraftResult>.Builder drafts = ImmutableArray.CreateBuilder<RemoteDraftResult>();
+            if (page.RootElement.TryGetProperty("drafts", out JsonElement entries))
+            {
+                foreach (JsonElement entry in entries.EnumerateArray())
+                {
+                    if (drafts.Count >= Math.Clamp(limit, 1, 100))
+                    {
+                        throw new InvalidDataException();
+                    }
+                    ProviderIdentity identity = new ProviderIdentity(Account, Text(entry, "id"), null);
+                    drafts.Add(await ReadRemoteDraftAsync(identity, token).ConfigureAwait(false));
+                }
+            }
+            string? next = page.RootElement.TryGetProperty("nextPageToken", out JsonElement nextElement) ? Identifier(nextElement.GetString(), 2048) : null;
+            return new RemoteDraftPage(drafts.ToImmutable(), next);
+        }, cancellationToken);
+    }
+
+    public async Task<RemoteDraftResult> InspectAsync(
+        DraftSnapshot draft,
+        CancellationToken cancellationToken
+    )
+    {
+        Outcome<RemoteDraftResult> result = await RunAsync(async token =>
+        {
+            if (draft.Account != Account || draft.Content.Account != Account || draft.Remote is null)
+            {
+                throw new GmailApiClient.RequestFailure(Failure.Validation, false);
+            }
+            Validate(draft.Remote);
+            return await ReadRemoteDraftAsync(draft.Remote, token).ConfigureAwait(false);
         }, cancellationToken).ConfigureAwait(false);
         return result.IsSuccess ? result.Value! : new RemoteDraftResult(null, null, null, false, result.Failure);
     }
@@ -469,6 +556,24 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
             _contentGate.Release();
             _gate.Release();
         }
+    }
+
+    private async Task<RemoteDraftResult> ReadRemoteDraftAsync(
+        ProviderIdentity identity,
+        CancellationToken cancellationToken
+    )
+    {
+        Validate(identity);
+        using JsonDocument remote = await GetAsync("drafts/" + Uri.EscapeDataString(identity.Key) + "?format=raw", RawJsonLimit(), cancellationToken).ConfigureAwait(false);
+        if (Text(remote.RootElement, "id") != identity.Key)
+        {
+            throw new InvalidDataException();
+        }
+        JsonElement message = remote.RootElement.GetProperty("message");
+        byte[] bytes = Decode(message);
+        using MemoryStream retained = new MemoryStream(bytes, false);
+        BlobReference content = await _blobs.WriteAsync(Account, retained, _maximumBytes, true, cancellationToken).ConfigureAwait(false);
+        return new RemoteDraftResult(identity, DraftVersion(message, bytes), content, false, Failure.None);
     }
 
     private async Task<SubmissionOutcome> SubmitCoreAsync(

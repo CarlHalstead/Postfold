@@ -5,7 +5,9 @@ namespace Postfold.Storage.Configurations;
 
 internal static class ProfileConfiguration
 {
-    internal static void Configure(ModelBuilder modelBuilder)
+    internal static void Configure(
+        ModelBuilder modelBuilder
+    )
     {
         modelBuilder.Entity<AccountsRow>(entity =>
         {
@@ -223,6 +225,7 @@ internal static class ProfileConfiguration
             entity.Property(row => row.RemoteVersion).HasColumnOrder(8).ValueGeneratedNever();
             entity.Property(row => row.Conflict).HasColumnOrder(9).ValueGeneratedNever();
             entity.Property(row => row.Held).HasColumnOrder(10).ValueGeneratedNever();
+            entity.Property(row => row.DeletePending).HasColumnOrder(11).ValueGeneratedNever().HasDefaultValueSql("0");
             entity.HasOne<IdentitiesRow>().WithMany().HasForeignKey("AccountId", "IdentityId").HasPrincipalKey("AccountId", "IdentityId").OnDelete(DeleteBehavior.NoAction);
             entity.HasOne<BlobsRow>().WithMany().HasForeignKey("AccountId", "BlobId").HasPrincipalKey("AccountId", "BlobId").OnDelete(DeleteBehavior.NoAction);
             entity.HasOne<AccountsRow>().WithMany().HasForeignKey("AccountId").HasPrincipalKey("AccountId").OnDelete(DeleteBehavior.NoAction);

@@ -708,7 +708,10 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
         }
     }
 
-    public Outcome<IRemoteDraftStore> SelectDraftMailbox(string mailbox, IBlobStore blobs)
+    public Outcome<IRemoteDraftStore> SelectDraftMailbox(
+        string mailbox,
+        IBlobStore blobs
+    )
     {
         MailboxSnapshot? selected = _mailboxes.SingleOrDefault(item => item.RemoteKey == mailbox);
         if (selected is null || !selected.Selectable || !selected.Writable)
@@ -720,7 +723,7 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
         {
             RemoteDrafts = true
         };
-        return Outcome<IRemoteDraftStore>.Success(new RemoteImapDraftStore(this, blobs, mailbox));
+        return Outcome<IRemoteDraftStore>.Success(new RemoteImapDraftStore(this, blobs, mailbox, this, this, _maximumContentBytes));
     }
 
     public IMailboxSignal? CreateIdleSignal()
@@ -844,6 +847,49 @@ public sealed class ImapAdapter : IMailboxReader, IMessageContentReader, IMailbo
         }
 
         return _session.WaitAsync(cancellationToken);
+    }
+
+    async Task<Failure> IRemoteDraftTransport.DeleteDraftAsync(
+        string mailbox,
+        ProviderIdentity identity,
+        CancellationToken cancellationToken
+    )
+    {
+        if (identity.Account != Account || identity.Imap is not ImapIdentity target || target.Account != Account || target.Mailbox != mailbox)
+        {
+            return Failure.Validation;
+        }
+        await AcquireSessionAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Failure connected = await ConnectAsync(cancellationToken).ConfigureAwait(false);
+            if (connected != Failure.None)
+            {
+                return connected;
+            }
+            IMailFolder folder = await _client.GetFolderAsync(mailbox, cancellationToken).ConfigureAwait(false);
+            await folder.OpenAsync(FolderAccess.ReadWrite, cancellationToken).ConfigureAwait(false);
+            if (folder.UidValidity != target.UidValidity)
+            {
+                return Failure.NeedsReview;
+            }
+            if (!Capabilities.SelectiveExpunge)
+            {
+                return Failure.Unsupported;
+            }
+            // UID-scoped operations are idempotent even after a lost expunge acknowledgement.
+            await folder.AddFlagsAsync([new UniqueId(target.Uid)], MessageFlags.Deleted, true, cancellationToken).ConfigureAwait(false);
+            await folder.ExpungeAsync([new UniqueId(target.Uid)], cancellationToken).ConfigureAwait(false);
+            return Failure.None;
+        }
+        catch (Exception exception) when (Expected(exception))
+        {
+            return Classify(exception);
+        }
+        finally
+        {
+            _session.Release();
+        }
     }
 
     async Task<RemoteDraftResult> IRemoteDraftTransport.SaveDraftAsync(

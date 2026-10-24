@@ -39,11 +39,14 @@ internal sealed class GmailFixture : IAsyncDisposable
     internal Action<int>? AfterList { get; set; }
     internal int Sends { get; private set; }
     internal int DraftWrites { get; private set; }
+    internal int DraftUpdates { get; private set; }
+    internal int DraftDeletes { get; private set; }
     internal string? SentRaw { get; private set; }
     internal bool LoseSendAcknowledgement { get; set; }
     internal bool LoseDraftAcknowledgement { get; set; }
     internal bool MalformedSendAcknowledgement { get; set; }
     internal TaskCompletionSource? SendEntered { get; set; }
+    internal TaskCompletionSource? DraftEntered { get; set; }
     internal string Raw { get; set; } = Encode(Mime);
 
     public ValueTask DisposeAsync()
@@ -79,6 +82,25 @@ internal sealed class GmailFixture : IAsyncDisposable
     internal void ReplaceDraft(string id, string mime)
     {
         _drafts[id] = ("replaced-message", Encode(mime));
+    }
+
+    internal void ChangeDraftVersion(
+        string id
+    )
+    {
+        (string message, string raw) = _drafts[id];
+        _drafts[id] = (message + "-edited", raw);
+    }
+
+    internal void NormalizeDraft(
+        string id
+    )
+    {
+        (string message, string raw) = _drafts[id];
+        string padded = raw.Replace('-', '+').Replace('_', '/');
+        padded = padded.PadRight((padded.Length + 3) / 4 * 4, '=');
+        string mime = Encoding.UTF8.GetString(Convert.FromBase64String(padded));
+        _drafts[id] = (message, Encode("X-Synthetic-Normalization: true\r\n" + mime));
     }
 
     internal static HttpResponseMessage Reply(
@@ -195,6 +217,15 @@ internal sealed class GmailFixture : IAsyncDisposable
                 }
             }));
         }
+        if (path.StartsWith("drafts?", StringComparison.Ordinal))
+        {
+            Dictionary<string, string> query = AuthenticationFixture.Query(request.RequestUri);
+            int offset = query.TryGetValue("pageToken", out string? pageToken) ? int.Parse(pageToken) : 0;
+            int limit = int.Parse(query["maxResults"]);
+            object[] drafts = _drafts.Skip(offset).Take(limit).Select(item => (object)new { id = item.Key, message = new { id = item.Value.Id } }).ToArray();
+            return Reply(JsonSerializer.Serialize(offset + drafts.Length < _drafts.Count ?
+                new { drafts, nextPageToken = (offset + drafts.Length).ToString() } : (object)new { drafts }));
+        }
         if (path == "drafts")
         {
             DraftWrites++;
@@ -202,6 +233,11 @@ internal sealed class GmailFixture : IAsyncDisposable
             string id = "draft-" + DraftWrites;
             string message = "draft-message-" + DraftWrites;
             _drafts[id] = (message, json.RootElement.GetProperty("message").GetProperty("raw").GetString()!);
+            if (DraftEntered is not null)
+            {
+                DraftEntered.TrySetResult();
+                await new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(cancellationToken);
+            }
             if (LoseDraftAcknowledgement)
             {
                 throw new HttpRequestException("Synthetic lost draft acknowledgement.");
@@ -211,6 +247,31 @@ internal sealed class GmailFixture : IAsyncDisposable
         if (path.StartsWith("drafts/", StringComparison.Ordinal))
         {
             string id = path.Split('/', '?')[1];
+            if (request.Method == HttpMethod.Delete)
+            {
+                DraftDeletes++;
+                bool existed = _drafts.Remove(id);
+                if (LoseDraftAcknowledgement && existed)
+                {
+                    throw new HttpRequestException("Synthetic lost deletion acknowledgement.");
+                }
+                return Reply("{}", existed ? HttpStatusCode.OK : HttpStatusCode.NotFound);
+            }
+            if (request.Method == HttpMethod.Put)
+            {
+                DraftUpdates++;
+                using JsonDocument json = JsonDocument.Parse(body!);
+                _drafts[id] = ("updated-message-" + DraftUpdates, json.RootElement.GetProperty("message").GetProperty("raw").GetString()!);
+                if (DraftEntered is not null)
+                {
+                    DraftEntered.TrySetResult();
+                    await new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(cancellationToken);
+                }
+                if (LoseDraftAcknowledgement)
+                {
+                    throw new HttpRequestException("Synthetic lost update acknowledgement.");
+                }
+            }
             (string message, string raw) = _drafts[id];
             return Reply(JsonSerializer.Serialize(new { id, message = new { id = message, raw } }));
         }

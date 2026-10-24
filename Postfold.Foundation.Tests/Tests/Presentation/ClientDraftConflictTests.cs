@@ -34,6 +34,7 @@ public sealed class ClientDraftConflictTests
         // Arrange
         string directory = EngineFixture.DirectoryPath();
         await using LocalMailServer server = new LocalMailServer(true)
+
         {
             AdvancedImap = true
         };
@@ -41,6 +42,7 @@ public sealed class ClientDraftConflictTests
         await credentials.WriteAsync("fixture", new Credential("synthetic", false), CancellationToken.None);
         MailEndpoint endpoint = new MailEndpoint("localhost", server.Port, TlsMode.Implicit, "synthetic", "fixture");
         await using ImapAdapter adapter = new ImapAdapter(EngineFixture.Account, endpoint, credentials, 1048576)
+
         {
             FixtureAuthority = server.Authority
         };
@@ -102,6 +104,7 @@ public sealed class ClientDraftConflictTests
         ComposeWindow compose = new ComposeWindow(application, EngineFixture.Account, content, id);
         compose.Show();
         await compose.FlushAsync();
+        await application.CloseDraftAsync(EngineFixture.Account, id, false, CancellationToken.None);
         compose.ConfirmShutdown();
         compose.Close();
         DraftSnapshot saved = (await profile.ReadAsync(id, EngineFixture.Account, CancellationToken.None))!;
@@ -115,7 +118,7 @@ public sealed class ClientDraftConflictTests
             new RemoteDraftResult(identity, "prior-version", null, false, Failure.None),
             CancellationToken.None
         );
-        await application.SaveDraftAsync(EngineFixture.Account, id, content, CancellationToken.None);
+        await application.SaveDraftAsync(EngineFixture.Account, id, content with { PlainText = "Preserve edited local text" }, CancellationToken.None);
 
         // Act
         Failure pushed = await application.PushDraftAsync(EngineFixture.Account, id, CancellationToken.None);
@@ -149,7 +152,7 @@ public sealed class ClientDraftConflictTests
             // Assert
             Assert.That(pushed, Is.EqualTo(Failure.NeedsReview));
             Assert.That(preserved.Conflict, Is.True);
-            Assert.That(local.PlainText, Is.EqualTo(content.PlainText));
+            Assert.That(local.PlainText, Is.EqualTo("Preserve edited local text"));
             Assert.That(remoteContent.PlainText, Is.EqualTo("synthetic body" + Environment.NewLine));
             Assert.That(versions.Count(version => version.Origin == "Local"), Is.GreaterThanOrEqualTo(2));
             Assert.That(held.IsVisible, Is.True);

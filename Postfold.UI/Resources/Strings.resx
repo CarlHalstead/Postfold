@@ -94,7 +94,7 @@
   <data name="Port" xml:space="preserve"><value>Port</value></data>
   <data name="Password" xml:space="preserve"><value>Password</value></data>
   <data name="Name" xml:space="preserve"><value>Account name (optional; defaults to email)</value></data>
-  <data name="Drafts" xml:space="preserve"><value>Local drafts</value></data>
+  <data name="Drafts" xml:space="preserve"><value>Drafts</value></data>
   <data name="Synchronise" xml:space="preserve"><value>Sync mail</value></data>
   <data name="Synthetic" xml:space="preserve"><value>Postfold — SYNTHETIC DEMO (no network)</value></data>
   <data name="Settings" xml:space="preserve"><value>Settings</value></data>
@@ -279,6 +279,9 @@
   <data name="CountsUnavailable" xml:space="preserve"><value>Unread counts are unavailable. Refresh to try again.</value></data>
   <data name="UnknownSender" xml:space="preserve"><value>Unknown sender</value></data>
   <data name="NoSubject" xml:space="preserve"><value>(No subject)</value></data>
+  <data name="DeleteDraft" xml:space="preserve"><value>Delete draft</value></data>
+  <data name="DraftDeletePending" xml:space="preserve"><value>Deletion pending sync</value></data>
+  <data name="DraftOpenDeleteBlocked" xml:space="preserve"><value>Close this draft’s compose window before deleting it.</value></data>
   <data name="Me" xml:space="preserve"><value>me</value></data>
   <data name="MoreActions" xml:space="preserve"><value>More</value></data>
   <data name="SaveSettings" xml:space="preserve"><value>Save settings</value></data>
@@ -359,8 +362,19 @@
   <data name="RevokeProvider" xml:space="preserve"><value>Revoke Gmail access</value></data>
   <data name="ProviderTokensDeleted" xml:space="preserve"><value>Local tokens deleted. Reconnect to resume access. Mail and protected work are retained; server consent is unchanged.</value></data>
   <data name="ProviderGrantRevoked" xml:space="preserve"><value>Gmail grant revoked and local tokens deleted. Mail and protected work are retained.</value></data>
-  <data name="GmailDraftHoldHint" xml:space="preserve"><value>Existing Gmail drafts are kept locally for review: Gmail cannot safely replace a draft while another client may edit it. Your local work is preserved. Review versions to inspect any changed remote copy; an unchanged remote copy is held without a conflict. Reconnecting does not overwrite or retry held drafts.</value></data>
+  <data name="GmailDraftHoldHint" xml:space="preserve"><value>Drafts save locally while you type. Closing compose saves a version and synchronizes it automatically. Review is needed only for conflicting changes or an uncertain server save.</value></data>
   <data name="ProviderCancelled" xml:space="preserve"><value>Connection cancelled. Local mail and work are retained.</value></data>
   <data name="DraftHeld" xml:space="preserve"><value>Kept locally — review required before remote update or sending</value></data>
   <data name="ProviderWorking" xml:space="preserve"><value>Updating account connection…</value></data>
+  <data name="CopyReviewedDraft" xml:space="preserve"><value>Keep remote original and save local version as another server draft</value></data>
+  <data name="CopyReviewedDraftHint" xml:space="preserve"><value>This creates another draft from the local revision being reviewed, including its attachments. The remote original and all preserved versions stay unchanged. If either version changes, reopen review. A lost acknowledgement stays held; do not create another copy until you check the server.</value></data>
+  <data name="ReviewedDraftCreated" xml:space="preserve"><value>Another server draft was created. The original versions are preserved.</value></data>
+  <data name="ReviewedDraftHeld" xml:space="preserve"><value>The decision could not be completed. Preserved drafts remain available; any possibly created copy stays held. Reopen review after checking the server.</value></data>
+  <data name="PostponeDraftReview" xml:space="preserve"><value>Keep drafts and review later</value></data>
+  <data name="DraftVersion" xml:space="preserve"><value>Saved versions</value></data>
+  <data name="DraftSyncPending" xml:space="preserve"><value>Draft saved locally. Server synchronization is automatic when connected.</value></data>
+  <data name="WorkingDraft" xml:space="preserve"><value>Draft</value></data>
+  <data name="DraftPendingSync" xml:space="preserve"><value>Saved locally — waiting to sync</value></data>
+  <data name="DraftSynced" xml:space="preserve"><value>Synced</value></data>
+  <data name="Concurrent" xml:space="preserve"><value>Concurrent working copy</value></data>
 </root>

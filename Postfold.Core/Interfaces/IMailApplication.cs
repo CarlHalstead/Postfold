@@ -18,6 +18,8 @@ namespace Postfold.Core.Interfaces;
 /// <summary>Provides presentation with local mail queries and explicit account-scoped actions over durable engine work.</summary>
 public interface IMailApplication
 {
+    /// <summary>Deletes the selected current draft locally and on its server, retaining offline intent.</summary>
+    Task<Failure> DeleteDraftAsync(DraftSnapshot draft, CancellationToken cancellationToken);
     IClientCatalog Catalog { get; }
 
     Task<Outcome<SearchPage>> SearchAsync(SearchRequest request, CancellationToken cancellationToken);
@@ -54,7 +56,22 @@ public interface IMailApplication
 
     Task<Outcome<ComposeContent>> ReadDraftAsync(DraftSnapshot draft, CancellationToken cancellationToken);
 
+    /// <summary>Autosaves an existing editor against its last observed local revision, preserving concurrent changes as conflicts.</summary>
+    Task<Outcome<DraftSnapshot>> SaveDraftRevisionAsync(DraftSnapshot expected, ComposeContent content, CancellationToken cancellationToken);
+
     Task<Failure> PushDraftAsync(AccountId account, Guid draft, CancellationToken cancellationToken);
+
+    /// <summary>Closes the working draft into one version and optionally schedules automatic server synchronization.</summary>
+    Task<Outcome<DraftSnapshot>> CloseDraftAsync(AccountId account, Guid draft, bool synchronise, CancellationToken cancellationToken);
+
+    /// <summary>Observes an already-scheduled automatic draft save for UI refresh; it never starts another save.</summary>
+    Task WaitForDraftSyncAsync(AccountId account, Guid draft, CancellationToken cancellationToken);
+
+    /// <summary>Retains an exact local/remote pair for explicit draft review.</summary>
+    Task<Outcome<DraftReviewSnapshot>> ReviewDraftAsync(DraftSnapshot draft, CancellationToken cancellationToken);
+
+    /// <summary>Keeps the remote original and saves the reviewed local version as another remote draft.</summary>
+    Task<Failure> CopyReviewedDraftAsync(DraftReviewSnapshot review, CancellationToken cancellationToken);
 
     Task<Outcome<ComposeAttachment>> ImportAttachmentAsync(
         AccountId account,

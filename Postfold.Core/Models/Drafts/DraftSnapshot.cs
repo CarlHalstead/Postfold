@@ -14,5 +14,8 @@ public sealed record DraftSnapshot(
     ProviderIdentity? Remote,
     string? RemoteVersion,
     bool Conflict,
-    bool Held
+    bool Held,
+    long FinalizedRevision = 0,
+    long VersionCount = 0,
+    bool DeletePending = false
 );

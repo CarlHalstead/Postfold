@@ -21,6 +21,15 @@ internal sealed class QualificationMailApplication(IMailApplication application)
 {
     public IClientCatalog Catalog => application.Catalog;
     internal bool FailDraftSaves { get; set; }
+    internal bool FailDraftCloses { get; set; }
+
+    public Task<Failure> DeleteDraftAsync(
+        DraftSnapshot draft,
+        CancellationToken cancellationToken
+    )
+    {
+        return application.DeleteDraftAsync(draft, cancellationToken);
+    }
 
     public Task<Outcome<SearchPage>> SearchAsync(SearchRequest request, CancellationToken cancellationToken)
     {
@@ -75,6 +84,16 @@ internal sealed class QualificationMailApplication(IMailApplication application)
             application.SaveDraftAsync(account, id, content, cancellationToken);
     }
 
+    public Task<Outcome<DraftSnapshot>> SaveDraftRevisionAsync(
+        DraftSnapshot expected,
+        ComposeContent content,
+        CancellationToken cancellationToken
+    )
+    {
+        return FailDraftSaves ? Task.FromResult(Outcome<DraftSnapshot>.Fail(Failure.Unavailable)) :
+            application.SaveDraftRevisionAsync(expected, content, cancellationToken);
+    }
+
     public Task<Outcome<ComposeContent>> ReadDraftAsync(DraftSnapshot draft, CancellationToken cancellationToken)
     {
         return application.ReadDraftAsync(draft, cancellationToken);
@@ -83,6 +102,42 @@ internal sealed class QualificationMailApplication(IMailApplication application)
     public Task<Failure> PushDraftAsync(AccountId account, Guid draft, CancellationToken cancellationToken)
     {
         return application.PushDraftAsync(account, draft, cancellationToken);
+    }
+
+    public Task<Outcome<DraftSnapshot>> CloseDraftAsync(
+        AccountId account,
+        Guid draft,
+        bool synchronise,
+        CancellationToken cancellationToken
+    )
+    {
+        return FailDraftCloses ? Task.FromResult(Outcome<DraftSnapshot>.Fail(Failure.Unavailable)) :
+            application.CloseDraftAsync(account, draft, synchronise, cancellationToken);
+    }
+
+    public Task WaitForDraftSyncAsync(
+        AccountId account,
+        Guid draft,
+        CancellationToken cancellationToken
+    )
+    {
+        return application.WaitForDraftSyncAsync(account, draft, cancellationToken);
+    }
+
+    public Task<Outcome<DraftReviewSnapshot>> ReviewDraftAsync(
+        DraftSnapshot draft,
+        CancellationToken cancellationToken
+    )
+    {
+        return application.ReviewDraftAsync(draft, cancellationToken);
+    }
+
+    public Task<Failure> CopyReviewedDraftAsync(
+        DraftReviewSnapshot review,
+        CancellationToken cancellationToken
+    )
+    {
+        return application.CopyReviewedDraftAsync(review, cancellationToken);
     }
 
     public Task<Outcome<ComposeAttachment>> ImportAttachmentAsync(

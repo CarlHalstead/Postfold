@@ -39,6 +39,10 @@ public sealed class ComposeWindow : Window
     private readonly WrapPanel _actionButtons;
     private readonly StackPanel _attachmentControls = new StackPanel { Spacing = 8 };
     private readonly string _sender;
+    private readonly DateTimeOffset _date;
+    private readonly string _messageId;
+    private ComposeContent? _savedContent;
+    private DraftSnapshot? _savedDraft;
     private readonly AutoCompleteBox _recipients;
     private CancellationTokenSource _suggestionLifetime = new CancellationTokenSource();
     private readonly List<Task> _suggestions = [];
@@ -73,7 +77,8 @@ public sealed class ComposeWindow : Window
         Guid? predecessor = null,
         MessageSnapshot? original = null,
         ImmutableArray<AttachmentSnapshot> originalAttachments = default,
-        bool held = false
+        bool held = false,
+        DraftSnapshot? draft = null
     )
     {
         _application = application;
@@ -82,18 +87,24 @@ public sealed class ComposeWindow : Window
         _predecessor = predecessor ?? content.Predecessor;
         _conflict = conflict;
         _held = held;
+        _savedDraft = draft;
+        _savedContent = draft is null ? null : content;
         Title = Strings.Compose;
         Width = 760;
         Height = 760;
         MinWidth = 480;
         MinHeight = 480;
         StackPanel form = new StackPanel
+
         {
             Margin = new Thickness(24),
             Spacing = 12
         };
         _sender = content.Sender;
+        _date = content.Date;
+        _messageId = content.MessageId;
         _recipients = new AutoCompleteBox
+
         {
             Name = "Recipients",
             Text = string.Join(";", content.Recipients),
@@ -105,10 +116,12 @@ public sealed class ComposeWindow : Window
         };
         Avalonia.Automation.AutomationProperties.SetName(_recipients, Strings.Recipients);
         StackPanel recipients = new StackPanel
+
         {
             Spacing = 4
         };
         TextBlock recipientLabel = new TextBlock
+
         {
             Text = Strings.Recipients,
             TextWrapping = TextWrapping.Wrap
@@ -131,11 +144,13 @@ public sealed class ComposeWindow : Window
         WrapPanel actions = new WrapPanel();
         _actionButtons = actions;
         StackPanel attachmentHeading = new StackPanel
+
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
             Spacing = 8
         };
         attachmentHeading.Children.Add(new TextBlock
+
         {
             Text = Strings.Get("ComposeAttachments"),
             FontWeight = FontWeight.SemiBold,
@@ -150,16 +165,19 @@ public sealed class ComposeWindow : Window
         if (original is not null && !originalAttachments.IsDefaultOrEmpty)
         {
             ListBox originals = new ListBox
+
             {
                 ItemsSource = originalAttachments,
                 MaxHeight = 120
             };
             Avalonia.Automation.AutomationProperties.SetName(originals, Strings.Get("OriginalAttachments"));
             originals.ItemTemplate = new FuncDataTemplate<AttachmentSnapshot>((attachment, _) => attachment is null ? null : new TextBlock
+
             {
                 Text = attachment.Name
             });
             form.Children.Add(new TextBlock
+
             {
                 Text = Strings.Get("OriginalAttachments")
             });
@@ -180,10 +198,12 @@ public sealed class ComposeWindow : Window
                 return null;
             }
             Grid row = new Grid
+
             {
                 ColumnDefinitions = new ColumnDefinitions("*,Auto")
             };
             TextBlock name = new TextBlock
+
             {
                 Text = attachment.Name + " (" + attachment.Content.Length.ToString(
                     System.Globalization.CultureInfo.CurrentCulture
@@ -212,6 +232,7 @@ public sealed class ComposeWindow : Window
             ToolTip.SetTip(remove, Strings.Get("RemoveAttachment"));
             Grid.SetColumn(remove, 1);
             Border card = new Border
+
             {
                 Child = row,
                 BorderThickness = new Thickness(1),
@@ -225,6 +246,7 @@ public sealed class ComposeWindow : Window
         _attachmentList.ItemsSource = _attachments.ToArray();
         _attachmentList.IsVisible = _attachments.Count > 0;
         _attachmentControls.Children.Add(new ScrollViewer
+
         {
             Content = _attachmentList,
             MaxHeight = 160,
@@ -234,11 +256,13 @@ public sealed class ComposeWindow : Window
         _send = send;
         send.IsEnabled = !conflict && !held;
         StackPanel footer = new StackPanel
+
         {
             Spacing = 8
         };
         footer.Children.Add(actions);
         TextBlock autosaveHint = new TextBlock
+
         {
             Text = Strings.Get("DraftAutosaveHint"),
             TextWrapping = TextWrapping.Wrap
@@ -331,15 +355,24 @@ public sealed class ComposeWindow : Window
         await _saving.WaitAsync();
         try
         {
+            ComposeContent content = Snapshot();
+            if (_savedContent is not null && content.Sender == _savedContent.Sender &&
+                content.Subject == _savedContent.Subject && content.PlainText == _savedContent.PlainText &&
+                content.Recipients.SequenceEqual(_savedContent.Recipients) && content.Attachments.SequenceEqual(_savedContent.Attachments))
+            {
+                return true;
+            }
             _status.Text = Strings.Saving;
-            Outcome<DraftSnapshot> saved = await _application.SaveDraftAsync(
-                _account,
-                _id,
-                Snapshot(),
-                CancellationToken.None
-            );
+            Outcome<DraftSnapshot> saved = _savedDraft is null ?
+                await _application.SaveDraftAsync(_account, _id, content, CancellationToken.None) :
+                await _application.SaveDraftRevisionAsync(_savedDraft, content, CancellationToken.None);
             _conflict |= saved.Value?.Conflict == true;
             _held |= saved.Value?.Held == true;
+            if (saved.IsSuccess)
+            {
+                _savedContent = content;
+                _savedDraft = saved.Value;
+            }
             _status.Text = !saved.IsSuccess ? Strings.DraftFailed : _conflict ? Strings.Conflict :
                 _held ? Strings.Get("DraftHeld") : Strings.Saved;
             return saved.IsSuccess;
@@ -369,13 +402,25 @@ public sealed class ComposeWindow : Window
         _timer.Stop();
     }
 
-    public async Task<bool> PrepareShutdownAsync()
+    public async Task<bool> PrepareShutdownAsync(
+        bool synchronise = true
+    )
     {
         await _actions.WaitAsync();
         try
         {
             await Task.WhenAll(_suggestions.ToArray());
-            return await FlushAsync();
+            if (_frozen)
+            {
+                return true;
+            }
+            if (!await FlushAsync())
+            {
+                return false;
+            }
+            Outcome<DraftSnapshot> closed = await _application.CloseDraftAsync(_account, _id, synchronise, CancellationToken.None);
+            _status.Text = closed.IsSuccess ? Strings.Get("DraftSyncPending") : Strings.DraftFailed;
+            return closed.IsSuccess;
         }
         finally
         {
@@ -534,13 +579,13 @@ public sealed class ComposeWindow : Window
         return new ComposeContent(
             _sender,
             (_recipients.Text ?? "").Split(
-    ';',
-    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
-).ToImmutableArray(),
+                ';',
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
+            ).ToImmutableArray(),
             _subject.Text ?? "",
             _body.Text ?? "",
-            DateTimeOffset.UtcNow,
-            Guid.NewGuid().ToString("N") + "@postfold.invalid",
+            _date,
+            _messageId,
             _attachments.ToImmutableArray(),
             _predecessor
         );

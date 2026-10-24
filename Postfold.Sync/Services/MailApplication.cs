@@ -288,6 +288,26 @@ public sealed class MailApplication : IMailApplication
         return await engine.SaveDraftAsync(id, source, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<Outcome<DraftSnapshot>> SaveDraftRevisionAsync(
+        DraftSnapshot expected,
+        ComposeContent content,
+        CancellationToken cancellationToken
+    )
+    {
+        IMailAccountEngine? engine = _engines.Find(expected.Account);
+        if (engine is null)
+        {
+            return Outcome<DraftSnapshot>.Fail(Failure.Unavailable);
+        }
+        ComposeContent serializable = content with
+        {
+            Recipients = content.Recipients.IsDefault ? [] : content.Recipients,
+            Attachments = content.Attachments.IsDefault ? [] : content.Attachments
+        };
+        using MemoryStream source = new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(serializable));
+        return await engine.SaveDraftRevisionAsync(expected, source, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<Outcome<ComposeContent>> ReadDraftAsync(DraftSnapshot draft, CancellationToken cancellationToken)
     {
         await using Stream source = await _blobs.OpenAsync(draft.Content, cancellationToken).ConfigureAwait(false);
@@ -306,10 +326,59 @@ public sealed class MailApplication : IMailApplication
         }
     }
 
+    public Task<Failure> DeleteDraftAsync(
+        DraftSnapshot draft,
+        CancellationToken cancellationToken
+    )
+    {
+        IMailAccountEngine? engine = _engines.Find(draft.Account);
+        return engine is null ? Task.FromResult(Failure.Unavailable) : engine.DeleteDraftAsync(draft, cancellationToken);
+    }
+
     public Task<Failure> PushDraftAsync(AccountId account, Guid draft, CancellationToken cancellationToken)
     {
         IMailAccountEngine? engine = _engines.Find(account);
         return engine is null ? Task.FromResult(Failure.Unavailable) : engine.PushDraftAsync(draft, cancellationToken);
+    }
+
+    public Task<Outcome<DraftSnapshot>> CloseDraftAsync(
+        AccountId account,
+        Guid draft,
+        bool synchronise,
+        CancellationToken cancellationToken
+    )
+    {
+        IMailAccountEngine? engine = _engines.Find(account);
+        return engine is null ? Task.FromResult(Outcome<DraftSnapshot>.Fail(Failure.Unavailable)) :
+            engine.CloseDraftAsync(draft, synchronise, cancellationToken);
+    }
+
+    public Task WaitForDraftSyncAsync(
+        AccountId account,
+        Guid draft,
+        CancellationToken cancellationToken
+    )
+    {
+        return _engines.Find(account)?.WaitForDraftSyncAsync(draft, cancellationToken) ?? Task.CompletedTask;
+    }
+
+    public Task<Outcome<DraftReviewSnapshot>> ReviewDraftAsync(
+        DraftSnapshot draft,
+        CancellationToken cancellationToken
+    )
+    {
+        IMailAccountEngine? engine = _engines.Find(draft.Account);
+        return engine is null ? Task.FromResult(Outcome<DraftReviewSnapshot>.Fail(Failure.Unavailable)) :
+            engine.ReviewDraftAsync(draft, cancellationToken);
+    }
+
+    public Task<Failure> CopyReviewedDraftAsync(
+        DraftReviewSnapshot review,
+        CancellationToken cancellationToken
+    )
+    {
+        IMailAccountEngine? engine = _engines.Find(review.Draft.Account);
+        return engine is null ? Task.FromResult(Failure.Unavailable) : engine.CopyReviewedDraftAsync(review, cancellationToken);
     }
 
     public async Task<Outcome<ComposeAttachment>> ImportAttachmentAsync(
@@ -482,7 +551,10 @@ public sealed class MailApplication : IMailApplication
         ).ConfigureAwait(false) ? Failure.None : Failure.NeedsReview;
     }
 
-    private async Task<Failure> SynchroniseAccountAsync(AccountId account, CancellationToken cancellationToken)
+    private async Task<Failure> SynchroniseAccountAsync(
+        AccountId account,
+        CancellationToken cancellationToken
+    )
     {
         IMailAccountEngine? engine = _engines.Find(account);
         if (engine is null)
@@ -510,6 +582,7 @@ public sealed class MailApplication : IMailApplication
         }
 
         await _capabilities.SaveCapabilitiesAsync(account, engine.Capabilities, cancellationToken).ConfigureAwait(false);
-        return await engine.ProcessMutationsAsync(cancellationToken).ConfigureAwait(false);
+        Failure mutations = await engine.ProcessMutationsAsync(cancellationToken).ConfigureAwait(false);
+        return mutations == Failure.None ? await engine.SynchroniseDraftsAsync(cancellationToken).ConfigureAwait(false) : mutations;
     }
 }

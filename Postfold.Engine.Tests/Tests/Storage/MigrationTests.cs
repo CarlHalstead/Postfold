@@ -29,7 +29,9 @@ public sealed class MigrationTests
 {
     [TestCase("\n")]
     [TestCase("\r\n")]
-    public void SchemaHash_WhenMigrationSqlUsesPlatformLineEndings_MatchesReviewedManifest(string newline)
+    public void SchemaHash_WhenMigrationSqlUsesPlatformLineEndings_MatchesReviewedManifest(
+        string newline
+    )
     {
         // Arrange
         using SqliteConnection connection = ProfileMigration.Connect(":memory:", readOnly: false);
@@ -41,7 +43,7 @@ public sealed class MigrationTests
         string schema = ProfileMigration.SchemaHash(connection);
 
         // Assert
-        Assert.That(schema, Is.EqualTo(ProfileMigrationManifest.Versions[0].SchemaHash));
+        Assert.That(schema, Is.EqualTo(ProfileMigrationManifest.Versions[^1].SchemaHash));
         ProfileEvidence.Execute(connection, "DROP INDEX MessageDate;");
         Assert.That(ProfileMigration.SchemaHash(connection), Is.Not.EqualTo(schema));
     }
@@ -64,8 +66,8 @@ public sealed class MigrationTests
         // Assert
         Assert.That(opened.IsSuccess, Is.True);
         Assert.That(reopened.IsSuccess, Is.True);
-        Assert.That(ProfileMigration.Scalar(connection, "PRAGMA user_version;"), Is.EqualTo(2L));
-        Assert.That(context.Database.GetAppliedMigrations(), Is.EqualTo(new[] { "20261014150754_InitialEfProfile" }));
+        Assert.That(ProfileMigration.Scalar(connection, "PRAGMA user_version;"), Is.EqualTo(3L));
+        Assert.That(context.Database.GetAppliedMigrations(), Is.EqualTo(ProfileMigrationManifest.Versions.Select(item => item.Id)));
         Assert.That(context.Database.HasPendingModelChanges(), Is.False);
         Assert.That(EvolutionContext.CreatePlan().Versions[0], Is.EqualTo(ProfileMigrationManifest.Versions[0]));
         Assert.That(ProfileMigration.SchemaHash(connection), Is.EqualTo(schema));
@@ -171,7 +173,9 @@ public sealed class MigrationTests
 
     [TestCase(false)]
     [TestCase(true)]
-    public async Task AdmitAsync_WhenPopulatedEfOriginUpgrades_PreservesEveryRowAndProtectedBlob(bool intermediate)
+    public async Task AdmitAsync_WhenPopulatedEfOriginUpgrades_PreservesEveryRowAndProtectedBlob(
+        bool intermediate
+    )
     {
         // Arrange
         string directory = EngineFixture.DirectoryPath();
@@ -185,7 +189,7 @@ public sealed class MigrationTests
         {
             using FileStream first = await ProfileMigration.AdmitAsync(database, plan with
             {
-                Versions = plan.Versions.Take(2).ToArray()
+                Versions = plan.Versions.Take(3).ToArray()
             }, CancellationToken.None);
         }
 
@@ -196,9 +200,9 @@ public sealed class MigrationTests
 
         // Assert
         Assert.That(ProfileEvidence.Rows(database), Is.EqualTo(original));
-        Assert.That(ProfileMigration.Scalar(connection, "PRAGMA user_version;"), Is.EqualTo(4L));
+        Assert.That(ProfileMigration.Scalar(connection, "PRAGMA user_version;"), Is.EqualTo(5L));
         Assert.That(ProfileMigration.SchemaHash(connection), Is.EqualTo(plan.Versions[^1].SchemaHash));
-        Assert.That(ProfileMigration.Scalar(connection, "SELECT count(*) FROM __EFMigrationsHistory;"), Is.EqualTo(3L));
+        Assert.That(ProfileMigration.Scalar(connection, "SELECT count(*) FROM __EFMigrationsHistory;"), Is.EqualTo(4L));
         Assert.That(ProfileMigration.Scalar(connection, "PRAGMA foreign_key_check;"), Is.Null);
         Assert.That(Directory.GetFiles(Path.Combine(backup, "objects"), "*.owner"), Has.Length.GreaterThanOrEqualTo(3));
         Assert.That(Directory.GetFiles(Path.Combine(backup, "objects"), "*.tmp"), Has.Length.EqualTo(1));
@@ -223,7 +227,7 @@ public sealed class MigrationTests
         // Assert
         Assert.That(ProfileEvidence.Rows(database), Is.EqualTo(original));
         using SqliteConnection connection = ProfileMigration.Connect(database, readOnly: true);
-        Assert.That(ProfileMigration.Scalar(connection, "PRAGMA user_version;"), Is.EqualTo(2L));
+        Assert.That(ProfileMigration.Scalar(connection, "PRAGMA user_version;"), Is.EqualTo(3L));
         Assert.That(Directory.GetFiles(directory, "complete.json", SearchOption.AllDirectories), Is.Empty);
     }
 
@@ -249,7 +253,9 @@ public sealed class MigrationTests
         Assert.That(ProfileMigration.Scalar(read, "SELECT count(*) FROM __EFMigrationsLock;"), Is.EqualTo(1L));
     }
 
-    internal static async Task PopulateAsync(string directory)
+    internal static async Task PopulateAsync(
+        string directory
+    )
     {
         await using SqliteProfile profile = await EngineFixture.OpenAsync(directory);
         await profile.AddAccountAsync(new AccountId(3), "Inactive synthetic", CancellationToken.None);

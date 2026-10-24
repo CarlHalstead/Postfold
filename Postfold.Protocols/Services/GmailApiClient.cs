@@ -134,7 +134,12 @@ internal sealed class GmailApiClient : IDisposable
             await using Stream source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             using BoundedStream bounded = new BoundedStream(source, response.IsSuccessStatusCode ? maximumBytes : 65536);
             await bounded.CopyToAsync(bytes, cancellationToken).ConfigureAwait(false);
+            if (method == HttpMethod.Delete && response.IsSuccessStatusCode && bytes.Length == 0)
+            {
+                return JsonDocument.Parse("{}");
+            }
             JsonDocument parsed = JsonDocument.Parse(bytes.GetBuffer().AsMemory(0, checked((int)bytes.Length)), new JsonDocumentOptions
+
             {
                 MaxDepth = 32
             });

@@ -446,6 +446,7 @@ public sealed class ProtocolTests
     {
         // Arrange
         await using LocalMailServer server = new LocalMailServer(imap: true)
+
         {
             AdvancedImap = true
         };
@@ -457,6 +458,7 @@ public sealed class ProtocolTests
             credentials,
             1048576
         )
+
         {
             FixtureAuthority = server.Authority
         };
@@ -478,7 +480,8 @@ public sealed class ProtocolTests
             new RemoteDraftResult(identity, "prior-version", null, false, Failure.None),
             CancellationToken.None
         );
-        await profile.SaveAsync(draft.Id, draft.Account, local, CancellationToken.None);
+        BlobReference edited = await EngineFixture.BlobAsync(profile, "From: sender@synthetic.invalid\r\nSubject: draft\r\n\r\nedited local body\r\n");
+        await profile.SaveAsync(draft.Id, draft.Account, edited, CancellationToken.None);
 
         // Act
         Failure result = await new DraftWork(draft.Id, draft.Account, profile, profile.Blobs, remote)
@@ -488,7 +491,7 @@ public sealed class ProtocolTests
         // Assert
         Assert.That(result, Is.EqualTo(Failure.NeedsReview));
         Assert.That(preserved!.Conflict, Is.True);
-        Assert.That(preserved.Content, Is.EqualTo(local));
+        Assert.That(preserved.Content, Is.EqualTo(edited));
         Assert.That(server.Commands.Any(command => command.Contains("APPEND", StringComparison.Ordinal)), Is.False);
     }
 
@@ -705,7 +708,10 @@ public sealed class ProtocolTests
 
     [TestCase("café", true)]
     [TestCase("bad\r\nheader", false)]
-    public async Task FreezeAsync_WhenSubjectIsValidated_PreservesUnicodeAndRejectsInjection(string subject, bool valid)
+    public async Task FreezeAsync_WhenSubjectIsValidated_PreservesUnicodeAndRejectsInjection(
+        string subject,
+        bool valid
+    )
     {
         // Arrange
         MimePipeline pipeline = new MimePipeline(4096, 20);

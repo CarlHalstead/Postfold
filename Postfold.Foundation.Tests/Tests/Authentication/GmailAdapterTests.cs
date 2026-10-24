@@ -337,6 +337,7 @@ public sealed class GmailAdapterTests
         // Arrange
         string directory = EngineFixture.DirectoryPath();
         await using GmailFixture provider = new GmailFixture
+
         {
             LoseDraftAcknowledgement = lost
         };
@@ -348,6 +349,7 @@ public sealed class GmailAdapterTests
         {
             BlobReference first = await EngineFixture.BlobAsync(profile, GmailFixture.Mime);
             await profile.SaveAsync(id, EngineFixture.Account, first, CancellationToken.None);
+            await profile.FinalizeAsync(id, EngineFixture.Account, CancellationToken.None);
             DraftWork work = new DraftWork(id, EngineFixture.Account, profile, profile.Blobs, adapter);
 
             // Act
@@ -360,6 +362,7 @@ public sealed class GmailAdapterTests
                 provider.ReplaceDraft("draft-1", GmailFixture.Mime + "remote revision");
                 BlobReference changed = await EngineFixture.BlobAsync(profile, GmailFixture.Mime + "local revision");
                 await profile.SaveAsync(id, EngineFixture.Account, changed, CancellationToken.None);
+                await profile.FinalizeAsync(id, EngineFixture.Account, CancellationToken.None);
                 await work.RunAsync(CancellationToken.None);
                 Assert.That(await profile.DraftVersionsAsync(EngineFixture.Account, id, CancellationToken.None), Has.Length.EqualTo(3));
             }

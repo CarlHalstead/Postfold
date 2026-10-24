@@ -5,10 +5,12 @@ using System;
 namespace Postfold.Engine.Tests.Fixtures.Storage;
 
 [DbContext(typeof(EvolutionContext))]
-[Migration("20261014160100_RebuildEvolutionMemberships")]
+[Migration("20261023220100_RebuildEvolutionMemberships")]
 internal sealed class RebuildEvolutionMemberships : Migration
 {
-    protected override void Up(MigrationBuilder migrationBuilder)
+    protected override void Up(
+        MigrationBuilder migrationBuilder
+    )
     {
         migrationBuilder.Sql("""
             CREATE TABLE Memberships_new(
@@ -22,7 +24,7 @@ internal sealed class RebuildEvolutionMemberships : Migration
             DROP TABLE Memberships;
             ALTER TABLE Memberships_new RENAME TO Memberships;
             CREATE INDEX FolderMessages ON Memberships(AccountId,FolderId,MessageId);
-            PRAGMA user_version=4;
+            PRAGMA user_version=5;
             """);
     }
 

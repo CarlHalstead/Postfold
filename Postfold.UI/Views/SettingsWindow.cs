@@ -384,7 +384,7 @@ public sealed class SettingsWindow : Window
         };
     }
 
-    private static void IconAction(
+    internal static void IconAction(
         Button button,
         Geometry icon,
         string key,

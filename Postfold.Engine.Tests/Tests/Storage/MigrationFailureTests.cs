@@ -22,7 +22,9 @@ public sealed class MigrationFailureTests
 {
     [TestCase(false)]
     [TestCase(true)]
-    public async Task AdmitAsync_WhenSqliteUpgradeFails_RollsBackRowsHistoryAndFormat(bool diskFull)
+    public async Task AdmitAsync_WhenSqliteUpgradeFails_RollsBackRowsHistoryAndFormat(
+        bool diskFull
+    )
     {
         // Arrange
         string directory = EngineFixture.DirectoryPath();
@@ -65,8 +67,8 @@ public sealed class MigrationFailureTests
         }
         Assert.That(ProfileEvidence.Rows(database), Is.EqualTo(original));
         using SqliteConnection read = ProfileMigration.Connect(database, readOnly: true);
-        Assert.That(ProfileMigration.Scalar(read, "PRAGMA user_version;"), Is.EqualTo(2L));
-        Assert.That(ProfileMigration.Scalar(read, "SELECT count(*) FROM __EFMigrationsHistory;"), Is.EqualTo(1L));
+        Assert.That(ProfileMigration.Scalar(read, "PRAGMA user_version;"), Is.EqualTo(3L));
+        Assert.That(ProfileMigration.Scalar(read, "SELECT count(*) FROM __EFMigrationsHistory;"), Is.EqualTo(2L));
         foreach (string backup in Directory.GetDirectories(directory, "*.before-migration-*"))
         {
             ProfileBackup.Validate(backup);
@@ -118,7 +120,7 @@ public sealed class MigrationFailureTests
         // Assert
         Assert.That(ProfileEvidence.Rows(database), Is.EqualTo(original));
         using SqliteConnection read = ProfileMigration.Connect(database, readOnly: true);
-        Assert.That(ProfileMigration.Scalar(read, "PRAGMA user_version;"), Is.EqualTo(2L));
+        Assert.That(ProfileMigration.Scalar(read, "PRAGMA user_version;"), Is.EqualTo(3L));
         using FileStream lease = await ProfileMigration.AdmitAsync(database, EvolutionContext.CreatePlan(), CancellationToken.None);
     }
 

@@ -362,7 +362,14 @@ public sealed partial class MainWindow : Window
                 args.Handled = true;
             }
         };
-        this.FindControl<TreeView>("ScopeList")!.SelectionChanged += (_, _) => Track(() => RefreshFromControlsAsync(onlyIfInvalidated: true));
+        this.FindControl<TreeView>("ScopeList")!.SelectionChanged += (_, _) => Track(async () =>
+        {
+            if (DataContext is not MainWindowViewModel model || model.UpdatingNavigation)
+            {
+                return;
+            }
+            await RefreshFromControlsAsync(onlyIfInvalidated: true);
+        });
         KeyDown += (_, args) =>
         {
             if (args.KeyModifiers == KeyModifiers.Control && args.Key == Key.N)
@@ -539,7 +546,8 @@ public sealed partial class MainWindow : Window
         bool conflict = false,
         Guid? predecessor = null,
         AccountId? targetAccount = null,
-        bool held = false
+        bool held = false,
+        DraftSnapshot? draft = null
     )
     {
         MainWindowViewModel? model = DataContext as MainWindowViewModel;
@@ -576,7 +584,7 @@ public sealed partial class MainWindow : Window
         }
 
         ComposeContent content = activation ?? new ComposeContent(
-                account.Identity?.Sender ?? account.GoogleBinding?.Address ?? account.Outgoing?.Username ?? account.Address,
+            account.Identity?.Sender ?? account.GoogleBinding?.Address ?? account.Outgoing?.Username ?? account.Address,
             [],
             "",
             "",
@@ -618,13 +626,23 @@ public sealed partial class MainWindow : Window
             predecessor,
             kind == "Forward" ? model?.Selected : null,
             kind == "Forward" && model is not null ? model.Attachments.ToImmutableArray() : [],
-            held
+            held,
+            draft
         );
         window.FontFamily = FontFamily;
         window.FontSize = FontSize;
         _compose.Add(window);
         window.SendStatusChanged += status => model?.ReportSendStatus(account.Name + " — " + status);
-        window.Closed += (_, _) => { _compose.Remove(window); this.FindControl<Button>("ComposeButton")!.Focus(); };
+        window.Closed += (_, _) =>
+        {
+            _compose.Remove(window);
+            this.FindControl<Button>("ComposeButton")!.Focus();
+            Track(async () =>
+            {
+                await _application.WaitForDraftSyncAsync(account.Id, window.DraftId, _lifetime.Token);
+                await RefreshDraftListAsync(account.Id);
+            });
+        };
         ShowWindow(window);
     }
 
@@ -666,7 +684,7 @@ public sealed partial class MainWindow : Window
 
         foreach (ComposeWindow window in windows)
         {
-            if (!await window.PrepareShutdownAsync())
+            if (!await window.PrepareShutdownAsync(synchronise: false))
             {
                 foreach (ComposeWindow preserved in windows)
                 {
@@ -812,88 +830,131 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        ImmutableArray<DraftSnapshot> drafts = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
-        ListBox list = new ListBox
+        Window? existing = OwnedWindows.FirstOrDefault(item => item.Name == "AccountDrafts" + account.Value);
+        if (existing is not null)
         {
-            ItemsSource = drafts,
-            ItemTemplate = new FuncDataTemplate<DraftSnapshot>((draft, _) => draft is null ? null : new TextBlock
-            {
-                Text = Strings.Get("DraftRevision") + " " + draft.Revision + " — " +
-                                                        Strings.Get(draft.Conflict ? "Conflict" : draft.Held ? "DraftHeld" : "Saved"),
-                TextWrapping = TextWrapping.Wrap
-            })
+            await RefreshDraftListAsync(account);
+            existing.Activate();
+            return;
+        }
+
+        ImmutableArray<DraftSnapshot> drafts = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
+        Dictionary<Guid, string> subjects = [];
+        foreach (DraftSnapshot draft in drafts)
+        {
+            Outcome<ComposeContent> content = await _application.ReadDraftAsync(draft, _lifetime.Token);
+            subjects[draft.Id] = content.IsSuccess ? (string.IsNullOrWhiteSpace(content.Value!.Subject) ? Strings.Get("NoSubject") : content.Value.Subject) : Strings.Describe(content.Failure);
+        }
+        TextBlock status = new TextBlock
+
+        {
+            TextWrapping = TextWrapping.Wrap
         };
+        ListBox list = new ListBox
+
+        {
+            Name = "AccountDraftList",
+            Tag = subjects,
+            ItemsSource = drafts,
+            ItemTemplate = new FuncDataTemplate<DraftSnapshot>((draft, _) =>
+                                    {
+                                        if (draft is null)
+                                        {
+                                            return null;
+                                        }
+                                        string subject = subjects.GetValueOrDefault(draft.Id, Strings.Get("NoSubject"));
+                                        Grid row = new Grid
+
+                                        {
+                                            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+                                            ColumnSpacing = 8
+                                        };
+                                        StackPanel text = new StackPanel
+
+                                        {
+                                            Spacing = 4,
+                                            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+                                        };
+                                        text.Children.Add(new TextBlock
+
+                                        {
+                                            Text = subject,
+                                            TextTrimming = TextTrimming.CharacterEllipsis
+                                        });
+                                        text.Children.Add(new TextBlock
+
+                                        {
+                                            Text = (draft.VersionCount > 0 ? Strings.Get("DraftVersion") + " " + draft.VersionCount : Strings.Get("WorkingDraft")) + " — " +
+                                                Strings.Get(draft.DeletePending ? "DraftDeletePending" : draft.Conflict ? "Conflict" : draft.Held ? "DraftHeld" :
+                                                    draft.PushedRevision < draft.FinalizedRevision ? "DraftPendingSync" : draft.PushedRevision == draft.Revision ? "DraftSynced" : "Saved"),
+                                            TextWrapping = TextWrapping.Wrap
+                                        });
+                                        row.Children.Add(text);
+                                        string editKey = draft.Held || draft.Conflict ? "ReviewVersions" : "OpenDraft";
+                                        Button edit = FormControls.AddActionButton(row, editKey, async () =>
+                                        {
+                                            DraftSnapshot? current = (await _application.Catalog.DraftsAsync(account, _lifetime.Token)).SingleOrDefault(item => item.Id == draft.Id);
+                                            if (current is null || current.DeletePending)
+                                            {
+                                                await RefreshDraftListAsync(account);
+                                                return;
+                                            }
+                                            if (current.Held || current.Conflict)
+                                            {
+                                                await ReviewVersionsAsync(current);
+                                                return;
+                                            }
+                                            Outcome<ComposeContent> content = await _application.ReadDraftAsync(current, _lifetime.Token);
+                                            if (content.IsSuccess)
+                                            {
+                                                OpenCompose(activation: content.Value, id: current.Id, targetAccount: current.Account, draft: current);
+                                            }
+                                            else
+                                            {
+                                                status.Text = Strings.Describe(content.Failure);
+                                            }
+                                        }, status);
+                                        Button remove = FormControls.AddActionButton(row, "DeleteDraft", async () =>
+                                        {
+                                            if (_compose.Any(item => item.Account == account && item.DraftId == draft.Id))
+                                            {
+                                                status.Text = Strings.Get("DraftOpenDeleteBlocked");
+                                                return;
+                                            }
+                                            Failure result = await _application.DeleteDraftAsync(draft, _lifetime.Token);
+                                            status.Text = result == Failure.None ? "" : Strings.Describe(result);
+                                            await RefreshDraftListAsync(account);
+                                        }, status);
+                                        SettingsWindow.IconAction(edit, MailIcons.Rename, editKey, subject, 1, !draft.DeletePending);
+                                        SettingsWindow.IconAction(remove, MailIcons.Close, "DeleteDraft", subject, 2, !draft.DeletePending);
+                                        Border surface = new Border
+
+                                        {
+                                            Child = row
+                                        };
+                                        surface.Classes.Add("card");
+                                        surface.Bind(Border.BackgroundProperty, new Avalonia.Markup.Xaml.MarkupExtensions.DynamicResourceExtension("MailNavigationBrush"));
+                                        return surface;
+                                    })
+        };
+        list.Classes.Add("mail");
         StackPanel panel = new StackPanel
+
         {
             Margin = new Thickness(12),
             Spacing = 8
         };
         panel.Children.Add(list);
-        if (model.Accounts.Any(item => item.Id == account && item.ProviderKind == "Google"))
-        {
-            panel.Children.Add(new TextBlock
-            {
-                Name = "GmailDraftHoldHint",
-                Text = Strings.Get("GmailDraftHoldHint"),
-                TextWrapping = TextWrapping.Wrap
-            });
-        }
         StackPanel footer = new StackPanel
+
         {
             Spacing = 8
         };
-        WrapPanel actions = new WrapPanel();
-        footer.Children.Add(actions);
-        TextBlock status = new TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap
-        };
-        FormControls.AddActionButton(actions, "OpenDraft", async () =>
-        {
-            if (list.SelectedItem is DraftSnapshot draft)
-            {
-                ImmutableArray<DraftSnapshot> current = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
-                list.ItemsSource = current;
-                if (!current.Any(item => item.Id == draft.Id))
-                {
-                    status.Text = Strings.Get("FrozenDraft");
-                    return;
-                }
-                Outcome<ComposeContent> content = await _application.ReadDraftAsync(draft, _lifetime.Token);
-                if (content.IsSuccess)
-                {
-                    OpenCompose(
-                        activation: content.Value,
-                        id: draft.Id,
-                        conflict: draft.Conflict,
-                        targetAccount: draft.Account,
-                        held: draft.Held
-                    );
-                }
-            }
-        }, status);
-        FormControls.AddActionButton(actions, "PushDraft", async () =>
-        {
-            if (list.SelectedItem is DraftSnapshot draft)
-            {
-                status.Text = Strings.Describe(await _application.PushDraftAsync(draft.Account, draft.Id, _lifetime.Token));
-                list.ItemsSource = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
-                if (DataContext is MainWindowViewModel model && model.Accounts.Any(item => item.Id == account && item.ProviderKind == "Google"))
-                {
-                    status.Text += " " + Strings.Get("GmailDraftHoldHint");
-                }
-            }
-        }, status);
-        FormControls.AddActionButton(actions, "ReviewVersions", async () =>
-        {
-            if (list.SelectedItem is DraftSnapshot draft)
-            {
-                await ReviewVersionsAsync(draft);
-            }
-        }, status);
         footer.Children.Add(status);
         Window window = new Window
+
         {
+            Name = "AccountDrafts" + account.Value,
             Title = Strings.Drafts,
             Width = 760,
             Height = 480,
@@ -1638,14 +1699,17 @@ public sealed partial class MainWindow : Window
             return;
         }
         StackPanel panel = new StackPanel
+
         {
             Spacing = 12
         };
         ComboBox accounts = new ComboBox
+
         {
             Name = "RemoveAccountSelection",
             ItemsSource = model.Accounts.ToArray(),
             ItemTemplate = new FuncDataTemplate<AccountConfiguration>((account, _) => account is null ? null : new TextBlock
+
             {
                 Text = account.Name + " — " + account.Address
             }),
@@ -1654,17 +1718,20 @@ public sealed partial class MainWindow : Window
         Avalonia.Automation.AutomationProperties.SetName(accounts, Strings.RemoveAccount);
         panel.Children.Add(accounts);
         panel.Children.Add(new TextBlock
+
         {
             Text = Strings.Get("RemoveAccountHint"),
             TextWrapping = TextWrapping.Wrap
         });
         TextBlock status = new TextBlock
+
         {
             Name = "RemoveAccountStatus",
             TextWrapping = TextWrapping.Wrap
         };
         Avalonia.Automation.AutomationProperties.SetLiveSetting(status, Avalonia.Automation.AutomationLiveSetting.Polite);
         Window window = new Window
+
         {
             Title = Strings.RemoveAccount,
             Width = 560,
@@ -1891,29 +1958,70 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    private async Task ReviewVersionsAsync(DraftSnapshot draft)
+    private async Task RefreshDraftListAsync(
+        AccountId account
+    )
+    {
+        Window? window = OwnedWindows.FirstOrDefault(item => item.Name == "AccountDrafts" + account.Value);
+        ListBox? list = window?.GetVisualDescendants().OfType<ListBox>().FirstOrDefault(item => item.Name == "AccountDraftList");
+        if (_application is null || list?.Tag is not Dictionary<Guid, string> subjects)
+        {
+            return;
+        }
+        Guid? selected = (list.SelectedItem as DraftSnapshot)?.Id;
+        ImmutableArray<DraftSnapshot> drafts = await _application.Catalog.DraftsAsync(account, _lifetime.Token);
+        Dictionary<Guid, string> refreshed = [];
+        foreach (DraftSnapshot draft in drafts)
+        {
+            Outcome<ComposeContent> content = await _application.ReadDraftAsync(draft, _lifetime.Token);
+            refreshed[draft.Id] = content.IsSuccess ? (string.IsNullOrWhiteSpace(content.Value!.Subject) ? Strings.Get("NoSubject") : content.Value.Subject) : Strings.Describe(content.Failure);
+        }
+        subjects.Clear();
+        foreach (KeyValuePair<Guid, string> subject in refreshed)
+        {
+            subjects.Add(subject.Key, subject.Value);
+        }
+        list.ItemsSource = drafts;
+        list.SelectedItem = drafts.FirstOrDefault(item => item.Id == selected);
+    }
+
+    private async Task ReviewVersionsAsync(
+        DraftSnapshot draft
+    )
     {
         if (_application is null)
         {
             return;
         }
 
+        DraftReviewSnapshot? review = null;
+        Failure reviewFailure = Failure.None;
+        if (draft.Remote is not null && (draft.Held || draft.Conflict) && DataContext is MainWindowViewModel model &&
+            model.Accounts.Any(item => item.Id == draft.Account && item.ProviderKind == "Google"))
+        {
+            Outcome<DraftReviewSnapshot> prepared = await _application.ReviewDraftAsync(draft, _lifetime.Token);
+            review = prepared.Value;
+            reviewFailure = prepared.Failure;
+        }
         ImmutableArray<DraftVersionSnapshot> versions = await _application.Catalog.DraftVersionsAsync(
             draft.Account,
             draft.Id,
             _lifetime.Token
         );
         StackPanel panel = new StackPanel
+
         {
             Margin = new Thickness(12),
             Spacing = 8
         };
         panel.Children.Add(new TextBlock
+
         {
             Text = Strings.Get("VersionReviewHint"),
             TextWrapping = TextWrapping.Wrap
         });
         ComboBox choice = new ComboBox
+
         {
             ItemsSource = versions.Select((item, index) => Strings.Get(item.Origin) + " " + (index + 1)).ToArray(),
             SelectedIndex = -1
@@ -1926,7 +2034,10 @@ public sealed partial class MainWindow : Window
         preview.TextWrapping = TextWrapping.Wrap;
         preview.MinHeight = 240;
         TextBlock status = new TextBlock
+
         {
+            Name = "DraftReviewStatus",
+            Text = reviewFailure == Failure.None ? "" : Strings.Describe(reviewFailure),
             TextWrapping = TextWrapping.Wrap
         };
         ComposeContent? selected = null;
@@ -1951,7 +2062,13 @@ public sealed partial class MainWindow : Window
             selected = content.Value;
             preview.Text = content.IsSuccess ? content.Value!.Subject + "\n\n" + content.Value.PlainText :
                 Strings.Describe(content.Failure);
+            if (content.IsSuccess && !content.Value!.Attachments.IsDefaultOrEmpty)
+            {
+                preview.Text += "\n\n" + Strings.Get("Attachments") + ":\n" +
+                    string.Join("\n", content.Value.Attachments.Select(item => item.Name));
+            }
         });
+        choice.SelectedIndex = Array.FindIndex(versions.ToArray(), item => item.Content == draft.Content);
         FormControls.AddActionButton(panel, "UseReviewedVersion", () =>
         {
             if (selected is not null)
@@ -1962,17 +2079,53 @@ public sealed partial class MainWindow : Window
 
             return Task.CompletedTask;
         }, status);
-        panel.Children.Add(status);
-        ShowWindow(new Window
+        Window window = new Window
+
         {
             Title = Strings.Get("ReviewVersions"),
             Width = 760,
-            Height = 560,
-            Content = new ScrollViewer
+            Height = 640
+        };
+        CancellationTokenSource reviewLifetime = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        window.Closed += (_, _) =>
+        {
+            reviewLifetime.Cancel();
+            // FormControls tracks the action on this owner; FlushComposeAsync drains it before profile shutdown.
+            reviewLifetime.Dispose();
+        };
+        if (review is not null)
+        {
+            panel.Children.Add(new TextBlock
+
             {
-                Content = panel
-            }
-        });
+                Text = Strings.Get("CopyReviewedDraftHint"),
+                TextWrapping = TextWrapping.Wrap
+            });
+            bool decided = false;
+            FormControls.AddActionButton(panel, "CopyReviewedDraft", async () =>
+            {
+                if (decided)
+                {
+                    return;
+                }
+                decided = true;
+                Failure result = await _application.CopyReviewedDraftAsync(review, reviewLifetime.Token);
+                status.Text = Strings.Get(result == Failure.None ? "ReviewedDraftCreated" : "ReviewedDraftHeld") +
+                    " " + Strings.Describe(result);
+            }, status);
+        }
+        FormControls.AddActionButton(panel, "PostponeDraftReview", () =>
+        {
+            window.Close();
+            return Task.CompletedTask;
+        }, status);
+        panel.Children.Add(status);
+        window.Content = new ScrollViewer
+
+        {
+            Content = panel
+        };
+        ShowWindow(window);
     }
 
 }

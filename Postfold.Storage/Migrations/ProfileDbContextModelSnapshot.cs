@@ -296,6 +296,11 @@ internal partial class ProfileDbContextModelSnapshot : ModelSnapshot
                     .HasColumnType("INTEGER")
                     .HasColumnOrder(9);
 
+                b.Property<long>("DeletePending")
+                    .HasColumnType("INTEGER")
+                    .HasColumnOrder(11)
+                    .HasDefaultValueSql("0");
+
                 b.Property<long>("Held")
                     .HasColumnType("INTEGER")
                     .HasColumnOrder(10);

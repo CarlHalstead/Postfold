@@ -303,7 +303,9 @@ public sealed class MicrosoftTransportTests
 
     [TestCase(false)]
     [TestCase(true)]
-    public async Task RunAsync_WhenRemoteDraftAuthFailsOrAppendIsUncertain_PreservesLocalContentAndHold(bool uncertain)
+    public async Task RunAsync_WhenRemoteDraftAuthFailsOrAppendIsUncertain_PreservesLocalContentAndHold(
+        bool uncertain
+    )
     {
         // Arrange
         await using MicrosoftAuthenticationFixture provider = new MicrosoftAuthenticationFixture();
@@ -342,7 +344,7 @@ public sealed class MicrosoftTransportTests
         // Assert
         Assert.That(failure, Is.EqualTo(uncertain ? Failure.NeedsReview : Failure.NeedsAuthentication));
         Assert.That(retained.Content, Is.EqualTo(draft.Content));
-        Assert.That(retained.Held, Is.True);
+        Assert.That(retained.Held, Is.EqualTo(uncertain));
         Assert.That(retained.PushedRevision, Is.LessThan(retained.Revision));
         Assert.That(imap.RemoteContent.Count, Is.EqualTo(uncertain ? 1 : 0));
         Assert.That(imap.Commands.Count(command => command.Contains(" APPEND ", StringComparison.Ordinal)), Is.EqualTo(uncertain ? 1 : 0));

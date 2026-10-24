@@ -275,7 +275,7 @@ public sealed class GmailSafetyTests
     }
 
     [Test]
-    public async Task RunAsync_WhenLocalRevisionChangesDuringRemoteCreate_AcknowledgesOnlyTransmittedRevisionAndHoldsUnsafeReplacement()
+    public async Task RunAsync_WhenLocalRevisionChangesDuringRemoteCreate_AcknowledgesOnlyTransmittedRevisionThenUpdatesTheSameDraft()
     {
         // Arrange
         await using GmailFixture provider = new GmailFixture();
@@ -312,14 +312,15 @@ public sealed class GmailSafetyTests
             Assert.That(afterCreate.Revision, Is.EqualTo(2));
             Assert.That(afterCreate.PushedRevision, Is.EqualTo(1));
             Assert.That(afterCreate.Content, Is.EqualTo(newer));
-            Assert.That(await work.RunAsync(CancellationToken.None), Is.EqualTo(Failure.NeedsReview));
+            Assert.That(await work.RunAsync(CancellationToken.None), Is.EqualTo(Failure.None));
 
             // Assert
             DraftSnapshot held = (await profile.ReadAsync(id, EngineFixture.Account, CancellationToken.None))!;
-            Assert.That(held.Held, Is.True);
+            Assert.That(held.Held, Is.False);
             Assert.That(held.Conflict, Is.False);
             Assert.That(held.Content, Is.EqualTo(newer));
             Assert.That(provider.DraftWrites, Is.EqualTo(1));
+            Assert.That(provider.DraftUpdates, Is.EqualTo(1));
         }
         finally
         {

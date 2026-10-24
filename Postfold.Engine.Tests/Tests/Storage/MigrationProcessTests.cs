@@ -24,7 +24,9 @@ public sealed class MigrationProcessTests
     [TestCase("history-in-transaction")]
     [TestCase("migrations-committed")]
     [TestCase("receipt-complete")]
-    public async Task AdmitAsync_WhenCreatingProcessDies_PreservesCommittedPrefixAndReleasesLease(string stage)
+    public async Task AdmitAsync_WhenCreatingProcessDies_PreservesCommittedPrefixAndReleasesLease(
+        string stage
+    )
     {
         // Arrange
         string database = Path.Combine(EngineFixture.DirectoryPath(), "profile.db");
@@ -54,7 +56,7 @@ public sealed class MigrationProcessTests
         {
             using SqliteConnection connection = ProfileMigration.Connect(database, readOnly: true);
             Assert.That(ProfileMigration.Scalar(connection, "PRAGMA quick_check;"), Is.EqualTo("ok"));
-            Assert.That(ProfileMigration.Scalar(connection, "PRAGMA user_version;"), Is.AnyOf(0L, 2L));
+            Assert.That(ProfileMigration.Scalar(connection, "PRAGMA user_version;"), Is.AnyOf(0L, 3L));
         }
     }
 
@@ -62,14 +64,16 @@ public sealed class MigrationProcessTests
     [TestCase("receipt-prepared")]
     [TestCase("before-rebuild")]
     [TestCase("migrations-committed")]
-    public async Task AdmitAsync_WhenUpgradeProcessDies_PreservesRowsAndValidatedBackup(string stage)
+    public async Task AdmitAsync_WhenUpgradeProcessDies_PreservesRowsAndValidatedBackup(
+        string stage
+    )
     {
         // Arrange
         string directory = EngineFixture.DirectoryPath();
         string database = Path.Combine(directory, "profile.db");
         await MigrationTests.PopulateAsync(directory);
         string original = ProfileEvidence.Rows(database);
-        using Process child = Start(database, stage, "3");
+        using Process child = Start(database, stage, "4");
         await BarrierAsync(child, stage);
 
         // Act
@@ -90,7 +94,7 @@ public sealed class MigrationProcessTests
         using SqliteConnection connection = ProfileMigration.Connect(database, readOnly: true);
         Assert.That(ProfileMigration.Scalar(connection, "PRAGMA quick_check;"), Is.EqualTo("ok"));
         Assert.That(ProfileMigration.Scalar(connection, "PRAGMA foreign_key_check;"), Is.Null);
-        Assert.That(ProfileMigration.Scalar(connection, "PRAGMA user_version;"), Is.EqualTo(4L));
+        Assert.That(ProfileMigration.Scalar(connection, "PRAGMA user_version;"), Is.EqualTo(5L));
     }
 
     [Test]

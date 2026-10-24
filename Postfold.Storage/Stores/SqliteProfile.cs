@@ -2018,6 +2018,17 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
+    public Task<DraftSnapshot> SaveRevisionAsync(
+        Guid id,
+        AccountId account,
+        BlobReference content,
+        long expectedRevision,
+        CancellationToken cancellationToken
+    )
+    {
+        return SaveWorkingDraftAsync(id, account, content, expectedRevision, cancellationToken);
+    }
+
     public Task<DraftSnapshot> SaveAsync(
         Guid id,
         AccountId account,
@@ -2025,42 +2036,7 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         CancellationToken cancellationToken
     )
     {
-        if (!content.Protected)
-        {
-            throw new ArgumentException("Draft content must be protected.");
-        }
-
-        return WriteAsync(connection =>
-        {
-            using SqliteTransaction transaction = connection.BeginTransaction();
-            RegisterBlob(connection, transaction, account, content);
-            Execute(
-                connection,
-                transaction,
-                """
-                INSERT INTO Drafts VALUES($i,$a,NULL,1,0,0,$b,NULL,NULL,0,0)
-                ON CONFLICT(DraftId) DO UPDATE SET Revision=Revision+1,BlobId=excluded.BlobId
-                WHERE Drafts.AccountId=excluded.AccountId;
-                """,
-                ("$i", id.ToString("N")),
-                ("$a", account.Value),
-                ("$b", content.Id.ToString("N"))
-            );
-            DraftSnapshot draft = ReadDraft(connection, transaction, id, account) ??
-                throw new ArgumentException("Draft identity belongs to another account.");
-            Execute(
-                connection,
-                transaction,
-                "INSERT INTO DraftVersions VALUES($i,$a,$v,$b,'Local',$t);",
-                ("$i", id.ToString("N")),
-                ("$a", account.Value),
-                ("$v", "local:" + draft.Revision.ToString(CultureInfo.InvariantCulture)),
-                ("$b", content.Id.ToString("N")),
-                ("$t", Now())
-            );
-            transaction.Commit();
-            return draft;
-        }, cancellationToken);
+        return SaveWorkingDraftAsync(id, account, content, null, cancellationToken);
     }
 
     public Task<DraftSnapshot?> ReadAsync(
@@ -2070,6 +2046,320 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
     )
     {
         return ReadAsync(connection => ReadDraft(connection, null, id, account), cancellationToken);
+    }
+
+    public Task<bool> RequestDeleteAsync(
+        DraftSnapshot draft,
+        CancellationToken cancellationToken
+    )
+    {
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            if (ReadDraft(connection, transaction, draft.Id, draft.Account) != draft ||
+                draft.Held && !draft.Conflict ||
+                Convert.ToInt64(Scalar(
+                    connection,
+                    transaction,
+                    "SELECT COUNT(*) FROM OutboxSubmissions WHERE AccountId=$a AND SourceDraftId=$i AND State<>$cancelled;",
+                    ("$a", draft.Account.Value),
+                    ("$i", draft.Id.ToString("N")),
+                    ("$cancelled", (int)SubmissionState.Cancelled)
+                ), CultureInfo.InvariantCulture) != 0)
+            {
+                return false;
+            }
+            Execute(
+                connection,
+                transaction,
+                "UPDATE Drafts SET DeletePending=1 WHERE AccountId=$a AND DraftId=$i;",
+                ("$a", draft.Account.Value),
+                ("$i", draft.Id.ToString("N"))
+            );
+            transaction.Commit();
+            return true;
+        }, cancellationToken);
+    }
+
+    public Task<bool> CompleteDeleteAsync(
+        DraftSnapshot draft,
+        CancellationToken cancellationToken
+    )
+    {
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            if (!draft.DeletePending || ReadDraft(connection, transaction, draft.Id, draft.Account) != draft)
+            {
+                return false;
+            }
+            // Cancelled submission MIME/evidence stays immutable; only detach its optional database link.
+            Execute(
+                connection,
+                transaction,
+                "UPDATE OutboxSubmissions SET SourceDraftId=NULL WHERE AccountId=$a AND SourceDraftId=$i AND State=$cancelled;",
+                ("$a", draft.Account.Value),
+                ("$i", draft.Id.ToString("N")),
+                ("$cancelled", (int)SubmissionState.Cancelled)
+            );
+            Execute(
+                connection,
+                transaction,
+                "DELETE FROM DraftVersions WHERE AccountId=$a AND DraftId=$i;",
+                ("$a", draft.Account.Value),
+                ("$i", draft.Id.ToString("N"))
+            );
+            Execute(
+                connection,
+                transaction,
+                "DELETE FROM Drafts WHERE AccountId=$a AND DraftId=$i;",
+                ("$a", draft.Account.Value),
+                ("$i", draft.Id.ToString("N"))
+            );
+            transaction.Commit();
+            return true;
+        }, cancellationToken);
+    }
+
+    public Task<DraftSnapshot?> FinalizeAsync(
+        Guid id,
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            DraftSnapshot? draft = ReadDraft(connection, transaction, id, account);
+            if (draft is null || draft.DeletePending)
+            {
+                return null;
+            }
+            Execute(
+                connection,
+                transaction,
+                "INSERT OR IGNORE INTO DraftVersions VALUES($i,$a,$v,$b,'Local',$t);",
+                ("$i", id.ToString("N")),
+                ("$a", account.Value),
+                ("$v", "local:" + draft.Revision.ToString(CultureInfo.InvariantCulture)),
+                ("$b", draft.Content.Id.ToString("N")),
+                ("$t", Now())
+            );
+            DraftSnapshot? finalized = ReadDraft(connection, transaction, id, account);
+            transaction.Commit();
+            return finalized;
+        }, cancellationToken);
+    }
+
+    public Task<DraftSnapshot?> ReadFinalizedAsync(
+        Guid id,
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        return ReadAsync(connection =>
+        {
+            DraftSnapshot? draft = ReadDraft(connection, null, id, account);
+            if (draft is null || draft.FinalizedRevision == 0)
+            {
+                return null;
+            }
+            using SqliteCommand command = Command(
+                connection,
+                null,
+                "SELECT b.BlobId,b.Length,b.Hash,b.Protected FROM DraftVersions v JOIN Blobs b USING(AccountId,BlobId) " +
+                "WHERE v.DraftId=$i AND v.AccountId=$a AND v.VersionKey=$v;",
+                ("$i", id.ToString("N")),
+                ("$a", account.Value),
+                ("$v", "local:" + draft.FinalizedRevision.ToString(CultureInfo.InvariantCulture))
+            );
+            using SqliteDataReader reader = command.ExecuteReader();
+            if (!reader.Read())
+            {
+                return null;
+            }
+            return draft with
+            {
+                Revision = draft.FinalizedRevision,
+                Content = new BlobReference(Guid.ParseExact(reader.GetString(0), "N"), account, reader.GetInt64(1), reader.GetString(2), reader.GetBoolean(3))
+            };
+        }, cancellationToken);
+    }
+
+    public Task<DraftSnapshot> ImportRemoteAsync(
+        RemoteDraftResult remote,
+        BlobReference content,
+        CancellationToken cancellationToken
+    )
+    {
+        if (remote.Identity is null || remote.Version is null || remote.ConflictingContent is null ||
+            remote.Failure != Failure.None || remote.Uncertain || !content.Protected ||
+            !remote.ConflictingContent.Protected || content.Account != remote.Identity.Account || remote.ConflictingContent.Account != content.Account)
+        {
+            throw new ArgumentException("Remote draft import requires account-bound protected snapshots.");
+        }
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            AccountId account = content.Account;
+            string identity = JsonSerializer.Serialize(remote.Identity);
+            object? key = Scalar(
+                connection,
+                transaction,
+                "SELECT DraftId FROM Drafts WHERE AccountId=$a AND RemoteIdentity=$remote LIMIT 1;",
+                ("$a", account.Value),
+                ("$remote", identity)
+            );
+            Guid id = key is string existingId ? Guid.ParseExact(existingId, "N") : Guid.NewGuid();
+            DraftSnapshot? existing = ReadDraft(connection, transaction, id, account);
+            if (existing is { DeletePending: true } || existing?.RemoteVersion == remote.Version)
+            {
+                return existing;
+            }
+            RegisterBlob(connection, transaction, account, content);
+            RegisterBlob(connection, transaction, account, remote.ConflictingContent);
+            if (existing is null)
+            {
+                Execute(
+                    connection,
+                    transaction,
+                    "INSERT INTO Drafts VALUES($i,$a,NULL,1,1,1,$b,$remote,$v,0,0,0);",
+                    ("$i", id.ToString("N")),
+                    ("$a", account.Value),
+                    ("$b", content.Id.ToString("N")),
+                    ("$remote", identity),
+                    ("$v", remote.Version)
+                );
+            }
+            else if (existing.Held || existing.Conflict || existing.Revision > existing.PushedRevision ||
+                Convert.ToInt64(Scalar(
+                    connection,
+                    transaction,
+                    "SELECT COUNT(*) FROM OutboxSubmissions WHERE AccountId=$a AND SourceDraftId=$i AND State<>$cancelled;",
+                    ("$a", account.Value),
+                    ("$i", id.ToString("N")),
+                    ("$cancelled", (int)SubmissionState.Cancelled)
+                ), CultureInfo.InvariantCulture) != 0)
+            {
+                Execute(
+                    connection,
+                    transaction,
+                    "UPDATE Drafts SET Conflict=1,Held=1 WHERE DraftId=$i AND AccountId=$a;",
+                    ("$i", id.ToString("N")),
+                    ("$a", account.Value)
+                );
+            }
+            else
+            {
+                Execute(
+                    connection,
+                    transaction,
+                    "UPDATE Drafts SET Revision=Revision+1,BaseRevision=Revision+1,PushedRevision=Revision+1,BlobId=$b,RemoteVersion=$v WHERE DraftId=$i AND AccountId=$a;",
+                    ("$b", content.Id.ToString("N")),
+                    ("$v", remote.Version),
+                    ("$i", id.ToString("N")),
+                    ("$a", account.Value)
+                );
+            }
+            Execute(
+                connection,
+                transaction,
+                "INSERT OR IGNORE INTO DraftVersions VALUES($i,$a,$v,$b,'Remote',$t);",
+                ("$i", id.ToString("N")),
+                ("$a", account.Value),
+                ("$v", "remote:" + remote.Version),
+                ("$b", remote.ConflictingContent.Id.ToString("N")),
+                ("$t", Now())
+            );
+            DraftSnapshot imported = ReadDraft(connection, transaction, id, account)!;
+            transaction.Commit();
+            return imported;
+        }, cancellationToken);
+    }
+
+    public Task<bool> RetainReviewAsync(
+        DraftReviewSnapshot review,
+        CancellationToken cancellationToken
+    )
+    {
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            if (ReadDraft(connection, transaction, review.Draft.Id, review.Draft.Account) != review.Draft ||
+                review.Draft.Remote is null || !(review.Draft.Held || review.Draft.Conflict) ||
+                !review.RemoteContent.Protected || review.RemoteContent.Account != review.Draft.Account)
+            {
+                return false;
+            }
+            RegisterBlob(connection, transaction, review.Draft.Account, review.RemoteContent);
+            Execute(
+                connection,
+                transaction,
+                "INSERT OR IGNORE INTO DraftVersions VALUES($i,$a,$v,$b,'Remote',$t);",
+                ("$i", review.Draft.Id.ToString("N")),
+                ("$a", review.Draft.Account.Value),
+                ("$v", "review:" + review.CopyId.ToString("N") + ":" + review.RemoteVersion),
+                ("$b", review.RemoteContent.Id.ToString("N")),
+                ("$t", Now())
+            );
+            transaction.Commit();
+            return true;
+        }, cancellationToken);
+    }
+
+    public Task<DraftSnapshot?> CopyReviewedAsync(
+        DraftReviewSnapshot review,
+        CancellationToken cancellationToken
+    )
+    {
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            DraftSnapshot draft = review.Draft;
+            if (ReadDraft(connection, transaction, draft.Id, draft.Account) != draft ||
+                draft.Remote is null || !(draft.Held || draft.Conflict) || review.CopyId == Guid.Empty ||
+                Convert.ToInt64(Scalar(
+                    connection,
+                    transaction,
+                    "SELECT COUNT(*) FROM DraftVersions v JOIN Accounts a USING(AccountId) " +
+                    "WHERE v.AccountId=$a AND DraftId=$i AND VersionKey=$v AND BlobId=$b AND a.Active=1 " +
+                    "AND NOT EXISTS(SELECT 1 FROM OutboxSubmissions o WHERE o.AccountId=$a AND o.SourceDraftId=$i AND o.State<>$cancelled);",
+                    ("$a", draft.Account.Value),
+                    ("$i", draft.Id.ToString("N")),
+                    ("$v", "review:" + review.CopyId.ToString("N") + ":" + review.RemoteVersion),
+                    ("$b", review.RemoteContent.Id.ToString("N")),
+                    ("$cancelled", (int)SubmissionState.Cancelled)
+                ), CultureInfo.InvariantCulture) != 1)
+            {
+                return null;
+            }
+            // The new draft starts held in the same transaction as its retained local version.
+            // A crash before dispatch or acknowledgement must never turn into an automatic create retry.
+            int inserted = Execute(
+                connection,
+                transaction,
+                "INSERT OR IGNORE INTO Drafts VALUES($i,$a,NULL,1,0,0,$b,NULL,NULL,0,1,0);",
+                ("$i", review.CopyId.ToString("N")),
+                ("$a", draft.Account.Value),
+                ("$b", draft.Content.Id.ToString("N"))
+            );
+            if (inserted != 1)
+            {
+                return null;
+            }
+            Execute(
+                connection,
+                transaction,
+                "INSERT INTO DraftVersions VALUES($i,$a,'local:1',$b,'Local',$t);",
+                ("$i", review.CopyId.ToString("N")),
+                ("$a", draft.Account.Value),
+                ("$b", draft.Content.Id.ToString("N")),
+                ("$t", Now())
+            );
+            DraftSnapshot? copy = ReadDraft(connection, transaction, review.CopyId, draft.Account);
+            transaction.Commit();
+            return copy;
+        }, cancellationToken);
     }
 
     public Task<bool> AcknowledgeAsync(
@@ -2114,10 +2404,11 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                     PushedRevision=CASE WHEN $ok=1 THEN $r ELSE PushedRevision END,
                     BaseRevision=CASE WHEN $ok=1 THEN $r ELSE BaseRevision END,
                     RemoteIdentity=COALESCE($remote,RemoteIdentity),RemoteVersion=COALESCE($version,RemoteVersion),
-                    Conflict=MAX(Conflict,$conflict),Held=CASE WHEN $ok=1 THEN 0 ELSE MAX(Held,$held) END
+                    Conflict=MAX(Conflict,$conflict),Held=CASE WHEN $ok=1 OR $known=1 THEN 0 ELSE MAX(Held,$held) END
                 WHERE DraftId=$i AND AccountId=$a AND Revision>=$r AND PushedRevision<$r;
                 """,
                 ("$ok", result.Failure == Failure.None && !result.Uncertain && result.ConflictingContent is null),
+                ("$known", result.Failure != Failure.None && result.Failure != Failure.NeedsReview && !result.Uncertain && result.ConflictingContent is null),
                 ("$r", transmitted.Revision),
                 ("$remote", result.Identity is null ? null : JsonSerializer.Serialize(result.Identity)),
                 ("$version", result.Version),
@@ -2148,7 +2439,8 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             if (submission.SourceDraft is Guid sourceDraft && Convert.ToInt64(Scalar(
                 connection,
                 transaction,
-                "SELECT COUNT(*) FROM OutboxSubmissions WHERE AccountId=$a AND SourceDraftId=$draft AND State<>$cancelled;",
+                "SELECT (SELECT COUNT(*) FROM OutboxSubmissions WHERE AccountId=$a AND SourceDraftId=$draft AND State<>$cancelled) + " +
+                "(SELECT COUNT(*) FROM Drafts WHERE AccountId=$a AND DraftId=$draft AND DeletePending=1);",
                 ("$a", submission.Account.Value),
                 ("$draft", sourceDraft.ToString("N")),
                 ("$cancelled", (int)SubmissionState.Cancelled)
@@ -2346,27 +2638,6 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         }, cancellationToken);
     }
 
-    Task<OutboxEntry?> IOutboxStore.ReadAsync(
-        Guid id,
-        AccountId account,
-        CancellationToken cancellationToken
-    )
-    {
-        return ReadAsync<OutboxEntry?>(connection =>
-        {
-            using SqliteCommand command = Command(
-                connection,
-                null,
-                "SELECT Frozen,State,Revision,Evidence,SubmissionId,AccountId,BlobId FROM OutboxSubmissions " +
-                "WHERE SubmissionId=$i AND AccountId=$a;",
-                ("$i", id.ToString("N")),
-                ("$a", account.Value)
-            );
-            using SqliteDataReader reader = command.ExecuteReader();
-            return reader.Read() ? ProfileRecordReader.ReadOutbox(reader) : null;
-        }, cancellationToken);
-    }
-
     public Task RecoverAsync(
         CancellationToken cancellationToken
     )
@@ -2436,6 +2707,92 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         _writer.Release();
         _lease.Dispose();
         // Connection lifetimes belong to individual operations; pooling is disabled.
+    }
+
+    private Task<DraftSnapshot> SaveWorkingDraftAsync(
+        Guid id,
+        AccountId account,
+        BlobReference content,
+        long? expectedRevision,
+        CancellationToken cancellationToken
+    )
+    {
+        if (!content.Protected || content.Account != account)
+        {
+            throw new ArgumentException("Draft content must be protected.");
+        }
+
+        return WriteAsync(connection =>
+        {
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            DraftSnapshot? existing = ReadDraft(connection, transaction, id, account);
+            if (existing is { DeletePending: true } || existing is not null && existing.Content.Sha256 == content.Sha256 && existing.Content.Length == content.Length)
+            {
+                return existing;
+            }
+            RegisterBlob(connection, transaction, account, content);
+            Execute(
+                connection,
+                transaction,
+                """
+                INSERT INTO Drafts VALUES($i,$a,NULL,1,0,0,$b,NULL,NULL,0,0,0)
+                ON CONFLICT(DraftId) DO UPDATE SET Revision=Revision+1,BlobId=excluded.BlobId
+                WHERE Drafts.AccountId=excluded.AccountId;
+                """,
+                ("$i", id.ToString("N")),
+                ("$a", account.Value),
+                ("$b", content.Id.ToString("N"))
+            );
+            DraftSnapshot draft = ReadDraft(connection, transaction, id, account) ??
+                throw new ArgumentException("Draft identity belongs to another account.");
+            if (expectedRevision is not null && existing?.Revision != expectedRevision)
+            {
+                if (existing is not null)
+                {
+                    Execute(
+                        connection,
+                        transaction,
+                        "INSERT OR IGNORE INTO DraftVersions VALUES($i,$a,$v,$b,'Concurrent',$t);",
+                        ("$i", id.ToString("N")),
+                        ("$a", account.Value),
+                        ("$v", "concurrent:" + existing.Revision.ToString(CultureInfo.InvariantCulture)),
+                        ("$b", existing.Content.Id.ToString("N")),
+                        ("$t", Now())
+                    );
+                }
+                Execute(
+                    connection,
+                    transaction,
+                    "UPDATE Drafts SET Conflict=1,Held=1 WHERE DraftId=$i AND AccountId=$a;",
+                    ("$i", id.ToString("N")),
+                    ("$a", account.Value)
+                );
+                draft = ReadDraft(connection, transaction, id, account)!;
+            }
+            transaction.Commit();
+            return draft;
+        }, cancellationToken);
+    }
+
+    Task<OutboxEntry?> IOutboxStore.ReadAsync(
+        Guid id,
+        AccountId account,
+        CancellationToken cancellationToken
+    )
+    {
+        return ReadAsync<OutboxEntry?>(connection =>
+        {
+            using SqliteCommand command = Command(
+                connection,
+                null,
+                "SELECT Frozen,State,Revision,Evidence,SubmissionId,AccountId,BlobId FROM OutboxSubmissions " +
+                "WHERE SubmissionId=$i AND AccountId=$a;",
+                ("$i", id.ToString("N")),
+                ("$a", account.Value)
+            );
+            using SqliteDataReader reader = command.ExecuteReader();
+            return reader.Read() ? ProfileRecordReader.ReadOutbox(reader) : null;
+        }, cancellationToken);
     }
 
     private Task<OutboxEntry?> ClaimSubmissionAsync(
@@ -2747,7 +3104,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
         using SqliteCommand command = Command(
             connection,
             transaction,
-            "SELECT d.*,b.Length,b.Hash,b.Protected FROM Drafts d JOIN Blobs b USING(AccountId,BlobId) " +
+            "SELECT d.DraftId,d.AccountId,d.IdentityId,d.Revision,d.BaseRevision,d.PushedRevision,d.BlobId,d.RemoteIdentity,d.RemoteVersion,d.Conflict,d.Held,b.Length,b.Hash,b.Protected," +
+            "COALESCE((SELECT MAX(CAST(substr(v.VersionKey,7) AS INTEGER)) FROM DraftVersions v WHERE v.DraftId=d.DraftId AND v.AccountId=d.AccountId AND v.Origin='Local'),0)," +
+            "(SELECT COUNT(*) FROM DraftVersions v WHERE v.DraftId=d.DraftId AND v.AccountId=d.AccountId AND v.Origin='Local'),d.DeletePending " +
+            "FROM Drafts d JOIN Blobs b USING(AccountId,BlobId) " +
             "WHERE DraftId=$i AND d.AccountId=$a;",
             ("$i", id.ToString("N")),
             ("$a", account.Value)
@@ -2774,7 +3134,10 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
             reader.IsDBNull(7) ? null : JsonSerializer.Deserialize<ProviderIdentity>(reader.GetString(7)),
             reader.IsDBNull(8) ? null : reader.GetString(8),
             reader.GetBoolean(9),
-            reader.GetBoolean(10)
+            reader.GetBoolean(10),
+            reader.GetInt64(14),
+            reader.GetInt64(15),
+            reader.GetBoolean(16)
         );
     }
 

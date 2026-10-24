@@ -11,6 +11,7 @@ using Postfold.Core.Models.Search;
 using Postfold.Core.Models.Synchronisation;
 using Postfold.Sync.Services.Work;
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
@@ -43,6 +44,7 @@ public sealed class MailAccountEngine : IMailAccountEngine
     private readonly SemaphoreSlim _localSaves = new SemaphoreSlim(1, 1);
     private readonly SemaphoreSlim _signalCalls = new SemaphoreSlim(1, 1);
     private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
+    private readonly List<(Guid Draft, Task Work)> _draftUpdates = [];
     private readonly IMailboxSignal? _signal;
     private bool _stopping;
 
@@ -258,25 +260,70 @@ public sealed class MailAccountEngine : IMailAccountEngine
         return Failure.None;
     }
 
-    public async Task<Outcome<DraftSnapshot>> SaveDraftAsync(Guid id, Stream content, CancellationToken cancellationToken)
+    public async Task<Outcome<DraftSnapshot>> SaveDraftAsync(
+        Guid id,
+        Stream content,
+        CancellationToken cancellationToken
+    )
+    {
+        return await SaveWorkingDraftAsync(id, content, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<Outcome<DraftSnapshot>> SaveDraftRevisionAsync(
+        DraftSnapshot expected,
+        Stream content,
+        CancellationToken cancellationToken
+    )
+    {
+        return expected.Account == Account ? SaveWorkingDraftAsync(expected.Id, content, expected.Revision, cancellationToken) :
+            Task.FromResult(Outcome<DraftSnapshot>.Fail(Failure.Validation));
+    }
+
+    public async Task<Failure> PushDraftAsync(
+        Guid id,
+        CancellationToken cancellationToken
+    )
+    {
+        if (_drafts is null || !_policy.AllowNetwork)
+        {
+            return Failure.Unavailable;
+        }
+        if (await _draftStore.FinalizeAsync(id, Account, cancellationToken).ConfigureAwait(false) is null)
+        {
+            return Failure.NotFound;
+        }
+        return await _scheduler.EnqueueAsync(
+            Account,
+            new DraftWork(id, Account, _draftStore, _blobs, _drafts, true),
+            WorkPriority.Interactive,
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    public async Task<Outcome<DraftSnapshot>> CloseDraftAsync(
+        Guid id,
+        bool synchronise,
+        CancellationToken cancellationToken
+    )
     {
         await _localSaves.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_stopping, this);
-            BlobReference blob = await _blobs.WriteAsync(
-                Account,
-                content,
-                _limits.MaximumMimeBytes,
-                protect: true,
-                cancellationToken
-            ).ConfigureAwait(false);
-            DraftSnapshot saved = await _draftStore.SaveAsync(id, Account, blob, cancellationToken).ConfigureAwait(false);
+            DraftSnapshot? saved = await _draftStore.FinalizeAsync(id, Account, cancellationToken).ConfigureAwait(false);
+            if (saved is null)
+            {
+                return Outcome<DraftSnapshot>.Fail(Failure.NotFound);
+            }
+            if (synchronise && _drafts is not null && _policy.AllowNetwork && !saved.Held && !saved.Conflict && saved.FinalizedRevision > saved.PushedRevision)
+            {
+                lock (_draftUpdates)
+                {
+                    _draftUpdates.RemoveAll(item => item.Work.IsCompletedSuccessfully || item.Work.IsCanceled);
+                    _draftUpdates.Add((id, PushClosedDraftAsync(id)));
+                }
+            }
             return Outcome<DraftSnapshot>.Success(saved);
-        }
-        catch (InvalidDataException)
-        {
-            return Outcome<DraftSnapshot>.Fail(Failure.Validation);
         }
         catch (IOException)
         {
@@ -288,16 +335,144 @@ public sealed class MailAccountEngine : IMailAccountEngine
         }
     }
 
-    public Task<Failure> PushDraftAsync(Guid id, CancellationToken cancellationToken)
+    public Task WaitForDraftSyncAsync(
+        Guid id,
+        CancellationToken cancellationToken
+    )
     {
-        if (_drafts is null || !_policy.AllowNetwork)
+        lock (_draftUpdates)
+        {
+            return Task.WhenAll(_draftUpdates.Where(item => item.Draft == id).Select(item => item.Work)).WaitAsync(cancellationToken);
+        }
+    }
+
+    public async Task<Failure> DeleteDraftAsync(
+        DraftSnapshot draft,
+        CancellationToken cancellationToken
+    )
+    {
+        if (draft.Account != Account)
+        {
+            return Failure.Validation;
+        }
+        await _localSaves.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_stopping, this);
+            if (!await _draftStore.RequestDeleteAsync(draft, cancellationToken).ConfigureAwait(false))
+            {
+                return Failure.NeedsReview;
+            }
+        }
+        finally
+        {
+            _localSaves.Release();
+        }
+        if (draft.Remote is null)
+        {
+            return await new DraftDeleteWork(draft.Id, Account, _draftStore, null).RunAsync(cancellationToken).ConfigureAwait(false);
+        }
+        if (!_policy.AllowNetwork)
+        {
+            return Failure.None;
+        }
+        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
+        return await _scheduler.EnqueueAsync(Account, new DraftDeleteWork(draft.Id, Account, _draftStore, _drafts), WorkPriority.Interactive, linked.Token).ConfigureAwait(false);
+    }
+
+    public async Task<Failure> SynchroniseDraftsAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        if (_drafts is null || _draftStore is not IClientCatalog catalog)
+        {
+            return Failure.None;
+        }
+        foreach (DraftSnapshot draft in await catalog.DraftsAsync(Account, cancellationToken).ConfigureAwait(false))
+        {
+            if (draft.DeletePending)
+            {
+                Failure deleted = await _scheduler.EnqueueAsync(Account, new DraftDeleteWork(draft.Id, Account, _draftStore, _drafts), WorkPriority.Reconciliation, cancellationToken).ConfigureAwait(false);
+                if (deleted != Failure.None)
+                {
+                    return deleted;
+                }
+                continue;
+            }
+            if (draft.Held || draft.Conflict || draft.FinalizedRevision <= draft.PushedRevision)
+            {
+                continue;
+            }
+            Failure result = await _scheduler.EnqueueAsync(
+                Account,
+                new DraftWork(draft.Id, Account, _draftStore, _blobs, _drafts, true),
+                WorkPriority.Reconciliation,
+                cancellationToken
+            ).ConfigureAwait(false);
+            if (result != Failure.None)
+            {
+                return result;
+            }
+        }
+        if (_drafts is IRemoteDraftSource source && _mime is IMimeDraftReader reader)
+        {
+            string? cursor = null;
+            HashSet<string> seen = [];
+            do
+            {
+                DraftImportWork work = new DraftImportWork(Account, source, _draftStore, _blobs, reader, _limits.MaximumMimeBytes, cursor);
+                Failure imported = await _scheduler.EnqueueAsync(Account, work, WorkPriority.Reconciliation, cancellationToken).ConfigureAwait(false);
+                if (imported != Failure.None)
+                {
+                    return imported == Failure.Unsupported ? Failure.None : imported;
+                }
+                cursor = work.Next;
+                if (cursor is not null && (!seen.Add(cursor) || seen.Count > 4096))
+                {
+                    return Failure.Validation;
+                }
+            }
+            while (cursor is not null);
+        }
+        return Failure.None;
+    }
+
+    public async Task<Outcome<DraftReviewSnapshot>> ReviewDraftAsync(
+        DraftSnapshot draft,
+        CancellationToken cancellationToken
+    )
+    {
+        if (draft.Account != Account || draft.Content.Account != Account || draft.Remote?.Account != Account)
+        {
+            return Outcome<DraftReviewSnapshot>.Fail(Failure.Validation);
+        }
+        if (_reader is not IRemoteDraftInspector inspector || _drafts is null || !_policy.AllowNetwork)
+        {
+            return Outcome<DraftReviewSnapshot>.Fail(Failure.Unavailable);
+        }
+        DraftReviewWork work = new DraftReviewWork(draft, null, _draftStore, _blobs, _drafts, inspector);
+        Failure result = await _scheduler.EnqueueAsync(Account, work, WorkPriority.Interactive, cancellationToken).ConfigureAwait(false);
+        return result == Failure.None && work.Review is not null ? Outcome<DraftReviewSnapshot>.Success(work.Review) :
+            Outcome<DraftReviewSnapshot>.Fail(result == Failure.None ? Failure.NeedsReview : result);
+    }
+
+    public Task<Failure> CopyReviewedDraftAsync(
+        DraftReviewSnapshot review,
+        CancellationToken cancellationToken
+    )
+    {
+        if (review.Draft.Account != Account || review.Draft.Content.Account != Account ||
+            review.Draft.Remote?.Account != Account || review.RemoteContent.Account != Account)
+        {
+            return Task.FromResult(Failure.Validation);
+        }
+        if (_reader is not IRemoteDraftInspector inspector || _drafts is null || !_policy.AllowNetwork)
         {
             return Task.FromResult(Failure.Unavailable);
         }
-
         return _scheduler.EnqueueAsync(
             Account,
-            new DraftWork(id, Account, _draftStore, _blobs, _drafts),
+            new DraftReviewWork(review.Draft, review, _draftStore, _blobs, _drafts, inspector),
             WorkPriority.Interactive,
             cancellationToken
         );
@@ -372,7 +547,13 @@ public sealed class MailAccountEngine : IMailAccountEngine
         await _signalCalls.WaitAsync().ConfigureAwait(false);
         _signalCalls.Release();
         await _localSaves.WaitAsync().ConfigureAwait(false);
+        Task[] draftUpdates;
+        lock (_draftUpdates)
+        {
+            draftUpdates = _draftUpdates.Select(item => item.Work).ToArray();
+        }
         _localSaves.Release();
+        await Task.WhenAll(draftUpdates).ConfigureAwait(false);
     }
 
     public Task<Failure> ProcessOutboxAsync(CancellationToken cancellationToken)
@@ -484,6 +665,72 @@ public sealed class MailAccountEngine : IMailAccountEngine
         }
 
         return attachments.ReadAttachmentsAsync(message.Provider, cancellationToken);
+    }
+
+    private async Task<Outcome<DraftSnapshot>> SaveWorkingDraftAsync(
+        Guid id,
+        Stream content,
+        long? expectedRevision,
+        CancellationToken cancellationToken
+    )
+    {
+        await _localSaves.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_stopping, this);
+            if (await _draftStore.ReadAsync(id, Account, cancellationToken).ConfigureAwait(false) is { DeletePending: true })
+            {
+                return Outcome<DraftSnapshot>.Fail(Failure.NeedsReview);
+            }
+            BlobReference blob = await _blobs.WriteAsync(
+                Account,
+                content,
+                _limits.MaximumMimeBytes,
+                protect: true,
+                cancellationToken
+            ).ConfigureAwait(false);
+            DraftSnapshot saved = expectedRevision is long revision ?
+                await _draftStore.SaveRevisionAsync(id, Account, blob, revision, cancellationToken).ConfigureAwait(false) :
+                await _draftStore.SaveAsync(id, Account, blob, cancellationToken).ConfigureAwait(false);
+            return Outcome<DraftSnapshot>.Success(saved);
+        }
+        catch (InvalidDataException)
+        {
+            return Outcome<DraftSnapshot>.Fail(Failure.Validation);
+        }
+        catch (IOException)
+        {
+            return Outcome<DraftSnapshot>.Fail(Failure.Unavailable);
+        }
+        finally
+        {
+            _localSaves.Release();
+        }
+    }
+
+    private async Task PushClosedDraftAsync(
+        Guid id
+    )
+    {
+        try
+        {
+            await _scheduler.EnqueueAsync(
+                Account,
+                new DraftWork(id, Account, _draftStore, _blobs, _drafts!, true),
+                WorkPriority.Interactive,
+                _shutdown.Token
+            ).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (IOException)
+        {
+            // The durable closed version or pre-dispatch hold remains the recovery authority.
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private Task<Failure> FetchContentAsync(MessageSnapshot message, bool fullMessage, CancellationToken cancellationToken)

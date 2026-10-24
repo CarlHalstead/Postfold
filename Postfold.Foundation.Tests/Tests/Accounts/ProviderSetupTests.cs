@@ -239,6 +239,7 @@ public sealed class ProviderSetupTests
             await runtime.Application.SaveDraftAsync(engine.Account, draftId, local, CancellationToken.None);
             Assert.That(await engine.PushDraftAsync(draftId, CancellationToken.None), Is.EqualTo(Failure.None));
             await runtime.Application.SaveDraftAsync(engine.Account, draftId, local with { PlainText = "new local work" }, CancellationToken.None);
+            provider.ChangeDraftVersion("draft-1");
             Assert.That(await engine.PushDraftAsync(draftId, CancellationToken.None), Is.EqualTo(Failure.NeedsReview));
             held = (await runtime.Catalog.DraftsAsync(engine.Account, CancellationToken.None)).Single();
             ComposeContent content = new ComposeContent(
@@ -279,7 +280,7 @@ public sealed class ProviderSetupTests
         Assert.That(saved.Evidence!.Recipients.All(item => item.State == RecipientState.Uncertain), Is.True);
         Assert.That(preserved.Content, Is.EqualTo(held.Content));
         Assert.That(preserved.Held, Is.True);
-        Assert.That(preserved.Conflict, Is.False);
+        Assert.That(preserved.Conflict, Is.True);
         Assert.That((await reopened.Catalog.CommandsAsync(frozen.Account, CancellationToken.None)).Single(), Is.EqualTo(pending));
         Assert.That(provider.Sends, Is.EqualTo(1));
         Assert.That(provider.DraftWrites, Is.EqualTo(1));

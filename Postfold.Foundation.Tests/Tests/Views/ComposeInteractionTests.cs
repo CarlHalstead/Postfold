@@ -38,6 +38,8 @@ public sealed class ComposeInteractionTests
         application.Catalog.Returns(Substitute.For<IClientCatalog>());
         application.SaveDraftAsync(account, Arg.Any<Guid>(), Arg.Any<ComposeContent>(), Arg.Any<CancellationToken>())
             .Returns(Outcome<DraftSnapshot>.Success(new DraftSnapshot(Guid.NewGuid(), account, 1, 0, 0, blob, null, null, false, false)));
+        application.CloseDraftAsync(account, Arg.Any<Guid>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Outcome<DraftSnapshot>.Success(new DraftSnapshot(Guid.NewGuid(), account, 1, 0, 0, blob, null, null, false, false, 1, 1)));
         ComposeContent content = new ComposeContent(
             "owner@synthetic.invalid",
             [],
