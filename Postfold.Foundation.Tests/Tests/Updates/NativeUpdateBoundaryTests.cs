@@ -78,6 +78,33 @@ public sealed class NativeUpdateBoundaryTests
 
     [Test]
     [Platform("Win")]
+    public void AllowChildRenames_WhenProfileAndTrustShareInstallRoot_PreservesBothWhileAllowingNativeDestination()
+    {
+        // Arrange
+        string root = EngineFixture.DirectoryPath();
+        string profile = Path.Combine(root, "profiles", "default");
+        string state = Path.Combine(root, "updates", "beta");
+        Directory.CreateDirectory(profile);
+        Directory.CreateDirectory(state);
+        using LockedUpdateFiles trustGuards = new LockedUpdateFiles();
+        using LockedUpdateFiles profileGuards = new LockedUpdateFiles();
+        trustGuards.PinDirectory(state);
+        profileGuards.PinDirectory(profile);
+
+        // Act
+        trustGuards.AllowChildRenames(root);
+        profileGuards.AllowChildRenames(root);
+        using SafeFileHandle writer = CreateFileW(root, 0x40000000, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+
+        // Assert
+        Assert.That(writer.IsInvalid, Is.False);
+        Assert.Throws<IOException>(() => Directory.Move(profile, profile + "-replaced"));
+        Assert.Throws<IOException>(() => Directory.Move(state, state + "-replaced"));
+        Assert.Throws<IOException>(() => Directory.Move(root, root + "-replaced"));
+    }
+
+    [Test]
+    [Platform("Win")]
     public void PinDirectory_WhenHeld_PreventsNativeWriteHandlesAndEmptyDirectoryRename()
     {
         // Arrange
@@ -118,6 +145,26 @@ public sealed class NativeUpdateBoundaryTests
         Assert.Throws<IOException>(() => File.Delete(path));
         Assert.Throws<IOException>(() => Directory.Move(directory, directory + "-replaced"));
         Assert.Throws<IOException>(() => Directory.Move(root, root + "-replaced"));
+    }
+
+    [Test]
+    [Platform("Win")]
+    public void OpenRead_WhenCanonicalPathIsLong_PinsEveryComponentAndFile()
+    {
+        // Arrange
+        string directory = Path.Combine(EngineFixture.DirectoryPath(), new string('a', 100), new string('b', 100));
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "package.nupkg");
+        File.WriteAllBytes(path, [1, 2, 3]);
+        using LockedUpdateFiles locks = new LockedUpdateFiles();
+
+        // Act
+        using FileStream pinned = locks.OpenRead(path);
+
+        // Assert
+        Assert.That(pinned.Length, Is.EqualTo(3));
+        Assert.Throws<IOException>(() => File.WriteAllBytes(path, [4]));
+        Assert.Throws<IOException>(() => Directory.Move(directory, directory + "-replaced"));
     }
 
     [Test]

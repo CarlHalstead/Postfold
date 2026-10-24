@@ -89,12 +89,15 @@ public static class NativeUpdateBroker
             using LockedUpdateFiles profileLease = new LockedUpdateFiles();
             string self = Environment.ProcessPath!;
             string root = LockedUpdateFiles.CanonicalPath(request.InstallRoot);
+            string currentDirectory = Path.Combine(root, "current");
             if (self.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase) ||
-                request.HelperPath.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase) ||
-                request.PackagePath.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase) ||
-                request.TrustJournal.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase))
+                request.HelperPath.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException("Apply owner, helper, trust and staged bytes must survive installation replacement.");
+                throw new InvalidDataException("Apply owner and helper must run outside the installation's process-stop boundary.");
+            }
+            if (IsReplaced(request.PackagePath, currentDirectory) || IsReplaced(request.TrustJournal, currentDirectory))
+            {
+                throw new InvalidDataException("Trust and staged bytes must survive current-directory replacement.");
             }
             using FileStream boundary = locks.Verify(self, request.BrokerSha256);
             using FileStream helper = locks.Verify(request.HelperPath, request.HelperSha256, 33554432);
@@ -102,7 +105,7 @@ public static class NativeUpdateBroker
             string? profile = request.RestartProfile is null ? null : LockedUpdateFiles.CanonicalPath(request.RestartProfile);
             if (profile is not null)
             {
-                if (profile.Equals(root, StringComparison.OrdinalIgnoreCase) || profile.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase))
+                if (profile.Equals(root, StringComparison.OrdinalIgnoreCase) || IsReplaced(profile, currentDirectory))
                 {
                     throw new InvalidDataException("Profile must survive installation replacement.");
                 }
@@ -164,6 +167,12 @@ public static class NativeUpdateBroker
                 await ReportAsync(output, "profile-released").ConfigureAwait(false);
             }
             locks.AllowChildRenames(root);
+            if (profile is not null && profile.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase))
+            {
+                // The production profile lives beside current. Its independent lease guard must also
+                // permit the native destination-parent handle while retaining profile/root identities.
+                profileLease.AllowChildRenames(root);
+            }
             await ReportAsync(output, "applying").ConfigureAwait(false);
             int exit = await NativeApplyProcess.RunAsync(
                 request.HelperPath,
@@ -272,6 +281,12 @@ public static class NativeUpdateBroker
         using FileStream installed = identity.Verify(Path.Combine(request.InstallRoot, "current", "sq.version"), request.InstalledManifestSha256, 65536);
         VerifyXmlIdentity(installed, request.InstalledVersion);
         // Release current/manifest locks before native replacement; package/helper/path locks remain independent.
+    }
+
+    private static bool IsReplaced(string path, string currentDirectory)
+    {
+        path = LockedUpdateFiles.CanonicalPath(path);
+        return path.Equals(currentDirectory, StringComparison.OrdinalIgnoreCase) || path.StartsWith(currentDirectory + "\\", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void VerifyInstalledVersion(string root, string version)

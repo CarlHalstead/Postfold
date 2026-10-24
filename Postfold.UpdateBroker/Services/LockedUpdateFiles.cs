@@ -128,7 +128,7 @@ public sealed class LockedUpdateFiles : IDisposable
             Inherit = 1
         };
         SafeFileHandle handle = CreateFileW(
-            path,
+            "\\\\?\\" + path,
             // FILE_LIST_DIRECTORY participates in sharing checks; READ_ATTRIBUTES alone does not.
             directory ? 0x81U : 0x80000000U,
             share,

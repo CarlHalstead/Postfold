@@ -54,7 +54,15 @@ Windows draft builds use `eng/Build-UpdateDraft.ps1` from clean, approved source
 signing, `eng/New-UpdateBundle.ps1` assembles one ZIP using exact reviewed input hashes and the
 public-key-only `Postfold.UpdateSigner verify` command. Run the assembler with Windows PowerShell
 5.1; its required parameters bind source, version, audit, public key, verifier and readme bytes.
-The audited input directory contains only the full package, Setup, two Velopack indexes, feed,
+
+Before publication, run `eng/Test-InstalledUpdate.ps1` with the candidate draft, a private later-version
+package from the same source, a fresh artifacts directory and the exact source commit. It exercises
+production directory placement, native Windows cost policy, Settings download/restart, guarded native
+apply, normal application reopening and preservation of dirty drafts/queued/uncertain work. Its isolated
+package layout suppresses registry/shortcut writes and does not replace installer lifecycle qualification.
+Retain the passing receipt bound to the candidate package hash; never publish an update-ineligible candidate.
+
+The signed release bundle's audited input directory contains only the full package, Setup, two Velopack indexes, feed,
 manifest and signature. Its audit must include all seven exact file lengths and SHA-256 values.
 The output includes a separate repository-metadata preparation whose three files exactly match
 the ZIP copies. Publish those files at `updates/releases/v<version>/win-x64-beta/` only under

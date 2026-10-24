@@ -15,6 +15,11 @@ public static class QualificationProgram
     [STAThread]
     public static void Main(string[] args)
     {
+        if (args is ["--qualify-installed-update", string mode, string specification])
+        {
+            InstalledUpdateQualification.Run(mode, specification);
+            return;
+        }
         if (args is ["--update-trust-worker", .. string[] worker])
         {
             UpdateTrustProcess.Run(worker);

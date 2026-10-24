@@ -50,11 +50,14 @@ public static class NativeUpdateLauncher
         CancellationToken cancellationToken
     )
     {
-        using LockedUpdateFiles locks = new LockedUpdateFiles();
-        using FileStream executable = locks.Verify(broker, request.BrokerSha256);
+        cancellationToken.ThrowIfCancellationRequested();
+        using StagedNativeUpdate staged = StagedNativeUpdate.Prepare(broker, request);
+        cancellationToken.ThrowIfCancellationRequested();
+        broker = staged.Broker;
+        request = staged.Request;
         // Process.Start inherits ambient inheritable handles on the pinned runtime. The broker acquires
         // its own guards; it must not retain hidden duplicates of the launcher's installation ancestors.
-        locks.PreventInheritance();
+        staged.PreventInheritance();
         ProcessStartInfo start = new ProcessStartInfo(broker)
         {
             UseShellExecute = false,
