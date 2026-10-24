@@ -897,6 +897,44 @@
       ]
     },
     {
+      "identity": "Microsoft.Identity.Client/4.91.0",
+      "license": "MIT",
+      "licenseType": "expression",
+      "copyright": "© Microsoft Corporation. All rights reserved.",
+      "authors": "Microsoft",
+      "repository": "https://github.com/AzureAD/microsoft-authentication-library-for-dotnet",
+      "revision": "fa821737fbc278f735e751c3e81919b43373bdef",
+      "nupkgSha256": "2FDB9EED03278C86F63012DC01F84B43BF9AC8CA144A2149B4347840B212C6A2",
+      "publishedFiles": [
+        "Microsoft.Identity.Client.dll"
+      ],
+      "licenceTexts": [
+        {
+          "source": "https://raw.githubusercontent.com/AzureAD/microsoft-authentication-library-for-dotnet/fa821737fbc278f735e751c3e81919b43373bdef/LICENSE",
+          "sha256": "0F197A604F76167996228ACCB7E5536BE230682350093FA456B62EC651EFBA0A"
+        }
+      ]
+    },
+    {
+      "identity": "Microsoft.IdentityModel.Abstractions/8.14.0",
+      "license": "MIT",
+      "licenseType": "expression",
+      "copyright": "© Microsoft Corporation. All rights reserved.",
+      "authors": "Microsoft",
+      "repository": "https://github.com/AzureAD/azure-activedirectory-identitymodel-extensions-for-dotnet",
+      "revision": "c8f7d87bcda35557a68f6cb9c55856a2ee733856",
+      "nupkgSha256": "6E40AECF55A3E7A37E2C758BBC728B702B4846A04AFB7939BC3DAA7C1EF15CA9",
+      "publishedFiles": [
+        "Microsoft.IdentityModel.Abstractions.dll"
+      ],
+      "licenceTexts": [
+        {
+          "source": "https://raw.githubusercontent.com/AzureAD/azure-activedirectory-identitymodel-extensions-for-dotnet/c8f7d87bcda35557a68f6cb9c55856a2ee733856/LICENSE.txt",
+          "sha256": "10A7BE2BF9977FBB3CD353472DC1AB764C3D95862F06EEDDFD27AB468A4C7B1F"
+        }
+      ]
+    },
+    {
       "identity": "Microsoft.NETCore.App.Runtime.win-x64/10.0.13",
       "license": "MIT",
       "licenseType": "expression",

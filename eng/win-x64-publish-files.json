@@ -47,6 +47,8 @@
   "Microsoft.Extensions.Logging.dll",
   "Microsoft.Extensions.Options.dll",
   "Microsoft.Extensions.Primitives.dll",
+  "Microsoft.Identity.Client.dll",
+  "Microsoft.IdentityModel.Abstractions.dll",
   "Microsoft.VisualBasic.Core.dll",
   "Microsoft.VisualBasic.dll",
   "Microsoft.Web.WebView2.Core.dll",
