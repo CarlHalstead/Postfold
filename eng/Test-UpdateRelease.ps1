@@ -25,9 +25,46 @@ foreach ($name in $names)
 }
 $audit = Join-Path $draft 'artifact-hashes.json'
 [IO.File]::WriteAllText($audit, (([ordered]@{sourceCommit=$manifest.sourceCommit;version=$manifest.version;channel='beta';rid='win-x64';artifacts=$rows} | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
+# Synthetic receipts exercise release-tool validation only; they do not qualify a release.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [IO.Compression.ZipFile]::OpenRead((Join-Path $release $manifest.package.name))
+try
+{
+    $stream = $archive.GetEntry('lib/app/Postfold.Storage.dll').Open()
+    try { $storageHash = (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash }
+    finally { $stream.Dispose() }
+}
+finally { $archive.Dispose() }
+$compatibility = [ordered]@{Version=$manifest.version;SourceCommit=$manifest.sourceCommit;MinimumFormat=$manifest.minimumFormat;MaximumFormat=$manifest.maximumFormat;TargetFormat=$manifest.targetFormat;OriginMigrations=@($manifest.originMigrations);TargetMigration=$manifest.targetMigration;StorageSha256=$storageHash}
+[IO.File]::WriteAllText((Join-Path $draft 'update-compatibility.json'), ($compatibility | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+$qualification = [ordered]@{passed=$true;sourceCommit=$manifest.sourceCommit;candidateVersion=$manifest.version;candidatePackageSha256=$manifest.package.sha256;remainingOwned=@()}
+$qualificationPath = Join-Path $draft 'qualification-receipt.json'
+[IO.File]::WriteAllText($qualificationPath, ($qualification | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
 $prepared = Join-Path $area 'release'
 $script = Join-Path $PSScriptRoot 'Invoke-UpdateRelease.ps1'
 $generated = Join-Path $area 'generated'
+$prepareArguments = @{Action='Prepare';Version=$manifest.version;SourceCommit=$manifest.sourceCommit;Sequence=$manifest.sequence;DraftDirectory=$draft;DraftAuditSha256=(Get-FileHash $audit).Hash;ReleaseDirectory=$generated;SignerPath=$SignerPath;PublicKeyPath=$PublicKeyPath;ReadmePath=$ReadmePath}
+$qualificationBytes = [IO.File]::ReadAllBytes($qualificationPath)
+try
+{
+    $qualification.passed = $false
+    [IO.File]::WriteAllText($qualificationPath, ($qualification | ConvertTo-Json -Depth 8))
+    $refused = $false
+    try { & $script @prepareArguments } catch { $refused = $true }
+    if (-not $refused) { throw 'Failed native qualification accepted.' }
+}
+finally { [IO.File]::WriteAllBytes($qualificationPath, $qualificationBytes) }
+$compatibilityPath = Join-Path $draft 'update-compatibility.json'
+$compatibilityBytes = [IO.File]::ReadAllBytes($compatibilityPath)
+try
+{
+    $compatibility.StorageSha256 = '0' * 64
+    [IO.File]::WriteAllText($compatibilityPath, ($compatibility | ConvertTo-Json -Depth 8))
+    $refused = $false
+    try { & $script @prepareArguments } catch { $refused = $true }
+    if (-not $refused) { throw 'Wrong packaged compatibility owner accepted.' }
+}
+finally { [IO.File]::WriteAllBytes($compatibilityPath, $compatibilityBytes) }
 & $script -Action Prepare -Version $manifest.version -SourceCommit $manifest.sourceCommit -Sequence $manifest.sequence -DraftDirectory $draft -DraftAuditSha256 (Get-FileHash $audit).Hash -ReleaseDirectory $generated -SignerPath $SignerPath -PublicKeyPath $PublicKeyPath -ReadmePath $ReadmePath
 $generatedManifest = [IO.File]::ReadAllText((Join-Path $generated 'inputs/Postfold.win-x64-beta.manifest.json'))
 if (-not $generatedManifest.Contains("`n    `"feed`": {`n        `"name`": ") -or $generatedManifest.Contains("`r") -or -not $generatedManifest.EndsWith("`n")) { throw 'Generated manifest formatting changed.' }
@@ -64,6 +101,6 @@ if (-not (Test-Path $archive)) { throw 'Final ZIP absent.' }
 $refused = $false
 try { & $script -Action Bundle @arguments } catch { $refused = $true }
 if (-not $refused) { throw 'Existing output overwritten.' }
-$result = [ordered]@{shellVersion=$PSVersionTable.PSVersion.ToString();version=$manifest.version;prepared=$true;unsignedCheck=$true;signedCheck=$true;wrongVersionRefused=$true;wrongReviewRefused=$true;changedInstallerRefused=$true;overwriteRefused=$true;archiveSha256=(Get-FileHash $archive).Hash;privateKeyAccessed=$false;published=$false}
+$result = [ordered]@{shellVersion=$PSVersionTable.PSVersion.ToString();version=$manifest.version;prepared=$true;unsignedCheck=$true;signedCheck=$true;failedQualificationRefused=$true;wrongCompatibilityOwnerRefused=$true;wrongVersionRefused=$true;wrongReviewRefused=$true;changedInstallerRefused=$true;overwriteRefused=$true;archiveSha256=(Get-FileHash $archive).Hash;privateKeyAccessed=$false;published=$false}
 [IO.File]::WriteAllText((Join-Path $area 'qualification.json'), (($result | ConvertTo-Json) + "`n"), [Text.UTF8Encoding]::new($false))
 Write-Output 'PASS: reusable release preparation, unsigned/signed checks, nine-leaf bundle and refusal cases. No private key accessed.'

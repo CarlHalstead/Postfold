@@ -61,6 +61,9 @@ production directory placement, native Windows cost policy, Settings download/re
 apply, normal application reopening and preservation of dirty drafts/queued/uncertain work. Its isolated
 package layout suppresses registry/shortcut writes and does not replace installer lifecycle qualification.
 Retain the passing receipt bound to the candidate package hash; never publish an update-ineligible candidate.
+The qualification host executes the candidate's exact packaged application DLLs and exports its actual
+storage migration inventory. Release preparation requires this receipt and inventory, checks their package/
+storage hashes, and uses their compatibility fields rather than hard-coded profile formats.
 
 The signed release bundle's audited input directory contains only the full package, Setup, two Velopack indexes, feed,
 manifest and signature. Its audit must include all seven exact file lengths and SHA-256 values.
@@ -99,8 +102,8 @@ For each approved beta release, run `Build-UpdateDraft.ps1` with its version/sou
 script with `-Action Check`, `Sign` or `Bundle`, passing `-Version` and `-ReviewSha256`. Only the owner
 runs `Sign` in a normal interactive Windows console. `Bundle` reuses `New-UpdateBundle.ps1`; it does
 not publish. Existing outputs are preserved, and any new attempt requires a fresh output directory.
-The current beta compatibility policy is profile format 2 and the initial EF migration; changing that
-policy requires explicit review, independently of the application version.
+Signed compatibility must describe the candidate's qualified packaged migration history. Adding migrations
+or changing support policy still requires explicit review independently of the application version.
 
 ## Submit
 

@@ -83,6 +83,25 @@ if ($Action -ceq 'Prepare')
         $package = Get-Row (Join-Path $DraftDirectory ('release/' + $names[0]))
         $assets = @($feed.Assets)
         if ($assets.Count -ne 1 -or $assets[0].PackageId -cne 'Postfold' -or $assets[0].Type -cne 'Full' -or $assets[0].Version -cne $Version -or $assets[0].FileName -cne $package.name -or $assets[0].Size -ne $package.length -or $assets[0].SHA256 -cne $package.sha256) { throw 'Full feed/package identity refused.' }
+        $qualificationPath = Join-Path $DraftDirectory 'qualification-receipt.json'
+        $compatibilityPath = Join-Path $DraftDirectory 'update-compatibility.json'
+        $qualification = Get-Content -LiteralPath $qualificationPath -Raw | ConvertFrom-Json
+        $compatibility = Get-Content -LiteralPath $compatibilityPath -Raw | ConvertFrom-Json
+        if (-not $qualification.passed -or $qualification.sourceCommit -cne $SourceCommit -or $qualification.candidateVersion -cne $Version -or
+            $qualification.candidatePackageSha256 -cne $package.sha256 -or @($qualification.remainingOwned).Count -ne 0 -or
+            $compatibility.SourceCommit -cne $SourceCommit -or $compatibility.Version -cne $Version) { throw 'A passing native qualification bound to this exact candidate is required.' }
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $packageArchive = [IO.Compression.ZipFile]::OpenRead((Join-Path $DraftDirectory ('release/' + $package.name)))
+        try
+        {
+            $storage = $packageArchive.GetEntry('lib/app/Postfold.Storage.dll')
+            if ($null -eq $storage) { throw 'Packaged storage compatibility owner is missing.' }
+            $storageStream = $storage.Open()
+            try { $storageHash = (Get-FileHash -InputStream $storageStream -Algorithm SHA256).Hash }
+            finally { $storageStream.Dispose() }
+            if ($storageHash -cne $compatibility.StorageSha256) { throw 'Compatibility inventory does not describe the packaged storage assembly.' }
+        }
+        finally { $packageArchive.Dispose() }
         [IO.Directory]::CreateDirectory($inputs) | Out-Null
         foreach ($name in $names) { [IO.File]::Copy((Join-Path $DraftDirectory ('release/' + $name)), (Join-Path $inputs $name), $false) }
         if ($PublicKeyPath) { $keyText = [IO.File]::ReadAllText([IO.Path]::GetFullPath($PublicKeyPath)).Trim() }
@@ -103,8 +122,8 @@ if ($Action -ceq 'Prepare')
             $feedRow = Get-Row (Join-Path $inputs 'releases.win-x64-beta.json')
             $document = [ordered]@{
                 kind='PostfoldUpdateManifest';schema=1;keyId=$keyId;product='Postfold';rid='win-x64';channel='beta';toolChannel='win-x64-beta';sequence=$Sequence;version=$Version;sourceCommit=$SourceCommit
-                minimumApp='0.1.0-beta.1';minimumFormat=2;maximumFormat=2;targetFormat=2
-                originMigrations=@('20261014150754_InitialEfProfile');targetMigration='20261014150754_InitialEfProfile'
+                minimumApp='0.1.0-beta.1';minimumFormat=$compatibility.MinimumFormat;maximumFormat=$compatibility.MaximumFormat;targetFormat=$compatibility.TargetFormat
+                originMigrations=@($compatibility.OriginMigrations);targetMigration=$compatibility.TargetMigration
                 feed=[ordered]@{name=$feedRow.name;length=$feedRow.length;sha256=$feedRow.sha256}
                 package=[ordered]@{name=$package.name;length=$package.length;sha256=$package.sha256}
             }
@@ -112,6 +131,8 @@ if ($Action -ceq 'Prepare')
         }
         $document = Get-Content -Raw -LiteralPath (Join-Path $inputs $manifestName) | ConvertFrom-Json
         if ($document.sourceCommit -cne $SourceCommit -or $document.version -cne $Version -or $document.sequence -ne $Sequence -or $document.keyId -cne $keyId -or $document.channel -cne 'beta' -or $document.rid -cne 'win-x64') { throw 'Manifest identity refused.' }
+        if ($document.minimumFormat -ne $compatibility.MinimumFormat -or $document.maximumFormat -ne $compatibility.MaximumFormat -or $document.targetFormat -ne $compatibility.TargetFormat -or
+            $document.targetMigration -cne $compatibility.TargetMigration -or ($document.originMigrations -join "`n") -cne ($compatibility.OriginMigrations -join "`n")) { throw 'Manifest compatibility differs from the qualified packaged runtime.' }
         $manifestFeed = Get-Row (Join-Path $inputs 'releases.win-x64-beta.json')
         foreach ($property in @('name', 'length', 'sha256'))
         {
@@ -122,6 +143,7 @@ if ($Action -ceq 'Prepare')
             sourceCommit=$SourceCommit;version=$Version;sequence=$Sequence;channel='beta';rid='win-x64';keyId=$keyId
             signerPath=[IO.Path]::GetFullPath($SignerPath);signerSha256=(Get-FileHash -LiteralPath $SignerPath).Hash
             publicKeySha256=(Get-FileHash (Join-Path $area 'public-spki.txt')).Hash;readmeSha256=(Get-FileHash (Join-Path $area 'README.txt')).Hash
+            qualificationSha256=(Get-FileHash -LiteralPath $qualificationPath).Hash;compatibilitySha256=(Get-FileHash -LiteralPath $compatibilityPath).Hash
             artifacts=@($names + $manifestName | ForEach-Object { Get-Row (Join-Path $inputs $_) })
         }
         Write-Json $reviewPath $review

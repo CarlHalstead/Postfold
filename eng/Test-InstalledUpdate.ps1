@@ -66,14 +66,25 @@ function Invoke-Driver([string]$Mode, [int]$Seconds = 180)
     $start = [Diagnostics.ProcessStartInfo]::new($dotnet)
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
-    $start.Arguments = '"' + $driver + '" --qualify-installed-update ' + $Mode + ' "' + (Join-Path $area 'specification.json') + '"'
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
+    if ($Mode -eq 'build-driver')
+    {
+        $arguments = @('build', (Join-Path $root 'Postfold.Foundation.Tests/Postfold.Foundation.Tests.csproj'), '-c', 'Release', '--no-restore', ('-p:Version=' + $receipt.version), ('-p:SourceRevisionId=' + $SourceCommit), '--disable-build-servers', '-p:UseSharedCompilation=false', '-nr:false')
+    }
+    else { $arguments = @($driver, '--qualify-installed-update', $Mode, (Join-Path $area 'specification.json')) }
+    $start.Arguments = ($arguments | ForEach-Object { '"' + $_ + '"' }) -join ' '
+    $start.EnvironmentVariables['DOTNET_CLI_USE_MSBUILD_SERVER'] = '0'
+    $start.EnvironmentVariables['MSBUILDDISABLENODEREUSE'] = '1'
+    $start.EnvironmentVariables['UseSharedCompilation'] = 'false'
+    # The normally reopened app can inherit the run driver's handles. Use the caller's
+    # file-backed output for this mode so its lifetime cannot hold a capture pipe open.
+    $capture = $Mode -ne 'run'
+    $start.RedirectStandardOutput = $capture
+    $start.RedirectStandardError = $capture
     $process = [Diagnostics.Process]::Start($start)
     $null = $process.Handle
     $records[$process.Id] = @{pid=$process.Id;start=$process.StartTime.ToUniversalTime();path=$dotnet;mode=$Mode}
-    $stdout = $process.StandardOutput.ReadToEndAsync()
-    $stderr = $process.StandardError.ReadToEndAsync()
+    $stdout = if ($capture) { $process.StandardOutput.ReadToEndAsync() } else { $null }
+    $stderr = if ($capture) { $process.StandardError.ReadToEndAsync() } else { $null }
     try
     {
         $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
@@ -85,15 +96,23 @@ function Invoke-Driver([string]$Mode, [int]$Seconds = 180)
         }
         Observe-Children
         $process.WaitForExit()
-        if (-not $stdout.Wait(10000) -or -not $stderr.Wait(10000)) { throw 'Driver output did not settle.' }
-        [IO.File]::WriteAllText((Join-Path $area ($Mode + '.stdout.log')), $stdout.Result)
-        [IO.File]::WriteAllText((Join-Path $area ($Mode + '.stderr.log')), $stderr.Result)
+        if ($capture)
+        {
+            if (-not $stdout.Wait(10000) -or -not $stderr.Wait(10000)) { throw 'Driver output did not settle.' }
+            [IO.File]::WriteAllText((Join-Path $area ($Mode + '.stdout.log')), $stdout.Result)
+            [IO.File]::WriteAllText((Join-Path $area ($Mode + '.stderr.log')), $stderr.Result)
+        }
         $records[$process.Id].exit = $process.ExitCode
         if ($process.ExitCode -ne 0 -or (Test-Path -LiteralPath (Join-Path $area 'failure.json'))) { throw ('Qualification driver failed: ' + $Mode) }
     }
     finally
     {
         if (-not $process.HasExited) { $process.Kill(); if (-not $process.WaitForExit(10000)) { throw ('Owned driver remains: ' + $process.Id) } }
+        if ($capture)
+        {
+            if ($stdout.Wait(10000)) { [IO.File]::WriteAllText((Join-Path $area ($Mode + '.stdout.log')), $stdout.Result) }
+            if ($stderr.Wait(10000)) { [IO.File]::WriteAllText((Join-Path $area ($Mode + '.stderr.log')), $stderr.Result) }
+        }
         $process.Dispose()
     }
 }
@@ -114,7 +133,11 @@ try
         }
         $manifest = @($archive.Entries | Where-Object { $_.FullName.EndsWith('.nuspec') -and -not $_.FullName.Contains('/') })
         if ($manifest.Count -ne 1) { throw 'Candidate native identity is ambiguous.' }
-        [IO.Compression.ZipFileExtensions]::ExtractToFile($manifest[0], (Join-Path $current 'sq.version'), $false)
+        $installedManifest = Join-Path $current 'sq.version'
+        if (-not (Test-Path -LiteralPath $installedManifest))
+        {
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($manifest[0], $installedManifest, $false)
+        }
     }
     finally { $archive.Dispose() }
     [IO.File]::Copy((Join-Path $current 'Squirrel.exe'), (Join-Path $installation 'Update.exe'))
@@ -124,6 +147,18 @@ try
     [IO.File]::WriteAllText((Join-Path $area '.synthetic-update-qualification'), $SourceCommit)
     $specification = [ordered]@{Area=$area;Installation=$installation;ReleaseDirectory=(Join-Path $next 'release');InstalledVersion=$receipt.version;SourceCommit=$SourceCommit}
     [IO.File]::WriteAllText((Join-Path $area 'specification.json'), ($specification | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+    Invoke-Driver 'build-driver'
+    $driverDirectory = Join-Path $area 'driver'
+    [IO.Directory]::CreateDirectory($driverDirectory) | Out-Null
+    foreach ($file in (Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($driver)) -File))
+    {
+        [IO.File]::Copy($file.FullName, (Join-Path $driverDirectory $file.Name), $false)
+    }
+    foreach ($file in (Get-ChildItem -LiteralPath $current -File -Filter '*.dll'))
+    {
+        [IO.File]::Copy($file.FullName, (Join-Path $driverDirectory $file.Name), $true)
+    }
+    $driver = Join-Path $driverDirectory 'Postfold.Foundation.Tests.dll'
     Invoke-Driver 'prepare'
     Invoke-Driver 'run'
     $state = Join-Path $installation 'updates/win-x64/beta'
@@ -173,6 +208,7 @@ try
     Invoke-Driver 'audit'
     if ((Read-Registration) -cne $registration) { throw 'Real Postfold uninstall registration changed.' }
     $passed = $true
+    [IO.File]::Copy((Join-Path $area 'update-compatibility.json'), (Join-Path $candidate 'update-compatibility.json'), $false)
     Write-Output 'PASS: candidate production layout checked/downloaded, safely restarted through real native apply, reopened the normal target app, and preserved dirty draft plus queued/uncertain work. Real registration unchanged.'
 }
 finally
@@ -199,5 +235,6 @@ finally
     if ($reopened) { $reopened.Dispose() }
     $audit = [ordered]@{passed=$passed;sourceCommit=$SourceCommit;candidateVersion=$receipt.version;nextVersion=$nextInventory.version;candidatePackageSha256=$(if ($package) { (Get-FileHash -LiteralPath $package[0].FullName).Hash });registrationUnchanged=((Read-Registration) -ceq $registration);installerExecuted=$false;portableIsolation=$true;owned=@($records.Values);remainingOwned=$remaining;completed=[DateTime]::UtcNow}
     [IO.File]::WriteAllText((Join-Path $area 'qualification-receipt.json'), ($audit | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+    if ($passed) { [IO.File]::Copy((Join-Path $area 'qualification-receipt.json'), (Join-Path $candidate 'qualification-receipt.json'), $false) }
     if ($remaining.Count) { throw ('Owned qualification processes remain: ' + ($remaining -join ', ')) }
 }

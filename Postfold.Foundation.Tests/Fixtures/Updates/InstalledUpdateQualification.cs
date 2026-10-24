@@ -5,6 +5,7 @@ using Avalonia.Headless;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Themes.Fluent;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Postfold.Core.Enums;
 using Postfold.Core.Models.Accounts;
@@ -21,6 +22,7 @@ using Postfold.Storage.Stores;
 using Postfold.UI.Resources;
 using Postfold.UI.Views;
 using System;
+using System.Collections;
 using System.Collections.Immutable;
 using System.IO;
 using System.IO.Compression;
@@ -28,6 +30,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
@@ -39,6 +42,8 @@ namespace Postfold.Foundation.Tests.Fixtures.Updates;
 internal sealed class InstalledUpdateQualification : Application
 {
     private static Configuration _configuration = null!;
+    [ThreadStatic]
+    private static bool _capturing;
 
     public override void Initialize()
     {
@@ -55,24 +60,35 @@ internal sealed class InstalledUpdateQualification : Application
         IClassicDesktopStyleApplicationLifetime desktop = (IClassicDesktopStyleApplicationLifetime)ApplicationLifetime!;
         Configuration configuration = _configuration;
         string installation = configuration.Installation;
+        Compatibility compatibility = ReadCompatibility();
+        Assembly subject = typeof(DesktopSession).Assembly;
+        if (Hash(subject.Location) != Hash(Path.Combine(installation, "current", "Postfold.dll")))
+        {
+            throw new InvalidDataException("Qualification must execute the packaged Desktop assembly.");
+        }
+        using Stream inventory = subject.GetManifestResourceStream("Postfold.ProductionNativeInventory.json") ?? throw new InvalidDataException("Packaged native inventory is missing.");
+        (ClientUpdateConfiguration admitted, NativeRestartConfiguration native) = ProductionUpdatesPreparation.ReviewInventory(
+            inventory,
+            installation,
+            subject.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion,
+            compatibility.TargetFormat,
+            compatibility.TargetMigration
+        );
+        if (admitted.InstalledVersion != configuration.InstalledVersion)
+        {
+            throw new InvalidDataException("Installed candidate version differs from the qualified source.");
+        }
+        Write("packaged-components.json", new { desktopSha256 = Hash(subject.Location), storageSha256 = compatibility.StorageSha256, native.BrokerSha256, native.HelperSha256 });
+        using JsonDocument selected = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(configuration.Area, "server", "Postfold.win-x64-beta.manifest.json")));
+        string targetVersion = selected.RootElement.GetProperty("version").GetString()!;
         ClientUpdateConfiguration updates = new ClientUpdateConfiguration(
-            new Uri("https://github.com/CarlHalstead/Postfold/releases/download/isolated-qualification/"),
+            new Uri("https://github.com/CarlHalstead/Postfold/releases/download/v" + targetVersion + "/"),
             File.ReadAllText(Path.Combine(configuration.Area, "synthetic-public-spki.txt")),
             "beta",
             configuration.InstalledVersion,
-            2,
-            UpdateFixture.InitialMigration,
+            compatibility.TargetFormat,
+            compatibility.TargetMigration,
             Path.Combine(installation, "updates", "win-x64", "beta")
-        );
-        string broker = Path.Combine(installation, "current", "Postfold.UpdateBroker.exe");
-        string helper = Path.Combine(installation, "Update.exe");
-        NativeRestartConfiguration native = new NativeRestartConfiguration(
-            broker,
-            Hash(broker),
-            helper,
-            Hash(helper),
-            installation,
-            Hash(Path.Combine(installation, "current", "sq.version"))
         );
         SystemUpdateConnection connection = new SystemUpdateConnection();
         Write("native-cost.json", new { cost = connection.Current.ToString() });
@@ -152,6 +168,8 @@ internal sealed class InstalledUpdateQualification : Application
                     if (service.Current.Stage == UpdateStage.RestartBlocked)
                     {
                         Write("restart-blocked.json", service.Current);
+                        Write("failure.json", new { message = "Native restart was blocked", status = service.Current });
+                        Dispatcher.UIThread.Post(() => desktop.Shutdown(1));
                     }
                 };
                 await ClickAsync("RestartToUpdate");
@@ -179,7 +197,15 @@ internal sealed class InstalledUpdateQualification : Application
         }
         else if (mode == "run")
         {
-            Environment.ExitCode = AppBuilder.Configure<InstalledUpdateQualification>().UseHeadless(new AvaloniaHeadlessPlatformOptions()).StartWithClassicDesktopLifetime([]);
+            AppDomain.CurrentDomain.FirstChanceException += CaptureNativeFailure;
+            try
+            {
+                Environment.ExitCode = AppBuilder.Configure<InstalledUpdateQualification>().UseHeadless(new AvaloniaHeadlessPlatformOptions()).StartWithClassicDesktopLifetime([]);
+            }
+            finally
+            {
+                AppDomain.CurrentDomain.FirstChanceException -= CaptureNativeFailure;
+            }
         }
         else if (mode == "audit")
         {
@@ -194,6 +220,8 @@ internal sealed class InstalledUpdateQualification : Application
     private static async Task PrepareAsync()
     {
         Configuration configuration = _configuration;
+        Compatibility compatibility = ReadCompatibility();
+        Write("update-compatibility.json", compatibility);
         string server = Path.Combine(configuration.Area, "server");
         Directory.CreateDirectory(server);
         string package = Directory.GetFiles(configuration.ReleaseDirectory, "*-full.nupkg").Single();
@@ -218,11 +246,11 @@ internal sealed class InstalledUpdateQualification : Application
             version = target,
             sourceCommit = configuration.SourceCommit,
             minimumApp = configuration.InstalledVersion,
-            minimumFormat = 2,
-            maximumFormat = 2,
-            targetFormat = 2,
-            originMigrations = new[] { UpdateFixture.InitialMigration },
-            targetMigration = UpdateFixture.InitialMigration,
+            minimumFormat = compatibility.MinimumFormat,
+            maximumFormat = compatibility.MaximumFormat,
+            targetFormat = compatibility.TargetFormat,
+            originMigrations = compatibility.OriginMigrations,
+            targetMigration = compatibility.TargetMigration,
             feed = new { name = Path.GetFileName(feed), length = new FileInfo(feed).Length, sha256 = Hash(feed) },
             package = new { name = Path.GetFileName(package), length = new FileInfo(package).Length, sha256 = Hash(package) }
         });
@@ -256,6 +284,24 @@ internal sealed class InstalledUpdateQualification : Application
         FrozenSubmission queued = EngineFixture.Submission(await EngineFixture.BlobAsync(profile, "queued MIME must survive"));
         await profile.QueueAsync(queued, CancellationToken.None);
         Write("durable-before.json", new { uncertain, queued });
+    }
+
+    private static void CaptureNativeFailure(object? sender, FirstChanceExceptionEventArgs args)
+    {
+        string? trace = args.Exception.StackTrace;
+        if (_capturing || trace is null || !(trace.Contains("StagedNativeUpdate", StringComparison.Ordinal) || trace.Contains("NativeUpdateLauncher", StringComparison.Ordinal)))
+        {
+            return;
+        }
+        _capturing = true;
+        try
+        {
+            Write("native-launch-failure.json", new { type = args.Exception.GetType().Name, args.Exception.Message, trace });
+        }
+        finally
+        {
+            _capturing = false;
+        }
     }
 
     private static async Task AuditAsync()
@@ -296,12 +342,28 @@ internal sealed class InstalledUpdateQualification : Application
         return Convert.ToHexString(SHA256.HashData(stream));
     }
 
+    private static Compatibility ReadCompatibility()
+    {
+        Assembly storage = typeof(SqliteProfile).Assembly;
+        if (storage.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion != _configuration.InstalledVersion + "+" + _configuration.SourceCommit ||
+            Hash(storage.Location) != Hash(Path.Combine(_configuration.Installation, "current", "Postfold.Storage.dll")))
+        {
+            throw new InvalidDataException("Qualification must use the candidate's exact packaged storage assembly.");
+        }
+        Type manifest = storage.GetType("Postfold.Storage.Models.ProfileMigrationManifest")!;
+        object[] versions = ((IEnumerable)manifest.GetField("Versions", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!).Cast<object>().ToArray();
+        int[] formats = versions.Select(version => (int)version.GetType().GetProperty("Format")!.GetValue(version)!).ToArray();
+        string[] migrations = versions.Select(version => (string)version.GetType().GetProperty("Id")!.GetValue(version)!).ToArray();
+        return new Compatibility(_configuration.InstalledVersion, _configuration.SourceCommit, formats.Min(), formats.Max(), formats[^1], migrations, migrations[^1], Hash(storage.Location));
+    }
+
     private static void Write(string name, object value)
     {
         File.WriteAllBytes(Path.Combine(_configuration.Area, name), JsonSerializer.SerializeToUtf8Bytes(value));
     }
 
     private sealed record Configuration(string Area, string Installation, string ReleaseDirectory, string InstalledVersion, string SourceCommit);
+    private sealed record Compatibility(string Version, string SourceCommit, int MinimumFormat, int MaximumFormat, int TargetFormat, string[] OriginMigrations, string TargetMigration, string StorageSha256);
 
     private sealed class Transport(string directory) : HttpMessageHandler
     {
