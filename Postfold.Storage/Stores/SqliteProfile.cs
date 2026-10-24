@@ -524,6 +524,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 JOIN Accounts active ON active.AccountId=c.AccountId AND active.Active=1
                 LEFT JOIN Memberships x ON x.AccountId=c.AccountId AND x.FolderId=c.FolderId
                 LEFT JOIN Messages m ON m.AccountId=x.AccountId AND m.MessageId=x.MessageId AND m.IsRead=0
+                    AND (c.Role<>$draftRole OR NOT EXISTS(SELECT 1 FROM Memberships discarded
+                        JOIN Collections trash ON trash.AccountId=discarded.AccountId AND trash.FolderId=discarded.FolderId
+                        WHERE discarded.AccountId=m.AccountId AND discarded.MessageId=m.MessageId AND trash.Role=$trashRole))
                     AND (EXISTS(SELECT 1 FROM ImapInstances i INDEXED BY ImapMessage WHERE i.AccountId=x.AccountId
                         AND i.MessageId=x.MessageId AND i.FolderId=x.FolderId AND i.UidValidity=c.UidValidity)
                         OR NOT EXISTS(SELECT 1 FROM ImapInstances i INDEXED BY ImapMessage WHERE i.AccountId=x.AccountId
@@ -531,7 +534,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 WHERE c.AccountId=$a
                 GROUP BY c.FolderId;
                 """,
-                ("$a", account.Value)
+                ("$a", account.Value),
+                ("$draftRole", (int)MailboxRole.Drafts),
+                ("$trashRole", (int)MailboxRole.Trash)
             );
             using SqliteDataReader reader = command.ExecuteReader();
             ImmutableArray<MailboxUnreadCount>.Builder counts = ImmutableArray.CreateBuilder<MailboxUnreadCount>();
@@ -1425,10 +1430,14 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 LEFT JOIN Collections c ON c.AccountId=i.AccountId AND c.FolderId=i.FolderId
                 WHERE {{accountFilter}} AND ($u=0 OR m.IsRead=0)
                 AND (i.UidValidity IS NULL OR i.UidValidity=c.UidValidity)
-                AND EXISTS(SELECT 1 FROM Memberships x WHERE x.AccountId=m.AccountId AND x.MessageId=m.MessageId
+                AND EXISTS(SELECT 1 FROM Memberships x
+                    JOIN Collections folder ON folder.AccountId=x.AccountId AND folder.FolderId=x.FolderId
+                    WHERE x.AccountId=m.AccountId AND x.MessageId=m.MessageId
                     AND ($f IS NULL OR x.FolderId=$f)
-                    AND ($inbox=0 OR EXISTS(SELECT 1 FROM Collections inbox WHERE inbox.AccountId=x.AccountId
-                        AND inbox.FolderId=x.FolderId AND inbox.Role=$role)))
+                    AND ($inbox=0 OR folder.Role=$role)
+                    AND ($f IS NULL OR folder.Role<>$draftRole OR NOT EXISTS(SELECT 1 FROM Memberships discarded
+                        JOIN Collections trash ON trash.AccountId=discarded.AccountId AND trash.FolderId=discarded.FolderId
+                        WHERE discarded.AccountId=m.AccountId AND discarded.MessageId=m.MessageId AND trash.Role=$trashRole)))
                 AND (m.Date<$d OR (m.Date=$d AND m.MessageId<$i))
                 """;
             if (literal.Length > 0)
@@ -1460,7 +1469,9 @@ public sealed class SqliteProfile : ISynchronisationStore, ILocalMailQuery, IOpe
                 ("$q", literal),
                 ("$n", request.Limit + 1),
                 ("$inbox", request.InboxOnly),
-                ("$role", (int)MailboxRole.Inbox)
+                ("$role", (int)MailboxRole.Inbox),
+                ("$draftRole", (int)MailboxRole.Drafts),
+                ("$trashRole", (int)MailboxRole.Trash)
             );
             using SqliteDataReader reader = command.ExecuteReader();
             ImmutableArray<MessageSnapshot>.Builder messages = ImmutableArray.CreateBuilder<MessageSnapshot>();
