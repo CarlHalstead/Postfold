@@ -50,6 +50,13 @@ Microsoft.EntityFrameworkCore.Design and repository-local dotnet-ef 10.0.13 are 
 Design and its compiler/templating dependencies are private build dependencies and are excluded from the
 desktop publish graph. They are not needed to migrate profiles at application startup.
 
+## Provider marks
+
+The Google G in `Postfold.UI/Resources/Google.png` is the unmodified image supplied by
+[Google Identity](https://developers.google.com/static/identity/images/g-logo.png), retrieved 24 October 2026.
+Google and the Google logo are trademarks of Google LLC. Microsoft and its logo are trademarks of
+Microsoft Corporation. These marks identify the respective account sign-in providers.
+
 ## Update tooling
 
 Velopack 1.2.161 and the development-only vpk 1.2.161 use the MIT licence, source revision

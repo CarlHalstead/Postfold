@@ -28,7 +28,7 @@ public sealed class AccountSetupWindow : Window
     {
         Title = Strings.Setup;
         Width = 620;
-        Height = 480;
+        Height = 600;
         MinWidth = 360;
         MinHeight = 360;
         StackPanel form = new StackPanel
@@ -43,9 +43,9 @@ public sealed class AccountSetupWindow : Window
             Text = Strings.Get("ProviderLoginHint"),
             TextWrapping = TextWrapping.Wrap
         });
-        StackPanel providerActions = new StackPanel
+        Grid providerActions = new Grid
         {
-            Spacing = 8
+            ColumnDefinitions = new ColumnDefinitions("*,12,*")
         };
         form.Children.Add(providerActions);
         StackPanel login = new StackPanel
@@ -128,12 +128,19 @@ public sealed class AccountSetupWindow : Window
         {
             IsVisible = false
         };
+        Grid actions = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left
+        };
         StackPanel footer = new StackPanel
         {
             Spacing = 8
         };
-        footer.Children.Add(loginActions);
-        footer.Children.Add(serverActions);
+        actions.Children.Add(loginActions);
+        actions.Children.Add(serverActions);
+        footer.Children.Add(actions);
+        footer.Children.Add(status);
         Button back = new Button
         {
             Name = "BackLogin",
@@ -269,7 +276,18 @@ public sealed class AccountSetupWindow : Window
             Button signIn = FormControls.AddActionButton(providerActions, "SignIn" + kind, async () =>
             {
                 SelectProvider(kind);
-                await ConnectProviderAsync();
+                try
+                {
+                    await ConnectProviderAsync();
+                }
+                finally
+                {
+                    providerKind = "Imap";
+                    login.IsVisible = true;
+                    loginActions.IsVisible = true;
+                    loginHint.Text = Strings.LoginHint;
+                    email.Focus();
+                }
             }, status);
             Grid caption = new Grid
             {
@@ -278,28 +296,27 @@ public sealed class AccountSetupWindow : Window
             caption.Children.Add(ProviderIcons.Create(kind));
             TextBlock label = new TextBlock
             {
-                Text = Strings.Get("SignIn" + kind),
+                Text = Strings.Get("Provider" + kind),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
                 TextWrapping = TextWrapping.Wrap
             };
             Grid.SetColumn(label, 2);
             caption.Children.Add(label);
             signIn.Content = caption;
+            signIn.Margin = default;
+            signIn.MinHeight = 48;
             signIn.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
-            signIn.HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
+            signIn.HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center;
+            Grid.SetColumn(signIn, kind == "Google" ? 0 : 2);
         }
-        FormControls.AddActionButton(providerActions, "ProviderImap", () =>
-        {
-            SelectProvider("Imap");
-            return Task.CompletedTask;
-        }, status);
-        FormControls.AddActionButton(footer, "SkipSetup", () =>
+        Button skip = FormControls.AddActionButton(actions, "SkipSetup", () =>
         {
             Close();
             return System.Threading.Tasks.Task.CompletedTask;
         }, status);
-        form.Children.Add(footer);
-        form.Children.Add(status);
-        Content = FormControls.Page(Strings.Setup, form, back: back);
+        skip.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch;
+        Grid.SetColumn(skip, 1);
+        Content = FormControls.Page(Strings.Setup, form, footer, back);
         Opened += (_, _) => email.Focus();
         Closed += (_, _) => { password.Text = ""; CancelSetup(); };
 

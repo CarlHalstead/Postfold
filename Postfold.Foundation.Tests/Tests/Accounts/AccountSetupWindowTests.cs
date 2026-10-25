@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
@@ -20,6 +21,62 @@ namespace Postfold.Foundation.Tests.Tests.Accounts;
 
 public sealed class AccountSetupWindowTests
 {
+    [AvaloniaTest]
+    [TestCase(620, 600, 16)]
+    [TestCase(360, 480, 16)]
+    [TestCase(360, 600, 24)]
+    public void Layout_WhenOpened_KeepsProviderChoicesEqualAndActionsVisible(double width, double height, double fontSize)
+    {
+        // Arrange
+        AccountSetupWindow window = new AccountSetupWindow(Substitute.For<IAccountSetup>())
+        {
+            Width = width,
+            Height = height,
+            FontSize = fontSize
+        };
+
+        // Act
+        window.Show();
+        window.UpdateLayout();
+        try
+        {
+            // Assert
+            Button google = Control<Button>(window, "SignInGoogle");
+            Button microsoft = Control<Button>(window, "SignInMicrosoft");
+            Button next = Control<Button>(window, "ContinueServers");
+            Button skip = Control<Button>(window, "SkipSetup");
+            Point nextPosition = next.TranslatePoint(default, window)!.Value;
+            Point skipPosition = skip.TranslatePoint(default, window)!.Value;
+            Assert.That(google.Bounds.Width, Is.EqualTo(microsoft.Bounds.Width).Within(1));
+            Assert.That(microsoft.Bounds.X - google.Bounds.Right, Is.EqualTo(12).Within(1));
+            Assert.That(google.Bounds.Height, Is.GreaterThanOrEqualTo(48));
+            Assert.That(google.GetVisualDescendants().OfType<Image>().Single().Source, Is.Not.Null);
+            Assert.That(google.GetVisualDescendants().OfType<TextBlock>().Any(label => label.Text == "Google"), Is.True);
+            Assert.That(microsoft.GetVisualDescendants().OfType<TextBlock>().Any(label => label.Text == "Microsoft"), Is.True);
+            Assert.That(nextPosition.Y, Is.EqualTo(skipPosition.Y).Within(1));
+            Assert.That(skipPosition.X, Is.GreaterThan(nextPosition.X + next.Bounds.Width));
+            Assert.That(skipPosition.X + skip.Bounds.Width, Is.LessThanOrEqualTo(window.ClientSize.Width - 24));
+            if (fontSize == 16)
+            {
+                Assert.That(skipPosition.X + skip.Bounds.Width, Is.LessThan(window.ClientSize.Width - 24));
+            }
+            Assert.That(nextPosition.Y + next.Bounds.Height, Is.LessThanOrEqualTo(window.ClientSize.Height));
+            Assert.That(next.GetVisualAncestors().OfType<ScrollViewer>(), Is.Empty);
+            Assert.That(window.GetVisualDescendants().OfType<Button>().Any(button => button.Name == "ProviderImap"), Is.False);
+            Assert.That(Strings.Get("ContinueServers"), Is.EqualTo("Continue"));
+            Assert.That(Strings.Get("SkipSetup"), Is.EqualTo("Skip"));
+            if (width == 620)
+            {
+                ScrollViewer form = ((DockPanel)window.Content!).Children.OfType<ScrollViewer>().Single();
+                Assert.That(form.Extent.Height, Is.LessThanOrEqualTo(form.Viewport.Height));
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaTest]
     [TestCase(true)]
     [TestCase(false)]

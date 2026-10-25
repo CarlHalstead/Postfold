@@ -4,6 +4,7 @@
     </PropertyGroup>
     <ItemGroup>
         <AvaloniaResource Include="Resources/Postfold.ico" />
+        <AvaloniaResource Include="Resources/Google.png" />
         <ProjectReference Include="../Postfold.Core/Postfold.Core.csproj" />
         <PackageReference Include="Avalonia" />
         <PackageReference Include="HtmlSanitizer" />

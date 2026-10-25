@@ -6,7 +6,7 @@
   <data name="Search" xml:space="preserve"><value>Search</value></data>
   <data name="Refresh" xml:space="preserve"><value>Refresh</value></data>
   <data name="NoMessages" xml:space="preserve"><value>No messages</value></data>
-  <data name="SkipSetup" xml:space="preserve"><value>Skip for now</value></data>
+  <data name="SkipSetup" xml:space="preserve"><value>Skip</value></data>
   <data name="Setup" xml:space="preserve"><value>Add account</value></data>
   <data name="ProfileUnavailable" xml:space="preserve"><value>Local profile unavailable</value></data>
   <data name="ProfileStartupHint" xml:space="preserve"><value>Postfold could not open the local folder containing your accounts, mail, drafts and queued sends. Start fresh to use a separate empty profile. The previous folder will be preserved for recovery; its accounts and mail will not appear in the new profile.</value></data>
@@ -261,7 +261,7 @@
   <data name="SetupDiscovering" xml:space="preserve"><value>Looking up server settings…</value></data>
   <data name="ReceivingSettings" xml:space="preserve"><value>Receiving (IMAP)</value></data>
   <data name="SendingSettings" xml:space="preserve"><value>Sending (SMTP)</value></data>
-  <data name="ContinueServers" xml:space="preserve"><value>Continue to server settings</value></data>
+  <data name="ContinueServers" xml:space="preserve"><value>Continue</value></data>
   <data name="Back" xml:space="preserve"><value>Back</value></data>
   <data name="SendingOverrideHint" xml:space="preserve"><value>Sending uses a separate password. Switching back clears the unused sending password.</value></data>
   <data name="ReadState" xml:space="preserve"><value>Read</value></data>
@@ -342,8 +342,8 @@
   <data name="UpdatePolicyBlocked" xml:space="preserve"><value>This operation is not permitted by the saved update preferences, connection policy or release compatibility. Review your preferences and connection before checking again.</value></data>
   <data name="ProviderChoice" xml:space="preserve"><value>Account type</value></data>
   <data name="ProviderImap" xml:space="preserve"><value>Other email (password)</value></data>
-  <data name="ProviderGoogle" xml:space="preserve"><value>Gmail</value></data>
-  <data name="ProviderMicrosoft" xml:space="preserve"><value>Outlook.com or Microsoft 365</value></data>
+  <data name="ProviderGoogle" xml:space="preserve"><value>Google</value></data>
+  <data name="ProviderMicrosoft" xml:space="preserve"><value>Microsoft</value></data>
   <data name="ConnectProvider" xml:space="preserve"><value>Connect in browser</value></data>
   <data name="ProviderLoginHint" xml:space="preserve"><value>Choose Google or Microsoft to sign in through your browser. Your account address is returned automatically. Mail is cached on this computer without Postfold-level encryption; Windows protects sign-in tokens.</value></data>
   <data name="SignInGoogle" xml:space="preserve"><value>Sign in with Google</value></data>

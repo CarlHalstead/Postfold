@@ -105,7 +105,7 @@ public sealed class ProviderWindowTests
     [AvaloniaTest]
     [TestCase("Google", false, 620, 16)]
     [TestCase("Microsoft", true, 360, 24)]
-    public async Task ProviderChoice_WhenUnconfigured_ClearsAndHidesPasswordAndExplainsUnavailableConnection(
+    public async Task ProviderChoice_WhenUnconfigured_ClearsPasswordAndRestoresLoginWithDiagnostic(
         string kind,
         bool dark,
         double width,
@@ -129,9 +129,11 @@ public sealed class ProviderWindowTests
 
             // Assert
             Assert.That(Control<TextBox>(window, "IncomingPassword").Text, Is.Empty);
-            Assert.That(Control<TextBox>(window, "IncomingPassword").IsEffectivelyVisible, Is.False);
+            Assert.That(Control<TextBox>(window, "IncomingPassword").IsEffectivelyVisible, Is.True);
             Assert.That(Control<TextBlock>(window, "SetupStatus").Text, Is.EqualTo(Strings.Get("ProviderConfigurationMissing")));
-            Assert.That(Control<TextBox>(window, "Email").IsEffectivelyVisible, Is.False);
+            Assert.That(Control<TextBox>(window, "Email").IsEffectivelyVisible, Is.True);
+            Assert.That(window.GetVisualDescendants().OfType<TextBlock>().Any(label =>
+                label.IsEffectivelyVisible && label.Text == Strings.LoginHint), Is.True);
             Assert.That(AutomationProperties.GetName(Control<Button>(window, "SignIn" + kind)), Is.EqualTo(Strings.Get("SignIn" + kind)));
             window.UpdateLayout();
             Assert.That(Control<Button>(window, "SignIn" + kind).Bounds.Width, Is.LessThanOrEqualTo(window.ClientSize.Width));
