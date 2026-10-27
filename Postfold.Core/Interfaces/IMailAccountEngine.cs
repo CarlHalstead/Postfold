@@ -24,6 +24,12 @@ public interface IMailAccountEngine : IAsyncDisposable
     Capabilities Capabilities { get; }
     ImmutableArray<MailboxSnapshot> Mailboxes { get; }
 
+    /// <summary>Indicates that reconciling any selectable mailbox refreshes the entire account.</summary>
+    bool AccountWideReconciliation { get; }
+
+    /// <summary>Signals each successfully committed metadata page before reconciliation continues.</summary>
+    event EventHandler? MetadataCommitted;
+
     Task<Failure> ReconcileAsync(string mailbox, CancellationToken cancellationToken);
 
     Task<Failure> WaitForChangesAsync(string mailbox, TimeSpan maximumWait, CancellationToken cancellationToken);

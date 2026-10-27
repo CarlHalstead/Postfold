@@ -5,6 +5,7 @@ using Postfold.Core.Enums;
 using Postfold.Core.Interfaces;
 using Postfold.Core.Models.Accounts;
 using Postfold.Core.Models.Drafts;
+using Postfold.Core.Models.Mailboxes;
 using Postfold.Core.Models.Messages;
 using Postfold.Core.Models.Operations;
 using Postfold.Core.Models.Outbox;
@@ -17,9 +18,13 @@ using Postfold.Desktop.Stores;
 using Postfold.Engine.Tests.Fixtures;
 using Postfold.Foundation.Tests.Fixtures.Authentication;
 using System;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -27,6 +32,152 @@ namespace Postfold.Foundation.Tests.Tests.Accounts;
 
 public sealed class ProviderSetupTests
 {
+    [Test]
+    public async Task Application_WhenWindowAndModelRequestIt_SharesSyncEventsAndSerialisesAccountWork()
+    {
+        // Arrange
+        await using GmailFixture provider = new GmailFixture();
+        await using DesktopMailRuntime runtime = await GoogleRuntimeAsync(EngineFixture.DirectoryPath(), provider);
+        ProviderConnectionResult connected = await runtime.ConnectProviderAsync(new ProviderSetupRequest("Google", Synchronise: false), CancellationToken.None);
+        TaskCompletionSource entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.Intercept = async (request, cancellationToken) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/messages/one", StringComparison.Ordinal))
+            {
+                entered.TrySetResult();
+                await release.Task.WaitAsync(cancellationToken);
+            }
+            return null;
+        };
+        IMailApplication window = runtime.Application;
+        IMailApplication model = runtime.Application;
+        ConcurrentQueue<SynchronisationUpdate> updates = new ConcurrentQueue<SynchronisationUpdate>();
+        window.SynchronisationChanged += (_, update) => updates.Enqueue(update);
+        Task<Failure> first = model.SynchroniseAsync(connected.Account!.Value, CancellationToken.None);
+        Task<Failure>? second = null;
+        try
+        {
+            // Act
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            // Assert
+            Assert.That(updates.Count(update => update.Running && !update.HasChanges), Is.EqualTo(1));
+            second = window.SynchroniseAsync(connected.Account.Value, CancellationToken.None);
+            Assert.That(second.IsCompleted, Is.False);
+            Assert.That(updates.Count(update => update.Running && !update.HasChanges), Is.EqualTo(1));
+        }
+        finally
+        {
+            release.TrySetResult();
+            Assert.That(await first.WaitAsync(TimeSpan.FromSeconds(30)), Is.EqualTo(Failure.None));
+            if (second is not null)
+            {
+                Assert.That(await second.WaitAsync(TimeSpan.FromSeconds(30)), Is.EqualTo(Failure.None));
+            }
+        }
+        Assert.That(updates.Count(update => !update.Running), Is.EqualTo(2));
+    }
+
+    [Test]
+    [Repeat(3)]
+    public async Task SynchroniseAsync_WhenGmailHasSeveralLabels_ReconcilesTheAccountOnce()
+    {
+        // Arrange
+        await using GmailFixture provider = new GmailFixture();
+        await using DesktopMailRuntime runtime = await GoogleRuntimeAsync(EngineFixture.DirectoryPath(), provider);
+        ProviderConnectionResult connected = await runtime.ConnectProviderAsync(new ProviderSetupRequest("Google", Synchronise: false), CancellationToken.None);
+        provider.Requests.Clear();
+        Stopwatch elapsed = Stopwatch.StartNew();
+
+        // Act
+        Failure result = await runtime.Application.SynchroniseAsync(connected.Account!.Value, CancellationToken.None);
+        elapsed.Stop();
+        int historyRequests = provider.Requests.Count(request => request.Path.StartsWith("history?", StringComparison.Ordinal));
+        TestContext.Progress.WriteLine($"Synthetic Gmail sync: {historyRequests} history requests, {provider.Requests.Count} total requests, {elapsed.ElapsedMilliseconds} ms");
+
+        // Assert
+        Assert.That(result, Is.EqualTo(Failure.None));
+        Assert.That(await runtime.Catalog.CachedMessageCountAsync(CancellationToken.None), Is.EqualTo(2));
+        Assert.That(historyRequests, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task SynchroniseAsync_WhenInitialGmailPageIsLarge_CommitsCountsBeforeFetchingEveryMessage()
+    {
+        // Arrange
+        await using GmailFixture provider = new GmailFixture();
+        provider.Messages.Clear();
+        string[] ids = Enumerable.Range(0, 40).Select(index => "synthetic" + index).ToArray();
+        foreach (string id in ids)
+        {
+            provider.Messages.Add(id, ["INBOX", "UNREAD"]);
+        }
+        TaskCompletionSource entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.Intercept = async (request, token) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/messages", StringComparison.Ordinal))
+            {
+                System.Collections.Generic.Dictionary<string, string> query = AuthenticationFixture.Query(request.RequestUri);
+                int offset = query.TryGetValue("pageToken", out string? page) ? int.Parse(page, CultureInfo.InvariantCulture) : 0;
+                int limit = int.Parse(query["maxResults"], CultureInfo.InvariantCulture);
+                object[] messages = ids.Skip(offset).Take(limit).Select(id => (object)new { id }).ToArray();
+                int next = offset + messages.Length;
+                return GmailFixture.Reply(JsonSerializer.Serialize(next < ids.Length ?
+                    new { messages, nextPageToken = next.ToString(CultureInfo.InvariantCulture) } : (object)new { messages }));
+            }
+            if (request.RequestUri.AbsolutePath.EndsWith("/messages/synthetic20", StringComparison.Ordinal))
+            {
+                entered.TrySetResult();
+                await release.Task.WaitAsync(token);
+            }
+            return null;
+        };
+        await using DesktopMailRuntime runtime = await GoogleRuntimeAsync(EngineFixture.DirectoryPath(), provider, metadataBatch: 200);
+        ProviderConnectionResult connected = await runtime.ConnectProviderAsync(new ProviderSetupRequest("Google", Synchronise: false), CancellationToken.None);
+        Stopwatch elapsed = Stopwatch.StartNew();
+        TaskCompletionSource<long> firstCommit = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IMailApplication application = runtime.Application;
+        application.SynchronisationChanged += (_, update) =>
+        {
+            if (update.Running && update.HasChanges)
+            {
+                firstCommit.TrySetResult(elapsed.ElapsedMilliseconds);
+            }
+        };
+        Task<Failure> sync = application.SynchroniseAsync(connected.Account!.Value, CancellationToken.None);
+        bool committedBeforeRemaining;
+        long visibleCount;
+        long unreadCount;
+        Failure result;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            committedBeforeRemaining = firstCommit.Task.IsCompleted;
+            visibleCount = await runtime.Catalog.CachedMessageCountAsync(CancellationToken.None);
+            MailboxSnapshot inbox = (await runtime.Catalog.MailboxesAsync(CancellationToken.None)).Single(folder =>
+                folder.Account == connected.Account!.Value && folder.Role == MailboxRole.Inbox);
+            unreadCount = (await runtime.Catalog.MailboxUnreadCountsAsync(connected.Account.Value, CancellationToken.None))
+                .Single(count => count.Folder == inbox.Id).Count;
+        }
+        finally
+        {
+            release.TrySetResult();
+            result = await sync.WaitAsync(TimeSpan.FromSeconds(60));
+        }
+        elapsed.Stop();
+        long firstMilliseconds = firstCommit.Task.IsCompletedSuccessfully ? await firstCommit.Task : -1;
+        TestContext.Progress.WriteLine($"Synthetic 40-message sync: result {result}, first commit {firstMilliseconds} ms, total {elapsed.ElapsedMilliseconds} ms, {provider.Requests.Count} requests");
+
+        // Assert
+        Assert.That(result, Is.EqualTo(Failure.None));
+        Assert.That(committedBeforeRemaining, Is.True);
+        Assert.That(visibleCount, Is.EqualTo(20));
+        Assert.That(unreadCount, Is.EqualTo(20));
+        Assert.That(await runtime.Catalog.CachedMessageCountAsync(CancellationToken.None), Is.EqualTo(40));
+    }
+
     [Test]
     public async Task ConnectProviderAsync_WhenBrowserSelectsGmail_DefersInitialSyncAndRejectsDuplicateWithoutChangingExistingGrant()
     {
@@ -601,10 +752,11 @@ public sealed class ProviderSetupTests
         string directory,
         GmailFixture provider,
         ICredentialStore? passwords = null,
-        string? clientSecret = null
+        string? clientSecret = null,
+        int metadataBatch = 10
     )
     {
-        DesktopMailRuntime runtime = await OpenAsync(directory);
+        DesktopMailRuntime runtime = await OpenAsync(directory, metadataBatch);
         runtime.ConfigureProviderClients(new ProviderClientConfiguration(
             GmailFixture.Binding.ClientId,
             GooglePolicyDecisionReference: "synthetic-only policy decision",
@@ -616,14 +768,15 @@ public sealed class ProviderSetupTests
     }
 
     private static async Task<DesktopMailRuntime> OpenAsync(
-        string directory
+        string directory,
+        int metadataBatch = 10
     )
     {
         return (await DesktopMailRuntime.OpenAsync(
             directory,
             new EnginePolicy(true, false, false),
             TimeProvider.System,
-            new EngineLimits(2, 32, 1, 10, 1048576, 50, 0, 0, 1048576),
+            new EngineLimits(2, 32, 1, metadataBatch, 1048576, 50, 0, 0, 1048576),
             CancellationToken.None
         )).Value!;
     }

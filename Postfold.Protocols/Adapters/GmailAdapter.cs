@@ -30,6 +30,8 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
     IMailboxMutator, IRemoteDraftStore, IRemoteDraftInspector, IRemoteDraftSource, IRemoteDraftDeleter, IMessageSubmitter, ISentCopyStore
 {
     private const int MetadataBytes = 4194304;
+    private const int MetadataPageSize = 20;
+    private const int MaximumCursorCharacters = 8000000;
     private readonly GoogleAccountBinding _binding;
     private readonly GmailApiClient _api;
     private readonly IBlobStore _blobs;
@@ -140,15 +142,26 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
                 path += "&pageToken=" + Uri.EscapeDataString(cursor.Page);
             }
 
+            bool buffered = cursor.Phase == "list" && cursor.Pending is not null;
             JsonDocument page;
-            try
+            if (buffered)
             {
-                page = await GetAsync(path, MetadataBytes, token).ConfigureAwait(false);
+                page = JsonDocument.Parse(JsonSerializer.Serialize(new
+                {
+                    messages = cursor.Pending!.Select(id => new { id })
+                }));
             }
-            catch (GmailApiClient.RequestFailure failure) when (failure.Failure == Failure.NotFound ||
-                cursor.Page is not null && failure.Failure == Failure.Validation)
+            else
             {
-                throw new GmailApiClient.RequestFailure(Failure.CursorExpired, false);
+                try
+                {
+                    page = await GetAsync(path, MetadataBytes, token).ConfigureAwait(false);
+                }
+                catch (GmailApiClient.RequestFailure failure) when (failure.Failure == Failure.NotFound ||
+                    cursor.Page is not null && failure.Failure == Failure.Validation)
+                {
+                    throw new GmailApiClient.RequestFailure(Failure.CursorExpired, false);
+                }
             }
             using (page)
             {
@@ -157,7 +170,7 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
                 List<MembershipChange> removedLabels = [];
                 if (cursor.Phase == "list")
                 {
-                    foreach (JsonElement message in Array(root, "messages", Math.Min(limit, 500)))
+                    foreach (JsonElement message in Array(root, "messages", buffered ? 500 : Math.Min(limit, 500)))
                     {
                         changed.Add(Text(message, "id"));
                     }
@@ -191,6 +204,15 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
                 if (changed.Count > 1000)
                 {
                     throw new InvalidDataException();
+                }
+
+                // Keep the provider's original page size and cursor, but checkpoint small metadata batches.
+                string[] remaining = [];
+                if (cursor.Phase == "list" && changed.Count > MetadataPageSize)
+                {
+                    string[] batch = changed.ToArray();
+                    changed = batch.Take(MetadataPageSize).ToHashSet(StringComparer.Ordinal);
+                    remaining = batch.Skip(MetadataPageSize).ToArray();
                 }
 
                 List<MessageSnapshot> messages = [];
@@ -258,7 +280,8 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
                 memberships.AddRange(removedLabels.Where(item => !memberships.Any(current =>
                     current.ProviderMessageKey == item.ProviderMessageKey && current.CollectionKey == item.CollectionKey)));
 
-                string? next = root.TryGetProperty("nextPageToken", out JsonElement nextElement) ? Identifier(nextElement.GetString(), 2048) : null;
+                string? next = buffered ? cursor.Next : root.TryGetProperty("nextPageToken", out JsonElement nextElement) ?
+                    Identifier(nextElement.GetString(), 2048) : null;
                 bool complete = false;
                 bool full = cursor.Phase != "history";
                 if (next is not null)
@@ -268,13 +291,20 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
                     {
                         throw new InvalidDataException();
                     }
-                    cursor = cursor with { Page = next, Seen = [.. cursor.Seen, hash] };
+                    if (remaining.Length == 0)
+                    {
+                        cursor = cursor with { Page = next, Seen = [.. cursor.Seen, hash], Pending = null, Next = null };
+                    }
                 }
-                else if (cursor.Phase == "list")
+                if (remaining.Length > 0)
                 {
-                    cursor = cursor with { Phase = "catchup", Page = null, Seen = [] };
+                    cursor = cursor with { Pending = remaining, Next = next };
                 }
-                else
+                else if (next is null && cursor.Phase == "list")
+                {
+                    cursor = cursor with { Phase = "catchup", Page = null, Seen = [], Pending = null, Next = null };
+                }
+                else if (next is null)
                 {
                     string latest = HistoryId(root);
                     if (ulong.Parse(latest, CultureInfo.InvariantCulture) < ulong.Parse(cursor.Start, CultureInfo.InvariantCulture))
@@ -284,8 +314,13 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
                     cursor = cursor with { Phase = "history", Start = latest, Page = null, Seen = [] };
                     complete = true;
                 }
+                string serialisedCursor = JsonSerializer.Serialize(cursor);
+                if (serialisedCursor.Length > MaximumCursorCharacters)
+                {
+                    throw new InvalidDataException();
+                }
                 return new CanonicalPage(
-                    new Checkpoint(Account, "$account", generation, JsonSerializer.Serialize(cursor), 0, complete),
+                    new Checkpoint(Account, "$account", generation, serialisedCursor, 0, complete),
                     labels,
                     messages.ToImmutableArray(),
                     memberships.ToImmutableArray(),
@@ -714,7 +749,7 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
         string? value
     )
     {
-        if (value is null || value.Length > 300000)
+        if (value is null || value.Length > MaximumCursorCharacters)
         {
             throw new InvalidDataException();
         }
@@ -722,7 +757,11 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
         if (cursor is null || cursor.Version != 1 || cursor.Account != Account.Value || cursor.Subject != _binding.Address ||
             cursor.Phase is not ("list" or "catchup" or "history") || cursor.Seen is null || cursor.Seen.Length > 4096 ||
             !ulong.TryParse(cursor.Start, NumberStyles.None, CultureInfo.InvariantCulture, out ulong history) || history == 0 ||
-            cursor.Page is not null && (cursor.Page.Length is < 1 or > 2048))
+            cursor.Page is not null && (cursor.Page.Length is < 1 or > 2048) ||
+            cursor.Next is not null && (cursor.Pending is null || cursor.Next.Length is < 1 or > 2048) ||
+            cursor.Pending is not null && (cursor.Phase != "list" || cursor.Pending.Length is < 1 or > 500 ||
+                cursor.Pending.Any(item => string.IsNullOrEmpty(item) || item.Length > 2048) ||
+                cursor.Pending.Distinct(StringComparer.Ordinal).Count() != cursor.Pending.Length))
         {
             throw new InvalidDataException();
         }
@@ -861,5 +900,15 @@ public sealed class GmailAdapter : IMailboxReader, ICanonicalMailboxReader, ICon
         );
     }
 
-    private sealed record Cursor(int Version, long Account, string Subject, string Phase, string Start, string? Page, string[] Seen);
+    private sealed record Cursor(
+        int Version,
+        long Account,
+        string Subject,
+        string Phase,
+        string Start,
+        string? Page,
+        string[] Seen,
+        string[]? Pending = null,
+        string? Next = null
+    );
 }

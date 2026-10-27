@@ -672,16 +672,12 @@ internal sealed class DesktopSession : IUpdateShutdown, IUpdateRestart
             TimeProvider.System,
             () => _integration?.MailPollIntervalSeconds ?? 30
         );
-        await synchronisation.RunAsync(async (_, result, cancellationToken) =>
+        await synchronisation.RunAsync(async (_, _, cancellationToken) =>
         {
             await Dispatcher.UIThread.InvokeAsync(async () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 await model.InitialiseAsync(preserveLoadedRows: true);
-                if (result != Failure.None)
-                {
-                    model.ReportReadingResult(result);
-                }
             });
         }, _lifetime.Token);
     }

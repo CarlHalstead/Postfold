@@ -202,6 +202,7 @@
   <data name="TestGenericNotification" xml:space="preserve"><value>Test generic notification</value></data>
   <data name="GenericNewMail" xml:space="preserve"><value>New mail is available. Open Postfold to read it.</value></data>
   <data name="NotificationUnavailable" xml:space="preserve"><value>The native notification could not be requested</value></data>
+  <data name="StatusNotifications" xml:space="preserve"><value>Status notifications</value></data>
   <data name="ShowPostfold" xml:space="preserve"><value>Open Postfold</value></data>
   <data name="ExitPostfold" xml:space="preserve"><value>Exit Postfold, saving drafts</value></data>
   <data name="HtmlRead" xml:space="preserve"><value>Read HTML</value></data>

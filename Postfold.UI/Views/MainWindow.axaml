@@ -19,11 +19,21 @@
         <converters:AttachmentTypeConverter x:Key="AttachmentType" />
         <converters:StateTextConverter x:Key="ContentState" />
     </Window.Resources>
-    <DockPanel>
-        <StackPanel DockPanel.Dock="Bottom" Margin="16,4" Spacing="2" IsVisible="{Binding HasStatus}">
-            <TextBlock Text="{Binding Status}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
-            <TextBlock Text="{Binding NotificationStatus}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
-        </StackPanel>
+    <Window.Styles>
+        <Style Selector="Path.sync-spinner.animated">
+            <Style.Animations>
+                <Animation Duration="0:0:1" IterationCount="INFINITE">
+                    <KeyFrame Cue="0%">
+                        <Setter Property="RotateTransform.Angle" Value="0" />
+                    </KeyFrame>
+                    <KeyFrame Cue="100%">
+                        <Setter Property="RotateTransform.Angle" Value="360" />
+                    </KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
+    </Window.Styles>
+    <Grid>
         <Grid Name="Panes" ColumnDefinitions="0.19*,5,0.36*,5,0.45*">
             <DockPanel Name="NavigationPane" Background="{DynamicResource MailNavigationBrush}">
                 <StackPanel DockPanel.Dock="Top" Margin="16" Spacing="16">
@@ -141,7 +151,7 @@
                     <TextBlock Text="{Binding SelectionDescription}" IsVisible="{Binding HasMessageSelection}" Margin="16,0,16,8" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
                 </StackPanel>
                 <Button Name="LoadMoreButton" DockPanel.Dock="Bottom" Content="{x:Static ui:Strings.More}" Command="{Binding MoreCommand}" IsVisible="False" Margin="16,8" HorizontalAlignment="Stretch" />
-                <Grid>
+                <Grid Name="MessageRegion" ClipToBounds="True">
                     <TextBlock Text="{x:Static ui:Strings.NoMessages}" IsVisible="{Binding IsEmpty}" Margin="24" TextWrapping="Wrap" />
                     <ListBox Name="MessageList" Focusable="True" Classes="mail summaries" ItemsSource="{Binding Rows}" SelectionMode="Multiple" SelectedItems="{Binding SelectedRows, Mode=OneWay}" AutomationProperties.Name="{x:Static ui:Strings.Messages}" Margin="12,0">
                         <ListBox.ContextMenu>
@@ -180,6 +190,46 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+                    <Border Name="StatusNotification"
+                            IsVisible="{Binding HasStatus}"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Bottom"
+                            MaxWidth="400"
+                            Margin="16"
+                            Padding="16,12"
+                            CornerRadius="8"
+                            BorderThickness="1"
+                            BorderBrush="{DynamicResource MailLineBrush}"
+                            Background="{DynamicResource MailButtonBrush}">
+                        <ScrollViewer Name="StatusScroll"
+                                      Focusable="True"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto"
+                                      AutomationProperties.Name="{x:Static ui:Strings.StatusNotifications}">
+                            <StackPanel Spacing="6">
+                                <Grid Name="ActivityStatus" ColumnDefinitions="Auto,*" ColumnSpacing="12" IsVisible="{Binding HasActiveWork}">
+                                    <Path Name="SyncSpinner"
+                                          Classes="sync-spinner"
+                                          Width="20"
+                                          Height="20"
+                                          VerticalAlignment="Center"
+                                          Stroke="{DynamicResource MailAccentBrush}"
+                                          StrokeThickness="2"
+                                          Data="M 9,1 A 8,8 0 1 1 2,5">
+                                        <Path.RenderTransform>
+                                            <RotateTransform Angle="0" />
+                                        </Path.RenderTransform>
+                                    </Path>
+                                    <StackPanel Grid.Column="1" Spacing="4">
+                                        <TextBlock Name="SynchronisationStatus" Text="{x:Static ui:Strings.Synchronising}" IsVisible="{Binding IsSynchronising}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                                        <TextBlock Name="BatchActionStatus" Text="{x:Static ui:Strings.BatchActionRunning}" IsVisible="{Binding IsBatchActionRunning}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Name="FeedbackStatus" Text="{Binding FeedbackStatus}" IsVisible="{Binding HasFeedbackStatus}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                                <TextBlock Name="NotificationFailureStatus" Text="{Binding NotificationStatus}" IsVisible="{Binding HasNotificationStatus}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
                 </Grid>
             </DockPanel>
             <GridSplitter Name="PreviewSplitter" Grid.Column="3" ResizeDirection="Columns" AutomationProperties.Name="{x:Static ui:Strings.PreviewResize}" />
@@ -321,5 +371,5 @@
                 </Grid>
             </DockPanel>
         </Grid>
-    </DockPanel>
+    </Grid>
 </Window>

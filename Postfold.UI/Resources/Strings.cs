@@ -97,6 +97,9 @@ public static class Strings
     public static string Name => Get("Name");
     public static string Drafts => Get("Drafts");
     public static string Synchronise => Get("Synchronise");
+    public static string Synchronising => Get("Synchronising");
+    public static string BatchActionRunning => Get("BatchActionRunning");
+    public static string StatusNotifications => Get("StatusNotifications");
     public static string Synthetic => Get("Synthetic");
     public static string Settings => Get("Settings");
 

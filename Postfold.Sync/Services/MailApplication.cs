@@ -9,6 +9,7 @@ using Postfold.Core.Models.Mime;
 using Postfold.Core.Models.Operations;
 using Postfold.Core.Models.Outbox;
 using Postfold.Core.Models.Search;
+using Postfold.Core.Models.Synchronisation;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
@@ -62,6 +63,8 @@ public sealed class MailApplication : IMailApplication
     }
 
     public IClientCatalog Catalog { get; }
+
+    public event EventHandler<SynchronisationUpdate>? SynchronisationChanged;
 
     public Task<Outcome<SearchPage>> SearchAsync(SearchRequest request, CancellationToken cancellationToken)
     {
@@ -256,13 +259,48 @@ public sealed class MailApplication : IMailApplication
     {
         SemaphoreSlim gate = _synchronisation.GetOrAdd(account, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        IMailAccountEngine? engine = null;
+        Failure result = Failure.Unavailable;
         try
         {
-            return await SynchroniseAccountAsync(account, cancellationToken).ConfigureAwait(false);
+            engine = _engines.Find(account);
+            if (engine is not null)
+            {
+                engine.MetadataCommitted += OnMetadataCommitted;
+            }
+            SynchronisationChanged?.Invoke(this, new SynchronisationUpdate(account, true, false));
+            result = await SynchroniseAccountAsync(account, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            result = Failure.None;
+            throw;
+        }
+        catch (IOException)
+        {
+            result = Failure.Transient;
+            throw;
         }
         finally
         {
-            gate.Release();
+            if (engine is not null)
+            {
+                engine.MetadataCommitted -= OnMetadataCommitted;
+            }
+            try
+            {
+                SynchronisationChanged?.Invoke(this, new SynchronisationUpdate(account, false, true, result));
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        void OnMetadataCommitted(object? sender, EventArgs args)
+        {
+            SynchronisationChanged?.Invoke(this, new SynchronisationUpdate(account, true, true));
         }
     }
 
@@ -599,6 +637,10 @@ public sealed class MailApplication : IMailApplication
             if (result != Failure.None)
             {
                 return result;
+            }
+            if (engine.AccountWideReconciliation)
+            {
+                break;
             }
         }
 

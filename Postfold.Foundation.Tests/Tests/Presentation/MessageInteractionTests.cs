@@ -407,15 +407,35 @@ public sealed class MessageInteractionTests
         await using MainWindowViewModel model = new MainWindowViewModel(application);
         await model.InitialiseAsync();
         model.SelectAllMessages();
+        MainWindow window = new MainWindow { DataContext = model };
+        window.Show();
 
         // Act
         Task batch = model.ApplySelectionAsync(false, CancellationToken.None);
-        model.Terms = "different";
-        await batch;
+        try
+        {
+            Assert.That(model.IsBatchActionRunning, Is.True);
+            Assert.That(model.HasActiveWork, Is.True);
+            Assert.That(model.HasFeedbackStatus, Is.False);
+            Assert.That(window.FindControl<TextBlock>("BatchActionStatus")!.IsVisible, Is.True);
+            Assert.That(window.FindControl<TextBlock>("SynchronisationStatus")!.IsVisible, Is.False);
+            await model.RefreshAsync(false);
+            Assert.That(model.Status, Is.EqualTo(Postfold.UI.Resources.Strings.BatchActionRunning));
+            model.Terms = "different";
+            await batch;
 
-        // Assert
-        await application.Received(1).MutateAsync(Arg.Any<MessageSnapshot>(), MutationKind.SetRead, true, null, Arg.Any<CancellationToken>());
-        Assert.That(model.AllMessagesSelected, Is.False);
+            // Assert
+            await application.Received(1).MutateAsync(Arg.Any<MessageSnapshot>(), MutationKind.SetRead, true, null, Arg.Any<CancellationToken>());
+            Assert.That(model.AllMessagesSelected, Is.False);
+            Assert.That(model.IsBatchActionRunning, Is.False);
+            Assert.That(window.FindControl<Grid>("ActivityStatus")!.IsVisible, Is.False);
+        }
+        finally
+        {
+            model.Terms = "cleanup";
+            await batch;
+            window.Close();
+        }
     }
 
     [AvaloniaTest]

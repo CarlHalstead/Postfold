@@ -18,8 +18,10 @@ using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Mailboxes;
 using Postfold.Core.Models.Messages;
 using Postfold.Core.Models.Mime;
+using Postfold.Core.Models.Synchronisation;
 using Postfold.UI.Controls;
 using Postfold.UI.Models;
+using Postfold.UI.Policies;
 using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
 using System;
@@ -41,6 +43,8 @@ public sealed partial class MainWindow : Window
     private readonly List<Task> _work = [];
     private CancellationTokenSource _lifetime = new CancellationTokenSource();
     private bool _stopping;
+    private bool _syncRefreshRequested;
+    private bool _syncRefreshRunning;
     private IClientAppearance? _appearance;
     private AppearanceSettings _settings = AppearanceSettings.Default;
     private IMailApplication? _application;
@@ -83,6 +87,9 @@ public sealed partial class MainWindow : Window
     {
         _launcher = launcher;
         AvaloniaXamlLoader.Load(this);
+        bool reducedMotion = Application.Current?.Resources.TryGetValue(ReducedMotionPolicy.ResourceKey, out object? setting) != true ||
+            setting is not false;
+        this.FindControl<Avalonia.Controls.Shapes.Path>("SyncSpinner")!.Classes.Set("animated", !reducedMotion);
         Wire("SetupButton", () =>
         {
             if (_setup is null && _startupFailure != Failure.None)
@@ -126,6 +133,10 @@ public sealed partial class MainWindow : Window
         };
         Closed += (_, _) =>
         {
+            if (_application is not null)
+            {
+                _application.SynchronisationChanged -= SynchronisationChanged;
+            }
             if (_pageModel is not null)
             {
                 _pageModel.PropertyChanged -= PagingStateChanged;
@@ -321,7 +332,12 @@ public sealed partial class MainWindow : Window
     )
     {
         _management = management;
+        if (_application is not null)
+        {
+            _application.SynchronisationChanged -= SynchronisationChanged;
+        }
         _application = application;
+        _application.SynchronisationChanged += SynchronisationChanged;
         _setup = setup;
         _desktop = desktop;
         _updates = updates;
@@ -1929,6 +1945,45 @@ public sealed partial class MainWindow : Window
         else
         {
             throw new InvalidOperationException("Missing action control: " + name);
+        }
+    }
+
+    private void SynchronisationChanged(object? sender, SynchronisationUpdate update)
+    {
+        IMailApplication? application = _application;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!ReferenceEquals(application, _application) || DataContext is not MainWindowViewModel model)
+            {
+                return;
+            }
+            model.ReportSynchronisation(update);
+            if (!_stopping && update.HasChanges)
+            {
+                _syncRefreshRequested = true;
+                if (!_syncRefreshRunning)
+                {
+                    Track(RefreshSynchronisationAsync);
+                }
+            }
+        });
+    }
+
+    private async Task RefreshSynchronisationAsync()
+    {
+        _syncRefreshRunning = true;
+        try
+        {
+            // One refresh owns the query; commits arriving during it request one further pass.
+            while (_syncRefreshRequested && !_stopping && DataContext is MainWindowViewModel model)
+            {
+                _syncRefreshRequested = false;
+                await model.InitialiseAsync(preserveLoadedRows: true);
+            }
+        }
+        finally
+        {
+            _syncRefreshRunning = false;
         }
     }
 

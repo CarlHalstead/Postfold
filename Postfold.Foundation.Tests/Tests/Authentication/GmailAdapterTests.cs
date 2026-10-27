@@ -24,6 +24,8 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -31,6 +33,88 @@ namespace Postfold.Foundation.Tests.Tests.Authentication;
 
 public sealed class GmailAdapterTests
 {
+    [Test]
+    public async Task RunAsync_WhenAProviderPageIsCheckpointedInBatches_ResumesAfterReopenAndRetriesWithoutSkippingMail()
+    {
+        // Arrange
+        string directory = EngineFixture.DirectoryPath();
+        await using GmailFixture provider = new GmailFixture();
+        provider.Messages.Clear();
+        string[] ids = Enumerable.Range(0, 42).Select(index => "synthetic" + index).ToArray();
+        foreach (string id in ids)
+        {
+            provider.Messages.Add(id, ["INBOX", "UNREAD"]);
+        }
+        provider.Pages = [ids.Take(41).ToArray(), ids.Skip(41).ToArray()];
+        await provider.SeedAsync();
+        await using GoogleAccountAuthenticator auth = provider.Authenticator();
+        Checkpoint partial;
+        string remainingId;
+        await using (SqliteProfile profile = await EngineFixture.OpenAsync(directory))
+        await using (GmailAdapter adapter = Adapter(provider, auth, profile))
+        {
+            CanonicalReconciliationWork work = new CanonicalReconciliationWork(adapter, profile, 200);
+            Assert.That(await work.RunAsync(CancellationToken.None), Is.EqualTo(Failure.None));
+            Assert.That(await SearchAsync(profile), Has.Length.EqualTo(20));
+            Assert.That(await work.RunAsync(CancellationToken.None), Is.EqualTo(Failure.None));
+            Assert.That(await SearchAsync(profile), Has.Length.EqualTo(40));
+            partial = (await profile.ReadCheckpointAsync(EngineFixture.Account, "$account", CancellationToken.None))!;
+            using JsonDocument cursor = JsonDocument.Parse(partial.Cursor!);
+            remainingId = cursor.RootElement.GetProperty("Pending").EnumerateArray().Single().GetString()!;
+            Assert.That(provider.Requests.Count(request => request.Path.StartsWith("messages?", StringComparison.Ordinal)), Is.EqualTo(1));
+        }
+        await using SqliteProfile reopened = await EngineFixture.OpenAsync(directory);
+        await using GmailAdapter restored = Adapter(provider, auth, reopened);
+        CanonicalReconciliationWork resumed = new CanonicalReconciliationWork(restored, reopened, 200);
+        provider.Intercept = (request, _) => Task.FromResult<HttpResponseMessage?>(
+            request.RequestUri!.AbsolutePath.EndsWith("/messages/" + remainingId, StringComparison.Ordinal) ?
+                GmailFixture.Reply("{}", HttpStatusCode.ServiceUnavailable) : null
+        );
+
+        // Act
+        Failure failed = await resumed.RunAsync(CancellationToken.None);
+        Checkpoint afterFailure = (await reopened.ReadCheckpointAsync(EngineFixture.Account, "$account", CancellationToken.None))!;
+        provider.Intercept = null;
+        Assert.That(await resumed.RunAsync(CancellationToken.None), Is.EqualTo(Failure.None));
+        Assert.That(await resumed.RunAsync(CancellationToken.None), Is.EqualTo(Failure.None));
+        Assert.That(await resumed.RunAsync(CancellationToken.None), Is.EqualTo(Failure.None));
+
+        // Assert
+        Assert.That(failed, Is.EqualTo(Failure.Transient));
+        Assert.That(afterFailure, Is.EqualTo(partial));
+        Assert.That((await SearchAsync(reopened)).Select(message => message.Provider.Key), Is.EquivalentTo(ids));
+        Assert.That((await reopened.ReadCheckpointAsync(EngineFixture.Account, "$account", CancellationToken.None))!.Complete, Is.True);
+        Assert.That(provider.Requests.Count(request => request.Path.StartsWith("messages?", StringComparison.Ordinal)), Is.EqualTo(2));
+        Assert.That(provider.Requests.Where(request => request.Path.StartsWith("messages?", StringComparison.Ordinal))
+            .All(request => request.Path.Contains("maxResults=200", StringComparison.Ordinal)), Is.True);
+    }
+
+    [Test]
+    public async Task ReadAsync_WhenResumingAnOlderCursor_ContinuesItsProviderPage()
+    {
+        // Arrange
+        await using GmailFixture provider = new GmailFixture();
+        await provider.SeedAsync();
+        await using GoogleAccountAuthenticator auth = provider.Authenticator();
+        await using SqliteProfile profile = await EngineFixture.OpenAsync(EngineFixture.DirectoryPath());
+        await using GmailAdapter adapter = Adapter(provider, auth, profile);
+        CanonicalPage first = (await adapter.ReadAsync(null, 200, CancellationToken.None)).Value!;
+        JsonObject legacy = JsonNode.Parse(first.Checkpoint.Cursor!)!.AsObject();
+        legacy.Remove("Pending");
+        legacy.Remove("Next");
+
+        // Act
+        Outcome<CanonicalPage> next = await adapter.ReadAsync(first.Checkpoint with
+        {
+            Cursor = legacy.ToJsonString()
+        }, 200, CancellationToken.None);
+
+        // Assert
+        Assert.That(next.IsSuccess, Is.True);
+        Assert.That(next.Value!.Messages.Single().Provider.Key, Is.EqualTo("two"));
+        Assert.That(next.Value.Checkpoint.Complete, Is.False);
+    }
+
     [Test]
     public async Task RunAsync_WhenEnumerationOverlapsHistory_UsesOneCanonicalMessageAndReplaysChangesBeforeAbsence()
     {
@@ -160,6 +244,9 @@ public sealed class GmailAdapterTests
     [TestCase("loop")]
     [TestCase("foreign-account")]
     [TestCase("version")]
+    [TestCase("pending-duplicates")]
+    [TestCase("pending-wrong-phase")]
+    [TestCase("orphan-next")]
     public async Task ReadAsync_WhenCursorIsUnsafe_DoesNotCommitOrFinishGeneration(
         string mode
     )
@@ -180,6 +267,24 @@ public sealed class GmailAdapterTests
         {
             cursor = cursor with { Cursor = cursor.Cursor!.Replace("\"Version\":1", "\"Version\":2", StringComparison.Ordinal) };
         }
+        else if (mode is "pending-duplicates" or "pending-wrong-phase" or "orphan-next")
+        {
+            JsonObject invalid = JsonNode.Parse(cursor.Cursor!)!.AsObject();
+            if (mode == "pending-duplicates")
+            {
+                invalid["Pending"] = new JsonArray("one", "one");
+            }
+            else if (mode == "pending-wrong-phase")
+            {
+                invalid["Pending"] = new JsonArray("one");
+                invalid["Phase"] = "history";
+            }
+            else
+            {
+                invalid["Next"] = "orphaned-token";
+            }
+            cursor = cursor with { Cursor = invalid.ToJsonString() };
+        }
         else
         {
             provider.Intercept = (request, _) => Task.FromResult<HttpResponseMessage?>(request.RequestUri!.AbsolutePath.EndsWith("/messages", StringComparison.Ordinal) ?
@@ -187,11 +292,16 @@ public sealed class GmailAdapterTests
         }
 
         // Act
+        int before = provider.Requests.Count;
         Outcome<CanonicalPage> result = await adapter.ReadAsync(cursor, 10, CancellationToken.None);
 
         // Assert
         Assert.That(result.IsSuccess, Is.False);
         Assert.That(await profile.ReadCheckpointAsync(EngineFixture.Account, "$account", CancellationToken.None), Is.Null);
+        if (mode != "loop")
+        {
+            Assert.That(provider.Requests, Has.Count.EqualTo(before));
+        }
     }
 
     [TestCase("+")]

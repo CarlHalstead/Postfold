@@ -1,10 +1,12 @@
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using NSubstitute;
 using NUnit.Framework;
@@ -17,7 +19,9 @@ using Postfold.Core.Models.Drafts;
 using Postfold.Core.Models.Mailboxes;
 using Postfold.Core.Models.Messages;
 using Postfold.Core.Models.Search;
+using Postfold.Core.Models.Synchronisation;
 using Postfold.UI.Models;
+using Postfold.UI.Policies;
 using Postfold.UI.Resources;
 using Postfold.UI.ViewModels;
 using Postfold.UI.Views;
@@ -31,6 +35,267 @@ namespace Postfold.Foundation.Tests.Tests.Presentation;
 
 public sealed class UiRefinementTests
 {
+    [AvaloniaTest]
+    [TestCase(760, 480)]
+    [TestCase(1400, 900)]
+    public async Task StatusNotification_WhenPreviewIsBesideOrBelowTheList_DoesNotOverlapTheNativeReader(double width, double height)
+    {
+        // Arrange
+        await using MainWindowViewModel model = new MainWindowViewModel();
+        MainWindow window = new MainWindow
+        {
+            Width = width,
+            Height = height,
+            DataContext = model
+        };
+        window.Show();
+        try
+        {
+            // Act
+            model.ReportSynchronisation(new SynchronisationUpdate(new AccountId(1), true, false));
+            window.UpdateLayout();
+            Border notification = window.FindControl<Border>("StatusNotification")!;
+            DockPanel reader = window.FindControl<DockPanel>("PreviewPane")!;
+            Grid toolbar = window.FindControl<Grid>("ListToolbar")!;
+            Rect notificationBounds = new Rect(notification.TranslatePoint(new Point(), window)!.Value, notification.Bounds.Size);
+            Rect readerBounds = new Rect(reader.TranslatePoint(new Point(), window)!.Value, reader.Bounds.Size);
+            Rect toolbarBounds = new Rect(toolbar.TranslatePoint(new Point(), window)!.Value, toolbar.Bounds.Size);
+
+            // Assert
+            Assert.That(notification.IsEffectivelyVisible, Is.True);
+            Assert.That(reader.IsEffectivelyVisible, Is.True);
+            Assert.That(notificationBounds.Intersects(readerBounds), Is.False);
+            Assert.That(notificationBounds.Intersects(toolbarBounds), Is.False);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task StatusNotification_WhenSyncAndFeedbackOverlap_ShowsBothAndRespectsReducedMotion(bool reducedMotion)
+    {
+        // Arrange
+        using ReducedMotionPolicy motion = new ReducedMotionPolicy(reducedMotion);
+        IMailApplication application = Application();
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        MainWindow window = new MainWindow
+        {
+            Width = 760,
+            Height = 480,
+            FontSize = 24,
+            DataContext = model
+        };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            double paneHeight = window.FindControl<Grid>("Panes")!.Bounds.Height;
+            Border notification = window.FindControl<Border>("StatusNotification")!;
+            TextBlock syncStatus = window.FindControl<TextBlock>("SynchronisationStatus")!;
+            Avalonia.Controls.Shapes.Path spinner = window.FindControl<Avalonia.Controls.Shapes.Path>("SyncSpinner")!;
+            TextBlock feedback = window.FindControl<TextBlock>("FeedbackStatus")!;
+            ScrollViewer statusScroll = window.FindControl<ScrollViewer>("StatusScroll")!;
+
+            // Act
+            model.ReportSynchronisation(new SynchronisationUpdate(new AccountId(1), true, false));
+            model.ReportSendStatus("Synthetic notification for an operation that needs attention.");
+            window.UpdateLayout();
+
+            // Assert
+            Assert.That(notification.IsVisible, Is.True);
+            Assert.That(notification.IsHitTestVisible, Is.True);
+            Assert.That(statusScroll.Focusable, Is.True);
+            Assert.That(AutomationProperties.GetName(statusScroll), Is.EqualTo(Strings.StatusNotifications));
+            Assert.That(AutomationProperties.GetLiveSetting(syncStatus), Is.EqualTo(AutomationLiveSetting.Polite));
+            Assert.That(AutomationProperties.GetLiveSetting(feedback), Is.EqualTo(AutomationLiveSetting.Polite));
+            Assert.That(syncStatus.IsVisible, Is.True);
+            Assert.That(spinner.Classes.Contains("animated"), Is.EqualTo(!reducedMotion));
+            Assert.That(feedback.IsVisible, Is.True);
+            Assert.That(feedback.Text, Does.Contain("needs attention"));
+            Assert.That(notification.Bounds.Width, Is.LessThanOrEqualTo(400));
+            Assert.That(notification.Bounds.Height, Is.LessThan(window.ClientSize.Height));
+            Assert.That(window.FindControl<Grid>("Panes")!.Bounds.Height, Is.EqualTo(paneHeight));
+            Assert.That(statusScroll.Extent.Height, Is.GreaterThan(statusScroll.Viewport.Height));
+            statusScroll.Offset = new Vector(0, statusScroll.Extent.Height);
+            Assert.That(statusScroll.Offset.Y, Is.GreaterThan(0));
+            model.ReportSynchronisation(new SynchronisationUpdate(new AccountId(1), false, true));
+            Assert.That(syncStatus.IsVisible, Is.False);
+            Assert.That(notification.IsVisible, Is.True);
+            model.ReportSendStatus("");
+            Assert.That(notification.IsVisible, Is.False);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task SynchronisationChanged_WhenPagesCommit_UpdatesCountsWithoutNavigationAndClearsCompletedActivity()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        AccountId account = new AccountId(1);
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        NavigationItemViewModel folder = model.Navigation.Single(item => item.IsAccount).Children.Single();
+        MainWindow window = new MainWindow { DataContext = model };
+        window.Configure(application, null);
+        window.Show();
+        try
+        {
+            // Act
+            await Task.Run(() =>
+            {
+                application.SynchronisationChanged += Raise.Event<EventHandler<SynchronisationUpdate>>(
+                    application,
+                    new SynchronisationUpdate(account, true, false)
+                );
+            });
+            Dispatcher.UIThread.RunJobs();
+            Assert.That(model.Status, Is.EqualTo(Strings.Get("Synchronising")));
+            foreach (long count in new long[] { 2, 5 })
+            {
+                application.Catalog.MailboxUnreadCountsAsync(account, Arg.Any<CancellationToken>()).Returns(
+                    ImmutableArray.Create(new MailboxUnreadCount(account, new FolderId(1), count)));
+                application.SynchronisationChanged += Raise.Event<EventHandler<SynchronisationUpdate>>(
+                    application,
+                    new SynchronisationUpdate(account, true, true)
+                );
+                Dispatcher.UIThread.RunJobs();
+
+                // Assert
+                Assert.That(folder.UnreadCount, Is.EqualTo(count));
+                Assert.That(model.NavigationSelection, Is.SameAs(folder));
+                Assert.That(model.Status, Is.EqualTo(Strings.Get("Synchronising")));
+            }
+            application.SynchronisationChanged += Raise.Event<EventHandler<SynchronisationUpdate>>(
+                application,
+                new SynchronisationUpdate(account, false, true)
+            );
+            Dispatcher.UIThread.RunJobs();
+            Assert.That(model.Status, Is.Empty);
+            Assert.That(model.HasStatus, Is.False);
+        }
+        finally
+        {
+            await window.FlushComposeAsync();
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task SynchronisationChanged_WhenCountsAreStillLoading_ClearsFinishedActivityAndCoalescesRefreshes()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        AccountId account = new AccountId(1);
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        TaskCompletionSource<ImmutableArray<MailboxUnreadCount>> counts = new TaskCompletionSource<ImmutableArray<MailboxUnreadCount>>();
+        application.Catalog.MailboxUnreadCountsAsync(account, Arg.Any<CancellationToken>()).Returns(counts.Task);
+        MainWindow window = new MainWindow { DataContext = model };
+        window.Configure(application, null);
+        window.Show();
+        try
+        {
+            application.ClearReceivedCalls();
+
+            // Act
+            application.SynchronisationChanged += Raise.Event<EventHandler<SynchronisationUpdate>>(
+                application,
+                new SynchronisationUpdate(account, true, true)
+            );
+            Dispatcher.UIThread.RunJobs();
+            for (int index = 0; index < 3; index++)
+            {
+                application.SynchronisationChanged += Raise.Event<EventHandler<SynchronisationUpdate>>(
+                    application,
+                    new SynchronisationUpdate(account, true, true)
+                );
+            }
+            application.SynchronisationChanged += Raise.Event<EventHandler<SynchronisationUpdate>>(
+                application,
+                new SynchronisationUpdate(account, false, true)
+            );
+            Dispatcher.UIThread.RunJobs();
+
+            // Assert
+            Assert.That(model.HasStatus, Is.False);
+            await application.Received(1).SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>());
+            counts.SetResult(ImmutableArray.Create(new MailboxUnreadCount(account, new FolderId(1), 8)));
+            Dispatcher.UIThread.RunJobs();
+            Assert.That(model.Navigation.Single(item => item.IsAccount).Children.Single().UnreadCount, Is.EqualTo(8));
+            await application.Received(2).SearchAsync(Arg.Any<SearchRequest>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            counts.TrySetResult([]);
+            await window.FlushComposeAsync();
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task SynchroniseAccountAsync_WhenAnOlderFailureFinishesRefreshing_DoesNotOverwriteANewerSync()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        AccountId account = new AccountId(1);
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        ImmutableArray<AccountConfiguration> accounts = await application.Catalog.AccountsAsync(CancellationToken.None);
+        TaskCompletionSource<ImmutableArray<AccountConfiguration>> refresh = new TaskCompletionSource<ImmutableArray<AccountConfiguration>>();
+        application.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(refresh.Task);
+        application.SynchroniseAsync(account, Arg.Any<CancellationToken>()).Returns(Failure.Unavailable);
+        model.ReportSynchronisation(new SynchronisationUpdate(account, true, false));
+        model.ReportSynchronisation(new SynchronisationUpdate(account, false, true, Failure.Unavailable));
+
+        // Act
+        Task previous = model.SynchroniseAccountAsync(account);
+        model.ReportSynchronisation(new SynchronisationUpdate(account, true, false));
+        refresh.SetResult(accounts);
+        await previous;
+
+        // Assert
+        Assert.That(model.IsSynchronising, Is.True);
+        Assert.That(model.FeedbackStatus, Is.Empty);
+        Assert.That(model.Status, Is.EqualTo(Strings.Synchronising));
+        model.ReportSynchronisation(new SynchronisationUpdate(account, false, true));
+        Assert.That(model.HasStatus, Is.False);
+    }
+
+    [Test]
+    public async Task ReportSynchronisation_WhenAccountsOverlapOrFail_KeepsRemainingActivityAndFailureVisible()
+    {
+        // Arrange
+        IMailApplication application = Application();
+        AccountId first = new AccountId(1);
+        AccountId second = new AccountId(2);
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+
+        // Act
+        model.ReportSynchronisation(new SynchronisationUpdate(first, true, false));
+        model.ReportSynchronisation(new SynchronisationUpdate(second, true, false));
+        model.ReportSynchronisation(new SynchronisationUpdate(first, false, true));
+        await model.RefreshAsync(false);
+
+        // Assert
+        Assert.That(model.Status, Is.EqualTo(Strings.Get("Synchronising")));
+        model.ReportSynchronisation(new SynchronisationUpdate(second, false, true, Failure.Unavailable));
+        await model.RefreshAsync(false);
+        Assert.That(model.Status, Is.EqualTo(Strings.Describe(Failure.Unavailable)));
+        model.ReportSynchronisation(new SynchronisationUpdate(second, true, false));
+        model.ReportSynchronisation(new SynchronisationUpdate(second, false, true));
+        Assert.That(model.HasStatus, Is.False);
+    }
+
     [Test]
     [TestCase("Morgan Lee <morgan@synthetic.invalid>", "Morgan Lee", "morgan@synthetic.invalid")]
     [TestCase("\"River, Alex\" <alex@synthetic.invalid>", "River, Alex", "alex@synthetic.invalid")]

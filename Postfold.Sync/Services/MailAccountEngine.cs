@@ -99,6 +99,9 @@ public sealed class MailAccountEngine : IMailAccountEngine
     public AccountId Account { get; }
     public ImmutableArray<MailboxSnapshot> Mailboxes { get; private set; }
     public Capabilities Capabilities => _reader.Capabilities;
+    public bool AccountWideReconciliation => _reader is ICanonicalMailboxReader;
+
+    public event EventHandler? MetadataCommitted;
 
     public async Task<Failure> ReconcileAsync(string mailbox, CancellationToken cancellationToken)
     {
@@ -133,6 +136,7 @@ public sealed class MailAccountEngine : IMailAccountEngine
                 return result;
             }
 
+            MetadataCommitted?.Invoke(this, EventArgs.Empty);
             checkpoint = await _syncStore.ReadCheckpointAsync(Account, canonical is null ? mailbox : "$account", cancellationToken).ConfigureAwait(false);
         }
         while (checkpoint is { Complete: false });

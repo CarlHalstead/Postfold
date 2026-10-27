@@ -143,6 +143,8 @@ public sealed class IntegrationTests
             retry,
             mailboxes
         );
+        int commits = 0;
+        engine.MetadataCommitted += (_, _) => commits++;
         Failure resumed = await engine.ReconcileAsync("INBOX", CancellationToken.None);
         Checkpoint? complete = await reopened.ReadCheckpointAsync(EngineFixture.Account, "INBOX", CancellationToken.None);
         Outcome<SearchPage> messages = await reopened.SearchAsync(new SearchRequest(
@@ -159,6 +161,7 @@ public sealed class IntegrationTests
         Assert.That(resumed, Is.EqualTo(Failure.None));
         Assert.That(complete!.Complete, Is.True);
         Assert.That(messages.Value!.Messages, Has.Length.EqualTo(2));
+        Assert.That(commits, Is.GreaterThan(0));
     }
 
     [Test]

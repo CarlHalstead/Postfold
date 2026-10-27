@@ -50,6 +50,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     private SearchRequest? _allSelectionScope;
     private readonly HashSet<(AccountId Account, MessageId Message, ProviderIdentity Provider)> _selectionExceptions = [];
     private CancellationTokenSource? _batchCancellation;
+    private readonly HashSet<AccountId> _synchronising = [];
+    private readonly Dictionary<AccountId, Failure> _synchronisationFailures = [];
 
     public MainWindowViewModel() : this(null)
     {
@@ -165,6 +167,14 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     public bool HasAccounts => Accounts.Count > 0;
     public bool IsEmpty => Rows.Count == 0;
     public bool HasStatus => !string.IsNullOrEmpty(Status) || !string.IsNullOrEmpty(NotificationStatus);
+    public bool HasNotificationStatus => !string.IsNullOrEmpty(NotificationStatus);
+    public bool IsSynchronising => _synchronising.Count > 0;
+    public bool IsBatchActionRunning => _batchCancellation is not null;
+    public bool HasActiveWork => IsSynchronising || IsBatchActionRunning;
+    public bool HasFeedbackStatus => !string.IsNullOrEmpty(FeedbackStatus);
+    public string FeedbackStatus => !string.IsNullOrEmpty(_status) && (!IsBatchActionRunning || _status != Strings.BatchActionRunning) ?
+        _status : _synchronisationFailures.Count > 0 ?
+        Strings.Describe(_synchronisationFailures.First().Value) : "";
     public bool HasMore => _continuation is not null;
     public bool AllMail => !UnreadOnly;
     public string SearchScope => string.Join(" · ", new[]
@@ -237,12 +247,15 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
 
     public string Status
     {
-        get => _status;
+        get => HasFeedbackStatus ? FeedbackStatus : IsBatchActionRunning ? Strings.BatchActionRunning :
+            IsSynchronising ? Strings.Synchronising : "";
         private set
         {
             if (SetProperty(ref _status, value))
             {
                 OnPropertyChanged(nameof(HasStatus));
+                OnPropertyChanged(nameof(FeedbackStatus));
+                OnPropertyChanged(nameof(HasFeedbackStatus));
             }
         }
     }
@@ -449,13 +462,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         {
             return;
         }
-        Status = Strings.Get("Synchronising");
-        Failure result = await _application.SynchroniseAsync(account, _lifetime.Token);
+        await _application.SynchroniseAsync(account, _lifetime.Token);
         await InitialiseAsync();
-        if (result != Failure.None)
-        {
-            Status = Strings.Describe(result);
-        }
     }
 
     /// <summary>Loads a page; navigation echoes can retain a page whose scope and filters are still valid.</summary>
@@ -778,7 +786,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         MessageSnapshot[] explicitMessages = SelectedRows.Select(row => row.Message).ToArray();
         using CancellationTokenSource batch = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, cancellationToken);
         _batchCancellation = batch;
-        Status = Strings.Get("BatchActionRunning");
+        Status = Strings.BatchActionRunning;
+        NotifyActivity();
         int succeeded = 0;
         int failed = 0;
         Failure lastFailure = Failure.None;
@@ -860,6 +869,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         finally
         {
             _batchCancellation = null;
+            NotifyActivity();
         }
         ClearMessageSelection();
         if (!_lifetime.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -891,6 +901,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     public void ReportNotificationFailure()
     {
         SetProperty(ref _notificationStatus, Strings.Get("NotificationUnavailable"), nameof(NotificationStatus));
+        OnPropertyChanged(nameof(HasNotificationStatus));
         OnPropertyChanged(nameof(HasStatus));
     }
 
@@ -902,6 +913,25 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     public void ReportReadingResult(Failure result)
     {
         Status = result == Failure.None ? "" : Strings.Describe(result);
+    }
+
+    /// <summary>Applies dispatched sync activity independently of local query completion or folder navigation.</summary>
+    public void ReportSynchronisation(SynchronisationUpdate update)
+    {
+        if (update.Running)
+        {
+            _synchronising.Add(update.Account);
+            _synchronisationFailures.Remove(update.Account);
+        }
+        else
+        {
+            _synchronising.Remove(update.Account);
+            if (update.Failure != Failure.None)
+            {
+                _synchronisationFailures[update.Account] = update.Failure;
+            }
+        }
+        NotifyActivity();
     }
 
 
@@ -1109,6 +1139,17 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(HasAttachments));
     }
 
+    private void NotifyActivity()
+    {
+        OnPropertyChanged(nameof(Status));
+        OnPropertyChanged(nameof(HasStatus));
+        OnPropertyChanged(nameof(IsSynchronising));
+        OnPropertyChanged(nameof(IsBatchActionRunning));
+        OnPropertyChanged(nameof(HasActiveWork));
+        OnPropertyChanged(nameof(FeedbackStatus));
+        OnPropertyChanged(nameof(HasFeedbackStatus));
+    }
+
     private async Task RefreshUnreadCountsAsync(long generation, CancellationToken cancellationToken)
     {
         if (_application is null)
@@ -1245,17 +1286,11 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         try
         {
             AccountConfiguration[] accounts = Accounts.Where(account => Scope?.Account is null || account.Id == Scope.Account).ToArray();
-            Failure result = Failure.None;
             foreach (AccountConfiguration account in accounts)
             {
-                Failure next = await _application.SynchroniseAsync(account.Id, _lifetime.Token);
-                if (result == Failure.None)
-                {
-                    result = next;
-                }
+                await _application.SynchroniseAsync(account.Id, _lifetime.Token);
             }
             await InitialiseAsync();
-            Status = result == Failure.None ? "" : Strings.Describe(result);
         }
         catch (OperationCanceledException)
         {

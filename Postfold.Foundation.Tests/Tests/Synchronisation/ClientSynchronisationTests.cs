@@ -9,7 +9,9 @@ using Postfold.Protocols.Services;
 using Postfold.Storage.Stores;
 using Postfold.Sync.Services;
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,6 +20,78 @@ namespace Postfold.Foundation.Tests.Tests.Synchronisation;
 
 public sealed class ClientSynchronisationTests
 {
+    [Test]
+    public void SynchroniseAsync_WhenLocalIoFails_ReportsTransientFailureToTheWindow()
+    {
+        // Arrange
+        IMailAccountEngine engine = Substitute.For<IMailAccountEngine>();
+        engine.Mailboxes.Returns(ImmutableArray.Create(EngineFixture.Mailbox()));
+        engine.ReconcileAsync("INBOX", Arg.Any<CancellationToken>()).Returns(Task.FromException<Failure>(new IOException()));
+        IAccountEngines engines = Substitute.For<IAccountEngines>();
+        engines.Find(EngineFixture.Account).Returns(engine);
+        MailApplication application = new MailApplication(
+            Substitute.For<IClientCatalog>(),
+            Substitute.For<ILocalMailQuery>(),
+            Substitute.For<IBlobStore>(),
+            Substitute.For<IMimePipeline>(),
+            engines,
+            1048576,
+            Substitute.For<IMimeDraftReader>(),
+            Substitute.For<IOutboxStore>(),
+            Substitute.For<IOperationStore>(),
+            Substitute.For<IAccountCapabilityStore>(),
+            Substitute.For<ISynchronisationStore>()
+        );
+        List<SynchronisationUpdate> updates = [];
+        application.SynchronisationChanged += (_, update) => updates.Add(update);
+
+        // Act and assert
+        Assert.That(async () => await application.SynchroniseAsync(EngineFixture.Account, CancellationToken.None), Throws.InstanceOf<IOException>());
+        Assert.That(updates, Is.EqualTo(new[]
+        {
+            new SynchronisationUpdate(EngineFixture.Account, true, false),
+            new SynchronisationUpdate(EngineFixture.Account, false, true, Failure.Transient)
+        }));
+    }
+
+    [Test]
+    public async Task SynchroniseAsync_WhenAccountUsesMailboxes_ReconcilesEachSelectableMailbox()
+    {
+        // Arrange
+        await using SqliteProfile profile = await EngineFixture.OpenAsync(EngineFixture.DirectoryPath());
+        IMailAccountEngine engine = Substitute.For<IMailAccountEngine>();
+        engine.Mailboxes.Returns(ImmutableArray.Create(
+            EngineFixture.Mailbox(),
+            EngineFixture.Mailbox() with { RemoteKey = "Archive" },
+            EngineFixture.Mailbox() with { RemoteKey = "Unavailable", Selectable = false }
+        ));
+        IAccountEngines engines = Substitute.For<IAccountEngines>();
+        engines.Find(EngineFixture.Account).Returns(engine);
+        MimePipeline mime = new MimePipeline(1048576, 100, profile.Blobs);
+        MailApplication application = new MailApplication(
+            profile,
+            profile,
+            profile.Blobs,
+            mime,
+            engines,
+            1048576,
+            mime,
+            profile,
+            profile,
+            profile,
+            profile
+        );
+
+        // Act
+        Failure result = await application.SynchroniseAsync(EngineFixture.Account, CancellationToken.None);
+
+        // Assert
+        Assert.That(result, Is.EqualTo(Failure.None));
+        await engine.Received(1).ReconcileAsync("INBOX", Arg.Any<CancellationToken>());
+        await engine.Received(1).ReconcileAsync("Archive", Arg.Any<CancellationToken>());
+        await engine.DidNotReceive().ReconcileAsync("Unavailable", Arg.Any<CancellationToken>());
+    }
+
     [Test]
     public async Task SynchroniseAsync_WhenManualAndBackgroundRequestsOverlap_SerialisesTheAccountAndCancelsAWaitingRequest()
     {
@@ -45,10 +119,13 @@ public sealed class ClientSynchronisationTests
             profile
         );
         using CancellationTokenSource waiting = new CancellationTokenSource();
+        List<SynchronisationUpdate> updates = [];
+        application.SynchronisationChanged += (_, update) => updates.Add(update);
 
         // Act
         Task<Failure> background = application.SynchroniseAsync(EngineFixture.Account, CancellationToken.None);
         Task<Failure> manual = application.SynchroniseAsync(EngineFixture.Account, waiting.Token);
+        engine.MetadataCommitted += Raise.Event();
         try
         {
             Assert.That(engine.ReceivedCalls().Count(call => call.GetMethodInfo().Name == nameof(IMailAccountEngine.ReconcileAsync)), Is.EqualTo(1));
@@ -63,6 +140,14 @@ public sealed class ClientSynchronisationTests
             reconciliation.TrySetResult(Failure.None);
             await background.WaitAsync(TimeSpan.FromSeconds(5));
         }
+        Assert.That(updates, Is.EqualTo(new[]
+        {
+            new SynchronisationUpdate(EngineFixture.Account, true, false),
+            new SynchronisationUpdate(EngineFixture.Account, true, true),
+            new SynchronisationUpdate(EngineFixture.Account, false, true)
+        }));
+        engine.MetadataCommitted += Raise.Event();
+        Assert.That(updates, Has.Count.EqualTo(3));
         Assert.That(await application.SynchroniseAsync(EngineFixture.Account, CancellationToken.None), Is.EqualTo(Failure.None));
         await engine.Received(2).ReconcileAsync("INBOX", Arg.Any<CancellationToken>());
     }

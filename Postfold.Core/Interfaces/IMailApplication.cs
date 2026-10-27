@@ -7,6 +7,7 @@ using Postfold.Core.Models.Mime;
 using Postfold.Core.Models.Operations;
 using Postfold.Core.Models.Outbox;
 using Postfold.Core.Models.Search;
+using Postfold.Core.Models.Synchronisation;
 using System;
 using System.Collections.Immutable;
 using System.IO;
@@ -21,6 +22,9 @@ public interface IMailApplication
     /// <summary>Deletes the selected current draft locally and on its server, retaining offline intent.</summary>
     Task<Failure> DeleteDraftAsync(DraftSnapshot draft, CancellationToken cancellationToken);
     IClientCatalog Catalog { get; }
+
+    /// <summary>Reports sync start, committed pages and completion on the worker thread; subscribers must dispatch UI work.</summary>
+    event EventHandler<SynchronisationUpdate>? SynchronisationChanged;
 
     Task<Outcome<SearchPage>> SearchAsync(SearchRequest request, CancellationToken cancellationToken);
 

@@ -57,6 +57,19 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
         _mime = new MimePipeline(limits.MaximumMimeBytes, limits.MaximumMimeParts, profile.Blobs);
         _retry = new RetryDelayPolicy(TimeSpan.FromSeconds(1), TimeSpan.FromMinutes(5));
         _scheduler = new AccountScheduler(limits.Workers, limits.QueueLimit, limits.RetryAttempts, time, policy, _retry);
+        Application = new MailApplication(
+            _profile,
+            _profile,
+            _profile.Blobs,
+            _mime,
+            this,
+            _limits.MaximumMimeBytes,
+            _mime,
+            _profile,
+            _profile,
+            _profile,
+            _profile
+        );
     }
 
     public ILocalMailQuery Query => _profile;
@@ -70,19 +83,7 @@ public sealed class DesktopMailRuntime : IAccountEngines, IAccountManagement, IA
     public IClientAppearance Appearance => new ClientAppearance(_profile);
     public IClientIdentity Identity => new ClientIdentity(_profile);
     public IDesktopPreferenceStore DesktopPreferences => _profile;
-    public IMailApplication Application => new MailApplication(
-        _profile,
-        _profile,
-        _profile.Blobs,
-        _mime,
-        this,
-        _limits.MaximumMimeBytes,
-        _mime,
-        _profile,
-        _profile,
-        _profile,
-        _profile
-    );
+    public IMailApplication Application { get; }
 
     internal int ProfileFormat => _profile.AdmittedFormat;
     internal string ProfileMigration => _profile.AdmittedMigration;

@@ -8,6 +8,7 @@ using Postfold.Core.Models.Mime;
 using Postfold.Core.Models.Operations;
 using Postfold.Core.Models.Outbox;
 using Postfold.Core.Models.Search;
+using Postfold.Core.Models.Synchronisation;
 using System;
 using System.Collections.Immutable;
 using System.IO;
@@ -22,6 +23,12 @@ internal sealed class QualificationMailApplication(IMailApplication application)
     public IClientCatalog Catalog => application.Catalog;
     internal bool FailDraftSaves { get; set; }
     internal bool FailDraftCloses { get; set; }
+
+    public event EventHandler<SynchronisationUpdate>? SynchronisationChanged
+    {
+        add => application.SynchronisationChanged += value;
+        remove => application.SynchronisationChanged -= value;
+    }
 
     public Task<Failure> DeleteDraftAsync(
         DraftSnapshot draft,
