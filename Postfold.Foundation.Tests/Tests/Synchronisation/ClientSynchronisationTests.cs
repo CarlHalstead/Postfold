@@ -21,7 +21,9 @@ namespace Postfold.Foundation.Tests.Tests.Synchronisation;
 public sealed class ClientSynchronisationTests
 {
     [Test]
-    public void SynchroniseAsync_WhenLocalIoFails_ReportsTransientFailureToTheWindow()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void SynchroniseAsync_WhenLocalIoFails_ReportsTransientFailureToTheWindow(bool scheduled)
     {
         // Arrange
         IMailAccountEngine engine = Substitute.For<IMailAccountEngine>();
@@ -46,11 +48,13 @@ public sealed class ClientSynchronisationTests
         application.SynchronisationChanged += (_, update) => updates.Add(update);
 
         // Act and assert
-        Assert.That(async () => await application.SynchroniseAsync(EngineFixture.Account, CancellationToken.None), Throws.InstanceOf<IOException>());
+        Assert.That(async () => await (scheduled ?
+            application.SynchroniseScheduledAsync(EngineFixture.Account, CancellationToken.None) :
+            application.SynchroniseAsync(EngineFixture.Account, CancellationToken.None)), Throws.InstanceOf<IOException>());
         Assert.That(updates, Is.EqualTo(new[]
         {
-            new SynchronisationUpdate(EngineFixture.Account, true, false),
-            new SynchronisationUpdate(EngineFixture.Account, false, true, Failure.Transient)
+            new SynchronisationUpdate(EngineFixture.Account, true, false, ShowActivity: !scheduled),
+            new SynchronisationUpdate(EngineFixture.Account, false, true, Failure.Transient, !scheduled)
         }));
     }
 
@@ -123,7 +127,7 @@ public sealed class ClientSynchronisationTests
         application.SynchronisationChanged += (_, update) => updates.Add(update);
 
         // Act
-        Task<Failure> background = application.SynchroniseAsync(EngineFixture.Account, CancellationToken.None);
+        Task<Failure> background = application.SynchroniseScheduledAsync(EngineFixture.Account, CancellationToken.None);
         Task<Failure> manual = application.SynchroniseAsync(EngineFixture.Account, waiting.Token);
         engine.MetadataCommitted += Raise.Event();
         try
@@ -142,9 +146,9 @@ public sealed class ClientSynchronisationTests
         }
         Assert.That(updates, Is.EqualTo(new[]
         {
-            new SynchronisationUpdate(EngineFixture.Account, true, false),
-            new SynchronisationUpdate(EngineFixture.Account, true, true),
-            new SynchronisationUpdate(EngineFixture.Account, false, true)
+            new SynchronisationUpdate(EngineFixture.Account, true, false, ShowActivity: false),
+            new SynchronisationUpdate(EngineFixture.Account, true, true, ShowActivity: false),
+            new SynchronisationUpdate(EngineFixture.Account, false, true, ShowActivity: false)
         }));
         engine.MetadataCommitted += Raise.Event();
         Assert.That(updates, Has.Count.EqualTo(3));

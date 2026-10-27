@@ -36,7 +36,7 @@ internal sealed class MailSynchronisationLoop(
                         Failure result;
                         try
                         {
-                            result = await application.SynchroniseAsync(account.Id, cancellationToken).ConfigureAwait(false);
+                            result = await application.SynchroniseScheduledAsync(account.Id, cancellationToken).ConfigureAwait(false);
                         }
                         catch (IOException)
                         {

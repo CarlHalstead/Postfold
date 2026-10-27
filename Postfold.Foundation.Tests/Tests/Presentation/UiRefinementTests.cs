@@ -297,6 +297,34 @@ public sealed class UiRefinementTests
     }
 
     [Test]
+    public async Task ReportSynchronisation_WhenScheduled_KeepsChecksQuietAndFailuresVisibleAlongsideExplicitSync()
+    {
+        // Arrange
+        await using MainWindowViewModel model = new MainWindowViewModel(Application());
+        await model.InitialiseAsync();
+        AccountId scheduled = new AccountId(1);
+        AccountId manual = new AccountId(2);
+
+        // Act
+        model.ReportSynchronisation(new SynchronisationUpdate(scheduled, true, false, ShowActivity: false));
+        model.ReportSynchronisation(new SynchronisationUpdate(scheduled, true, true, ShowActivity: false));
+
+        // Assert
+        Assert.That(model.HasStatus, Is.False);
+        Assert.That(model.IsSynchronising, Is.False);
+        model.ReportSynchronisation(new SynchronisationUpdate(manual, true, false));
+        model.ReportSynchronisation(new SynchronisationUpdate(scheduled, false, true, ShowActivity: false));
+        Assert.That(model.Status, Is.EqualTo(Strings.Synchronising));
+        model.ReportSynchronisation(new SynchronisationUpdate(manual, false, true));
+        Assert.That(model.HasStatus, Is.False);
+        model.ReportSynchronisation(new SynchronisationUpdate(scheduled, false, true, Failure.Unavailable, false));
+        Assert.That(model.Status, Is.EqualTo(Strings.Describe(Failure.Unavailable)));
+        model.ReportSynchronisation(new SynchronisationUpdate(scheduled, true, false, ShowActivity: false));
+        model.ReportSynchronisation(new SynchronisationUpdate(scheduled, false, true, ShowActivity: false));
+        Assert.That(model.HasStatus, Is.False);
+    }
+
+    [Test]
     [TestCase("Morgan Lee <morgan@synthetic.invalid>", "Morgan Lee", "morgan@synthetic.invalid")]
     [TestCase("\"River, Alex\" <alex@synthetic.invalid>", "River, Alex", "alex@synthetic.invalid")]
     [TestCase("bare@synthetic.invalid", "bare@synthetic.invalid", "bare@synthetic.invalid")]

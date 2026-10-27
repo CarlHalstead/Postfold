@@ -65,7 +65,7 @@ public sealed class BackgroundSynchronisationTests
             new AccountConfiguration(account, "Synthetic", null, null)
         ));
         TaskCompletionSource<Failure> pending = new TaskCompletionSource<Failure>(TaskCreationOptions.RunContinuationsAsynchronously);
-        application.SynchroniseAsync(account, Arg.Any<CancellationToken>()).Returns(call => pending.Task.WaitAsync(call.Arg<CancellationToken>()));
+        application.SynchroniseScheduledAsync(account, Arg.Any<CancellationToken>()).Returns(call => pending.Task.WaitAsync(call.Arg<CancellationToken>()));
         UpdatePolicyClock clock = new UpdatePolicyClock();
         using CancellationTokenSource lifetime = new CancellationTokenSource();
         int refreshed = 0;
@@ -84,7 +84,7 @@ public sealed class BackgroundSynchronisationTests
             // Assert
             Assert.That(running.IsCompleted, Is.False);
             Assert.That(refreshed, Is.Zero);
-            Assert.That(application.ReceivedCalls().Count(call => call.GetMethodInfo().Name == nameof(IMailApplication.SynchroniseAsync)), Is.EqualTo(1));
+            Assert.That(application.ReceivedCalls().Count(call => call.GetMethodInfo().Name == nameof(IMailApplication.SynchroniseScheduledAsync)), Is.EqualTo(1));
         }
         finally
         {
@@ -100,7 +100,7 @@ public sealed class BackgroundSynchronisationTests
         IMailApplication application = Substitute.For<IMailApplication>();
         AccountConfiguration account = new AccountConfiguration(new AccountId(1), "Synthetic", null, null);
         application.Catalog.AccountsAsync(Arg.Any<CancellationToken>()).Returns(ImmutableArray.Create(account));
-        application.SynchroniseAsync(account.Id, Arg.Any<CancellationToken>()).Returns(Failure.None, Failure.Transient);
+        application.SynchroniseScheduledAsync(account.Id, Arg.Any<CancellationToken>()).Returns(Failure.None, Failure.Transient);
         UpdatePolicyClock clock = new UpdatePolicyClock();
         using CancellationTokenSource lifetime = new CancellationTokenSource();
         int passes = 0;
@@ -125,7 +125,8 @@ public sealed class BackgroundSynchronisationTests
 
             // Assert
             Assert.That(repeated, Is.EqualTo(Failure.Transient));
-            await application.Received(2).SynchroniseAsync(account.Id, Arg.Any<CancellationToken>());
+            await application.Received(2).SynchroniseScheduledAsync(account.Id, Arg.Any<CancellationToken>());
+            await application.DidNotReceiveWithAnyArgs().SynchroniseAsync(default, default);
             await application.DidNotReceiveWithAnyArgs().ProcessOutboxAsync(default, default);
         }
         finally

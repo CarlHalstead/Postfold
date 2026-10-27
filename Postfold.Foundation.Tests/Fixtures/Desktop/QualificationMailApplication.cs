@@ -79,6 +79,11 @@ internal sealed class QualificationMailApplication(IMailApplication application)
         return application.SynchroniseAsync(account, cancellationToken);
     }
 
+    public Task<Failure> SynchroniseScheduledAsync(AccountId account, CancellationToken cancellationToken)
+    {
+        return application.SynchroniseScheduledAsync(account, cancellationToken);
+    }
+
     public Task<Outcome<DraftSnapshot>> SaveDraftAsync(
         AccountId account,
         Guid id,

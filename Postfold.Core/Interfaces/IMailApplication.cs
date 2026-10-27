@@ -51,6 +51,9 @@ public interface IMailApplication
 
     Task<Failure> SynchroniseAsync(AccountId account, CancellationToken cancellationToken);
 
+    /// <summary>Runs a scheduled mail check without activity notifications, retaining committed-change and failure reports.</summary>
+    Task<Failure> SynchroniseScheduledAsync(AccountId account, CancellationToken cancellationToken);
+
     Task<Outcome<DraftSnapshot>> SaveDraftAsync(
         AccountId account,
         Guid id,

@@ -255,53 +255,14 @@ public sealed class MailApplication : IMailApplication
         );
     }
 
-    public async Task<Failure> SynchroniseAsync(AccountId account, CancellationToken cancellationToken)
+    public Task<Failure> SynchroniseAsync(AccountId account, CancellationToken cancellationToken)
     {
-        SemaphoreSlim gate = _synchronisation.GetOrAdd(account, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        IMailAccountEngine? engine = null;
-        Failure result = Failure.Unavailable;
-        try
-        {
-            engine = _engines.Find(account);
-            if (engine is not null)
-            {
-                engine.MetadataCommitted += OnMetadataCommitted;
-            }
-            SynchronisationChanged?.Invoke(this, new SynchronisationUpdate(account, true, false));
-            result = await SynchroniseAccountAsync(account, cancellationToken).ConfigureAwait(false);
-            return result;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            result = Failure.None;
-            throw;
-        }
-        catch (IOException)
-        {
-            result = Failure.Transient;
-            throw;
-        }
-        finally
-        {
-            if (engine is not null)
-            {
-                engine.MetadataCommitted -= OnMetadataCommitted;
-            }
-            try
-            {
-                SynchronisationChanged?.Invoke(this, new SynchronisationUpdate(account, false, true, result));
-            }
-            finally
-            {
-                gate.Release();
-            }
-        }
+        return SynchroniseAsync(account, true, cancellationToken);
+    }
 
-        void OnMetadataCommitted(object? sender, EventArgs args)
-        {
-            SynchronisationChanged?.Invoke(this, new SynchronisationUpdate(account, true, true));
-        }
+    public Task<Failure> SynchroniseScheduledAsync(AccountId account, CancellationToken cancellationToken)
+    {
+        return SynchroniseAsync(account, false, cancellationToken);
     }
 
     public async Task<Outcome<DraftSnapshot>> SaveDraftAsync(
@@ -608,6 +569,55 @@ public sealed class MailApplication : IMailApplication
             retry,
             cancellationToken
         ).ConfigureAwait(false) ? Failure.None : Failure.NeedsReview;
+    }
+
+    private async Task<Failure> SynchroniseAsync(AccountId account, bool showActivity, CancellationToken cancellationToken)
+    {
+        SemaphoreSlim gate = _synchronisation.GetOrAdd(account, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        IMailAccountEngine? engine = null;
+        Failure result = Failure.Unavailable;
+        try
+        {
+            engine = _engines.Find(account);
+            if (engine is not null)
+            {
+                engine.MetadataCommitted += OnMetadataCommitted;
+            }
+            SynchronisationChanged?.Invoke(this, new SynchronisationUpdate(account, true, false, ShowActivity: showActivity));
+            result = await SynchroniseAccountAsync(account, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            result = Failure.None;
+            throw;
+        }
+        catch (IOException)
+        {
+            result = Failure.Transient;
+            throw;
+        }
+        finally
+        {
+            if (engine is not null)
+            {
+                engine.MetadataCommitted -= OnMetadataCommitted;
+            }
+            try
+            {
+                SynchronisationChanged?.Invoke(this, new SynchronisationUpdate(account, false, true, result, showActivity));
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        void OnMetadataCommitted(object? sender, EventArgs args)
+        {
+            SynchronisationChanged?.Invoke(this, new SynchronisationUpdate(account, true, true, ShowActivity: showActivity));
+        }
     }
 
     private async Task<Failure> SynchroniseAccountAsync(

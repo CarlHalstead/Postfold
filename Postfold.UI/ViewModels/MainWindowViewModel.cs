@@ -920,7 +920,10 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     {
         if (update.Running)
         {
-            _synchronising.Add(update.Account);
+            if (update.ShowActivity)
+            {
+                _synchronising.Add(update.Account);
+            }
             _synchronisationFailures.Remove(update.Account);
         }
         else
