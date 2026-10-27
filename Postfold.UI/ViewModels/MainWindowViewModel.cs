@@ -1071,36 +1071,28 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         if (opened && !IsDraftContext && message is not null && !message.Read && CanMutate() && _application is not null &&
             _markingRead.Add((message.Account, message.Id, message.Provider)))
         {
+            SetOpenedReadState(message, true, PendingState.Queued);
             try
             {
                 Failure result = await _application.MutateAsync(message, MutationKind.SetRead, true, null, _lifetime.Token);
                 if (result == Failure.None)
                 {
-                    MessageSnapshot current = Messages.FirstOrDefault(item => item.Account == message.Account &&
-                        item.Id == message.Id && item.Provider == message.Provider) ?? message;
-                    MessageSnapshot read = current with
-                    {
-                        Read = true,
-                        Pending = PendingState.Queued
-                    };
-                    int index = Messages.ToList().FindIndex(item => item.Account == message.Account && item.Id == message.Id &&
-                        item.Provider == message.Provider);
-                    if (index >= 0)
-                    {
-                        Messages[index] = read;
-                        RegroupMessages();
-                    }
-                    if (Selected?.Account == message.Account && Selected.Id == message.Id && Selected.Provider == message.Provider)
-                    {
-                        SetProperty(ref _selected, read, nameof(Selected));
-                        OnPropertyChanged(nameof(SelectedRow));
-                        NotifyReader();
-                    }
                     await RefreshUnreadCountsAsync(_searchGeneration, _lifetime.Token);
                 }
-                else if (Selected?.Account == message.Account && Selected.Id == message.Id)
+                else
                 {
-                    Status = Strings.Describe(result);
+                    PendingState pending = result switch
+                    {
+                        Failure.Transient => PendingState.RetryScheduled,
+                        Failure.NeedsAuthentication => PendingState.NeedsAuthentication,
+                        Failure.NeedsReview or Failure.NotFound => PendingState.NeedsReview,
+                        _ => PendingState.Failed
+                    };
+                    SetOpenedReadState(message, pending != PendingState.Failed, pending == PendingState.Failed ? message.Pending : pending);
+                    if (Selected?.Account == message.Account && Selected.Id == message.Id && Selected.Provider == message.Provider)
+                    {
+                        Status = Strings.Describe(result);
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -1108,6 +1100,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             }
             catch (System.IO.IOException)
             {
+                SetOpenedReadState(message, message.Read, message.Pending);
                 if (Selected?.Account == message.Account && Selected.Id == message.Id)
                 {
                     Status = Strings.Describe(Failure.Unavailable);
@@ -1119,6 +1112,38 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             }
         }
         await reading;
+    }
+
+    private void SetOpenedReadState(MessageSnapshot message, bool read, PendingState pending)
+    {
+        int index = Messages.ToList().FindIndex(item => item.Account == message.Account && item.Id == message.Id &&
+            item.Provider == message.Provider);
+        MessageSnapshot? current = index >= 0 ? Messages[index] : Selected;
+        if (current is null || current.Account != message.Account || current.Id != message.Id || current.Provider != message.Provider)
+        {
+            return;
+        }
+        // A newer explicit unread action owns its state while this request finishes.
+        if (pending != PendingState.Queued && !current.Read)
+        {
+            return;
+        }
+        MessageSnapshot updated = current with
+        {
+            Read = read,
+            Pending = pending
+        };
+        if (index >= 0)
+        {
+            Messages[index] = updated;
+            RegroupMessages();
+        }
+        if (Selected?.Account == message.Account && Selected.Id == message.Id && Selected.Provider == message.Provider)
+        {
+            SetProperty(ref _selected, updated, nameof(Selected));
+            OnPropertyChanged(nameof(SelectedRow));
+            NotifyReader();
+        }
     }
 
     private void NotifyReader()

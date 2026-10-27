@@ -349,6 +349,26 @@ public sealed class UiRefinementTests
     }
 
     [Test]
+    [TestCase(PendingState.Queued)]
+    [TestCase(PendingState.InFlight)]
+    public void MessageSummary_WhenAnOrdinaryCommandIsPending_OmitsRoutineQueueFeedback(PendingState pending)
+    {
+        // Arrange
+        AccountId account = new AccountId(1);
+        MessageSnapshot message = new MessageSnapshot(account, new MessageId(1), new ProviderIdentity(account, "one", null),
+            "Subject", "Sender", null, DateTimeOffset.UnixEpoch, 10, true, false,
+            ContentAvailability.Available, pending);
+
+        // Act
+        MessageSummary row = new MessageSummary(message, "", "Personal", "Today");
+
+        // Assert
+        Assert.That(row.State, Is.Empty);
+        Assert.That(row.HasState, Is.False);
+        Assert.That(row.AccessibleName, Does.Not.Contain(Strings.Describe(pending)));
+    }
+
+    [Test]
     public void Preview_WhenCachedTextHasParagraphs_NormalisesOnlyPresentationAndKeepsAttachmentAndPendingState()
     {
         // Arrange

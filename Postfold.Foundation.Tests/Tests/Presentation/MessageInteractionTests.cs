@@ -131,6 +131,78 @@ public sealed class MessageInteractionTests
     }
 
     [AvaloniaTest]
+    [TestCase(Failure.None, true)]
+    [TestCase(Failure.Unavailable, false)]
+    [TestCase(Failure.Transient, true)]
+    [TestCase(Failure.NeedsAuthentication, true)]
+    public async Task OpenMessageAsync_WhenServerResponseIsPending_UpdatesTheRowImmediatelyAndReconcilesTheResult(
+        Failure result,
+        bool expectedRead
+    )
+    {
+        // Arrange
+        IMailApplication application = Application();
+        MessageSnapshot message = Message();
+        TaskCompletionSource<Failure> response = new TaskCompletionSource<Failure>(TaskCreationOptions.RunContinuationsAsynchronously);
+        application.MutateAsync(message, MutationKind.SetRead, true, null, Arg.Any<CancellationToken>()).Returns(response.Task);
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        model.Messages.Add(message);
+        model.RegroupMessages();
+
+        // Act / Assert: a held server response must not hold up local feedback.
+        Task opening = model.OpenMessageAsync(message);
+        try
+        {
+            Assert.That(opening.IsCompleted, Is.False);
+            Assert.That(model.Selected!.Read, Is.True);
+            Assert.That(model.Rows.Single().Unread, Is.False);
+            Assert.That(model.Rows.Single().State, Is.Empty);
+            Assert.That(model.Rows.Single().AccessibleName, Does.Not.Contain("Command saved locally"));
+            Assert.That(model.ReadAction, Is.EqualTo(Postfold.UI.Resources.Strings.Get("MarkUnread")));
+        }
+        finally
+        {
+            response.SetResult(result);
+            await opening;
+        }
+
+        Assert.That(model.Selected!.Read, Is.EqualTo(expectedRead));
+        Assert.That(model.Rows.Single().Unread, Is.EqualTo(!expectedRead));
+    }
+
+    [AvaloniaTest]
+    [TestCase(Failure.None)]
+    [TestCase(Failure.Transient)]
+    public async Task OpenMessageAsync_WhenMarkedUnreadDuringTheRequest_PreservesTheNewerChoice(Failure result)
+    {
+        // Arrange
+        IMailApplication application = Application();
+        MessageSnapshot message = Message();
+        TaskCompletionSource<Failure> response = new TaskCompletionSource<Failure>(TaskCreationOptions.RunContinuationsAsynchronously);
+        application.MutateAsync(message, MutationKind.SetRead, true, null, Arg.Any<CancellationToken>()).Returns(response.Task);
+        await using MainWindowViewModel model = new MainWindowViewModel(application);
+        await model.InitialiseAsync();
+        model.Messages.Add(message);
+        Task opening = model.OpenMessageAsync(message);
+        MessageSnapshot newer = model.Messages[0] with
+        {
+            Read = false,
+            Flagged = true
+        };
+        model.Messages[0] = newer;
+        model.Selected = newer;
+
+        // Act
+        response.SetResult(result);
+        await opening;
+
+        // Assert
+        Assert.That(model.Messages[0], Is.EqualTo(newer));
+        Assert.That(model.Selected, Is.EqualTo(newer));
+    }
+
+    [AvaloniaTest]
     [TestCase(false, true, Failure.None, true)]
     [TestCase(false, true, Failure.Unavailable, false)]
     [TestCase(false, false, Failure.None, false)]

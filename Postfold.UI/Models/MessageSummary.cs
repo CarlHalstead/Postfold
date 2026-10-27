@@ -24,7 +24,8 @@ public sealed record MessageSummary(MessageSnapshot Message, string Group, strin
     {
         Unified ? AccountName : "",
         Message.Flagged ? Strings.Flagged : "",
-        Message.Pending is PendingState.None or PendingState.Completed or PendingState.Dismissed ? "" : Strings.Describe(Message.Pending)
+        Message.Pending is PendingState.None or PendingState.Queued or PendingState.InFlight or PendingState.Completed or
+            PendingState.Dismissed ? "" : Strings.Describe(Message.Pending)
     }.Where(value => value.Length > 0));
     public bool HasState => State.Length > 0;
     public string AccessibleName => string.Join(", ", new[]
